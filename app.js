@@ -335,17 +335,12 @@ function selectRole(role) {
   }
 }
 
-function quickLogin(role) {
-  selectRole(role);
-  handleLogin(new Event('submit'), true);
-}
-
-async function handleLogin(e, isQuickDemo = false) {
+async function handleLogin(e) {
   if (e) e.preventDefault();
   const userId = (document.getElementById('loginIdInput')?.value || '').trim();
   const password = (document.getElementById('loginPwInput')?.value || '');
 
-  if (!isQuickDemo && gasApi.isConfigured()) {
+  if (gasApi.isConfigured()) {
     try {
       showToast('Google Sheets 계정 인증 중...', '🔐');
       const pwHash = await gasApi.sha256Hex(password);
@@ -602,20 +597,11 @@ function hydrateMockDataFromBundle(bundle) {
   }
 }
 
-function toggleTeacherStudentMode() {
-  state.activeRole = (state.activeRole === 'teacher') ? 'student' : 'teacher';
-  mockData.currentUser.role = state.activeRole;
-  applyRoleUI();
-  renderAll();
-  showToast(state.activeRole === 'teacher' ? '교사 관리자 모드로 전환되었습니다.' : '학생 모드로 전환되었습니다.', '🔄');
-}
-
 function applyRoleUI() {
   const nameElem = document.getElementById('userNameDisplay');
   const subElem = document.getElementById('userSubDisplay');
   const badgeElem = document.getElementById('userBadge');
   const avatarElem = document.getElementById('userAvatarText');
-  const toggleText = document.getElementById('headerRoleToggleText');
 
   const studentNav = document.getElementById('studentBottomNav');
   const teacherNav = document.getElementById('teacherBottomNav');
@@ -627,7 +613,6 @@ function applyRoleUI() {
     badgeElem.innerText = "교사";
     badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-purple-100 text-purple-700";
     avatarElem.innerText = tName[0] || "교";
-    toggleText.innerText = "학생모드 전환";
 
     studentNav.classList.add('hidden');
     teacherNav.classList.remove('hidden');
@@ -648,7 +633,6 @@ function applyRoleUI() {
       avatarElem.innerText = "학";
     }
     subElem.innerText = `${mockData.currentUser.schoolName} ${mockData.currentUser.gradeClass} · 담임 ${mockData.currentUser.teacherName} 선생님`;
-    toggleText.innerText = "교사모드 전환";
 
     teacherNav.classList.add('hidden');
     teacherNav.classList.remove('flex');
