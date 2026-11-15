@@ -41,7 +41,11 @@ const gasApi = {
       this.demoMode = true;
       throw this._demoError(json.error || 'GAS_WEB_APP_URL not configured');
     }
-    if (json && json.ok === false) throw new Error(json.error || 'Apps Script 오류');
+    if (json && json.ok === false) {
+      const err = new Error(json.error || 'Apps Script 오류');
+      err.isServerRejection = true;
+      throw err;
+    }
     return json;
   },
   async post(action, payload = {}) {
@@ -59,7 +63,11 @@ const gasApi = {
       this.demoMode = true;
       throw this._demoError(json.error || 'GAS_WEB_APP_URL not configured');
     }
-    if (json && json.ok === false) throw new Error(json.error || 'Apps Script 오류');
+    if (json && json.ok === false) {
+      const err = new Error(json.error || 'Apps Script 오류');
+      err.isServerRejection = true;
+      throw err;
+    }
     return json;
   }
 };
@@ -276,6 +284,7 @@ function selectRole(role) {
 }
 
 const AUTO_LOGIN_STORAGE_KEY = 'eduflow_saved_auth';
+const BUNDLE_CACHE_STORAGE_KEY = 'eduflow_cached_bundle';
 
 function _saveAutoLoginAuth(auth) {
   try {
@@ -306,6 +315,41 @@ function _loadAutoLoginAuth() {
 function _clearAutoLoginAuth() {
   try {
     localStorage.removeItem(AUTO_LOGIN_STORAGE_KEY);
+  } catch (_) {}
+}
+
+function _saveBundleCache(bundle) {
+  try {
+    if (!bundle || typeof bundle !== 'object') return;
+    localStorage.setItem(BUNDLE_CACHE_STORAGE_KEY, JSON.stringify({
+      role: state.activeRole,
+      userId: mockData.currentUser.userId || '',
+      currentUser: mockData.currentUser,
+      bundle,
+      cachedAt: Date.now()
+    }));
+  } catch (err) {
+    console.warn('[EduFlow Cache] 번들 캐시 저장 실패:', err);
+  }
+}
+
+function _loadBundleCache(expectedRole = '', expectedUserId = '') {
+  try {
+    const raw = localStorage.getItem(BUNDLE_CACHE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.bundle || typeof parsed.bundle !== 'object') return null;
+    if (expectedRole && parsed.role !== expectedRole) return null;
+    if (expectedUserId && parsed.userId !== expectedUserId) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function _clearBundleCache() {
+  try {
+    localStorage.removeItem(BUNDLE_CACHE_STORAGE_KEY);
   } catch (_) {}
 }
 
@@ -351,7 +395,7 @@ async function _performLoginAuth(role, userId, password, precomputedHash = '', o
         }
         return { ok: true, pwHash, isDemo: true };
       }
-      return { ok: false, error: err && err.message ? err.message : '인증 실패' };
+      return { ok: false, error: err && err.message ? err.message : '인증 실패', isAuthRejected: Boolean(err && err.isServerRejection) };
     }
   }
 
@@ -412,6 +456,41 @@ async function tryAutoLogin() {
   if (idInput) idInput.value = saved.userId;
   if (autoCheck) autoCheck.checked = true;
 
+  const cached = _loadBundleCache(role, saved.userId);
+  if (cached && cached.bundle) {
+    // 캐시된 사용자 정보 및 번들로 0ms 즉시 진입 (로딩 오버레이 없음)
+    if (cached.currentUser && typeof cached.currentUser === 'object') {
+      mockData.currentUser = { ...mockData.currentUser, ...cached.currentUser };
+    }
+    hydrateMockDataFromBundle(cached.bundle);
+    _enterDashboardAfterLogin();
+
+    // 백그라운드에서 조용히 인증 및 최신 데이터 동기화
+    const refreshIcon = document.querySelector('#headerRefreshBtn svg');
+    if (refreshIcon) refreshIcon.classList.add('animate-spin');
+    try {
+      const authResult = await _performLoginAuth(
+        role,
+        saved.userId,
+        saved.password || '',
+        saved.passwordHash || '',
+        { isAutoLogin: true }
+      );
+      if (authResult.ok) {
+        applyRoleUI();
+        renderAll();
+      } else if (authResult.isAuthRejected) {
+        logout();
+        showToast('자동 로그인 인증에 실패했습니다. 다시 로그인해 주세요.', '⚠️');
+      } else {
+        showToast('네트워크 연결이 원활하지 않아 저장된 데이터를 표시합니다.', 'ℹ️');
+      }
+    } finally {
+      if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+    }
+    return;
+  }
+
   showLoading('자동 로그인 중...');
   try {
     const authResult = await _performLoginAuth(
@@ -425,6 +504,7 @@ async function tryAutoLogin() {
       _enterDashboardAfterLogin();
     } else {
       _clearAutoLoginAuth();
+      _clearBundleCache();
       const pwInput = document.getElementById('loginPwInput');
       if (pwInput) pwInput.value = '';
       showToast('자동 로그인 인증에 실패했습니다. 다시 로그인해 주세요.', '⚠️');
@@ -480,6 +560,7 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null) {
         class_no: cu.classNo || ''
       });
       hydrateMockDataFromBundle(bundle);
+      _saveBundleCache(bundle);
       renderAll();
       if (showFeedback) showToast('Google Sheets 최신 데이터를 불러왔습니다.', '🔄');
     } catch (err) {
@@ -911,6 +992,7 @@ function applyRoleUI() {
 
 function logout() {
   _clearAutoLoginAuth();
+  _clearBundleCache();
   _hideAllPwaPushUI();
   state.pwaPushBannerDismissed = false;
   state.pwaPushGuideDismissed = false;

@@ -207,6 +207,39 @@ function renderTeacherHome() {
       `).join('');
     }
   }
+
+  // 오늘의 급식 렌더링
+  const mealList = document.getElementById('teacherMealList');
+  if (mealList) {
+    const mealEntries = [
+      { key: 'lunch', label: '중식 식단', meal: mockData.meals && mockData.meals.lunch },
+      { key: 'dinner', label: '석식 식단', meal: mockData.meals && mockData.meals.dinner }
+    ].filter(entry => Boolean(entry.meal));
+
+    if (mealEntries.length === 0) {
+      mealList.innerHTML = `<div class="bg-slate-50/80 rounded-xl p-4 border border-slate-100 text-center text-xs text-slate-400">등록된 오늘의 급식 정보가 없습니다.</div>`;
+    } else {
+      mealList.innerHTML = mealEntries.map(({ label, meal }) => `
+        <div class="bg-slate-50/80 rounded-xl p-3 border border-slate-100">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[11px] font-bold text-slate-700">🍽️ ${label}</span>
+            <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">${meal.calories || '-'}</span>
+          </div>
+          <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 py-1">
+            ${(meal.menu || []).map(item => `
+              <div class="flex items-center justify-between text-xs py-0.5 border-b border-slate-100/80">
+                <span class="font-medium text-slate-800">${item.name}</span>
+                ${item.allergy ? `<span class="text-[9px] text-slate-400 font-mono">(${item.allergy})</span>` : ''}
+              </div>
+            `).join('')}
+          </div>
+          <div class="mt-2.5 pt-2 border-t border-slate-200/70 text-[9px] text-slate-400 leading-tight">
+            ℹ️ <span class="font-semibold">알레르기 번호 안내:</span> ${meal.allergyNotice || '나이스(NEIS) 식단 연동됨'}
+          </div>
+        </div>
+      `).join('');
+    }
+  }
 }
 
 async function syncNeisMealsNow(btnEl) {
@@ -219,6 +252,7 @@ async function syncNeisMealsNow(btnEl) {
     try {
       const res = await gasApi.post('sync_neis_meals', {});
       await refreshFromGas(false);
+      renderTeacherHome();
       showToast(`나이스 급식 동기화 완료 (${res.count || 0}건 반영)`, '✅');
     } catch (err) {
       showToast(`나이스 급식 동기화 실패: ${err.message}`, '⚠️');
