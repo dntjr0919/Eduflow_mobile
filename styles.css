@@ -1,0 +1,114 @@
+/* =========================================================
+   EduFlow Mobile - Custom Theme & Viewport Styles
+      Tailwind 커스텀 팔레트, 폰트, 스크롤바, 애니메이션 일원화
+         ========================================================= */
+
+         :root {
+              --font-sans: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+
+                /* Brand */
+                  --color-brand-50: #EEF2FF;
+                    --color-brand-100: #E0E7FF;
+                      --color-brand-500: #6366F1;
+                        --color-brand-600: #4F46E5;
+                          --color-brand-700: #4338CA;
+
+                            /* Urgent */
+                              --color-urgent-50: #FEF2F2;
+                                --color-urgent-100: #FEE2E2;
+                                  --color-urgent-500: #EF4444;
+                                    --color-urgent-600: #DC2626;
+
+                                      /* Alert */
+                                        --color-alert-50: #FFFBEB;
+                                          --color-alert-100: #FEF3C7;
+                                            --color-alert-500: #F59E0B;
+                                              --color-alert-600: #D97706;
+
+                                                /* Success */
+                                                  --color-success-50: #ECFDF5;
+                                                    --color-success-100: #D1FAE5;
+                                                      --color-success-500: #10B981;
+                                                        --color-success-600: #059669;
+         }
+
+         /* Base & Mobile Viewport Styles */
+         html,
+         body {
+              font-family: var(--font-sans);
+                -webkit-tap-highlight-color: transparent;
+                  user-select: none;
+                    overscroll-behavior-y: none;
+         }
+
+         input,
+         textarea,
+         select {
+              user-select: text;
+         }
+
+         .app-shell {
+              -webkit-overflow-scrolling: touch;
+         }
+
+         /* Custom Scrollbar */
+         .custom-scrollbar::-webkit-scrollbar {
+              height: 4px;
+                width: 4px;
+         }
+
+         .custom-scrollbar::-webkit-scrollbar-thumb {
+              background-color: #CBD5E1;
+                border-radius: 9999px;
+         }
+
+         /* Badge Pulse Animation */
+         .badge-pulse {
+              animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+         }
+
+         @keyframes pulse {
+              0%, 100% {
+                    opacity: 1;
+                        transform: scale(1);
+              }
+                50% {
+                        opacity: 0.85;
+                            transform: scale(1.05);
+                }
+         }
+
+         /* Tailwind Custom Color Utilities (brand / urgent / alert / success) */
+         .bg-brand-50 { background-color: var(--color-brand-50); }
+         .bg-brand-100 { background-color: var(--color-brand-100); }
+         .bg-brand-500 { background-color: var(--color-brand-500); }
+         .bg-brand-600 { background-color: var(--color-brand-600); }
+         .bg-brand-700 { background-color: var(--color-brand-700); }
+         .text-brand-500 { color: var(--color-brand-500); }
+         .text-brand-600 { color: var(--color-brand-600); }
+         .text-brand-700 { color: var(--color-brand-700); }
+
+         .bg-urgent-50 { background-color: var(--color-urgent-50); }
+         .bg-urgent-100 { background-color: var(--color-urgent-100); }
+         .bg-urgent-500 { background-color: var(--color-urgent-500); }
+         .bg-urgent-600 { background-color: var(--color-urgent-600); }
+         .text-urgent-500 { color: var(--color-urgent-500); }
+         .text-urgent-600 { color: var(--color-urgent-600); }
+         .border-urgent-500 { border-color: var(--color-urgent-500); }
+         .border-urgent-600 { border-color: var(--color-urgent-600); }
+
+         .bg-alert-50 { background-color: var(--color-alert-50); }
+         .bg-alert-100 { background-color: var(--color-alert-100); }
+         .bg-alert-500 { background-color: var(--color-alert-500); }
+         .bg-alert-600 { background-color: var(--color-alert-600); }
+         .text-alert-500 { color: var(--color-alert-500); }
+         .text-alert-600 { color: var(--color-alert-600); }
+         .border-alert-500 { border-color: var(--color-alert-500); }
+         .border-alert-600 { border-color: var(--color-alert-600); }
+
+         .bg-success-50 { background-color: var(--color-success-50); }
+         .bg-success-100 { background-color: var(--color-success-100); }
+         .bg-success-500 { background-color: var(--color-success-500); }
+         .bg-success-600 { background-color: var(--color-success-600); }
+         .text-success-500 { color: var(--color-success-500); }
+         .text-success-600 { color: var(--color-success-600); }
