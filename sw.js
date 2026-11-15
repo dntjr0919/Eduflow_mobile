@@ -1,4 +1,6 @@
-const CACHE_NAME = 'eduflow-mobile-v2';
+// 배포 시 버전을 올리면(예: v3 -> v4) activate 단계에서 이전 캐시가 자동 정리됩니다.
+const CACHE_VERSION = 'v3';
+const CACHE_NAME = `eduflow-mobile-${CACHE_VERSION}`;
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -19,11 +21,10 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {

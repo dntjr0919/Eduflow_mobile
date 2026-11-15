@@ -816,11 +816,58 @@ async function requestPwaNotificationPermission() {
   }
 }
 
+// Service Worker Auto-Update & Foreground Data Sync
+let _swRegistration = null;
+let _lastForegroundSyncAt = 0;
+
+function initServiceWorkerAndAutoSync() {
+  if ('serviceWorker' in navigator) {
+    let swReadyForReload = Boolean(navigator.serviceWorker.controller);
+    let refreshing = false;
+
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!swReadyForReload) {
+        swReadyForReload = true;
+        return;
+      }
+      if (refreshing) return;
+      refreshing = true;
+      showToast('새 버전이 적용되어 앱을 새로고침합니다.', '🔄');
+      setTimeout(() => {
+        window.location.reload();
+      }, 350);
+    });
+
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((registration) => {
+        _swRegistration = registration;
+      })
+      .catch(() => {});
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+
+    if (_swRegistration && typeof _swRegistration.update === 'function') {
+      _swRegistration.update().catch(() => {});
+    }
+
+    const dash = document.getElementById('dashboardScreen');
+    const isLoggedIn = dash && !dash.classList.contains('hidden');
+    if (isLoggedIn && gasApi.isConfigured()) {
+      const now = Date.now();
+      if (now - _lastForegroundSyncAt >= 10000) {
+        _lastForegroundSyncAt = now;
+        refreshFromGas(false);
+      }
+    }
+  });
+}
+
 // Initialize Dates, Canvas & Service Worker on Load
 window.addEventListener('DOMContentLoaded', () => {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
-  }
+  initServiceWorkerAndAutoSync();
 
   const today = new Date().toISOString().split('T')[0];
   const attStart = document.getElementById('attStartDate');
