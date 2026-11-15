@@ -67,13 +67,21 @@ const gasApi = {
 let mockData = {
   currentUser: {
     role: "student",
-    studentId: "10315",
-    studentName: "유재석",
-    maskedName: "유OO",
-    parentName: "유OO 학부모님",
-    gradeClass: "1학년 3반",
-    schoolName: "서울고등학교",
-    teacherName: "박은혜"
+    userId: "",
+    studentId: "",
+    studentName: "",
+    maskedName: "",
+    parentName: "",
+    grade: "",
+    classNo: "",
+    gradeClass: "",
+    schoolName: "",
+    teacherName: "",
+    subject: "",
+    phone: "",
+    consultationHours: "",
+    neisOfficeCode: "",
+    neisSchoolCode: ""
   },
   isCounselingOpen: false,
   rules: {
@@ -81,194 +89,26 @@ let mockData = {
     fieldPreDays: 3,
     fieldPostDays: 5
   },
-  urgentDocuments: [
-    {
-      id: "DOC-2025-001",
-      studentId: "10315",
-      studentName: "유재석",
-      type: "urgency",
-      dDayText: "긴급 D-1",
-      dDayColor: "urgent",
-      title: "질병결석 (11/10~11/11)",
-      docName: "결석신고서",
-      description: "나이스 결석신고서 제출 대상 (종료일 기준 5영업일 이내)",
-      deadline: "2025-11-18",
-      status: "pending", // 'pending' | 'submitted' | 'closed'
-      submittedAt: null
-    },
-    {
-      id: "DOC-2025-002",
-      studentId: "10315",
-      studentName: "유재석",
-      type: "planning",
-      dDayText: "사전 D-3",
-      dDayColor: "alert",
-      title: "교외체험학습 (11/25~11/27)",
-      docName: "체험학습 신청서",
-      description: "교외체험학습 사전 신청서 제출 대상 (시작 3영업일 전 마감)",
-      deadline: "2025-11-20",
-      status: "pending",
-      submittedAt: null
-    },
-    {
-      id: "DOC-2025-003",
-      studentId: "10309",
-      studentName: "박명수",
-      type: "urgency",
-      dDayText: "검수대기",
-      dDayColor: "urgent",
-      title: "인정조퇴 (11/13)",
-      docName: "지각·조퇴신고서",
-      description: "공적 사유 인정조퇴 신고서 나이스 제출 완료 보고",
-      deadline: "2025-11-20",
-      status: "submitted",
-      submittedAt: "오늘 08:45 제출"
-    },
-    {
-      id: "DOC-2025-004",
-      studentId: "10304",
-      studentName: "김태호",
-      type: "closed",
-      dDayText: "종결",
-      dDayColor: "success",
-      title: "질병결석 (11/03)",
-      docName: "결석신고서",
-      description: "나이스 결재 확인 완료",
-      deadline: "2025-11-10",
-      status: "closed",
-      submittedAt: "11/05 최종완료"
-    },
-    {
-      id: "DOC-2025-005",
-      studentId: "10318",
-      studentName: "정준하",
-      type: "closed",
-      dDayText: "종결",
-      dDayColor: "success",
-      title: "생리지각 (11/04)",
-      docName: "지각·조퇴신고서",
-      description: "나이스 결재 확인 완료",
-      deadline: "2025-11-11",
-      status: "closed",
-      submittedAt: "11/06 최종완료"
-    }
-  ],
-  attendanceHistory: [
-    { id: "ATT-01", period: "2025-11-10 ~ 11-11", type: "질병결석", reason: "급성 인후염 및 고열로 인한 병원 진료", docStatus: "서류 미제출" },
-    { id: "ATT-02", period: "2025-11-25 ~ 11-27", type: "교외체험학습", reason: "가족 동반 역사 유적지 탐방", docStatus: "서류 미제출" },
-    { id: "ATT-03", period: "2025-10-15", type: "인정 지각/조퇴", reason: "전국학생과학발명품경진대회 시상식 참석", docStatus: "교사 최종완료" }
-  ],
-  teacherTodayAttendance: [
-    { id: "TA-1", studentId: "10315", name: "유재석", type: "질병결석", reason: "급성 인후염 진료", confirmed: false },
-    { id: "TA-2", studentId: "10307", name: "노홍철", type: "질병결석", reason: "독감 격리 권고", confirmed: true },
-    { id: "TA-3", studentId: "10309", name: "박명수", type: "인정조퇴", reason: "치과 교정 진료 (확인서 지참)", confirmed: false },
-    { id: "TA-4", studentId: "10321", name: "이광수", type: "교외체험학습", reason: "가족 국내 체험학습 (2일차)", confirmed: true }
-  ],
-  timetable: [
-    { period: 1, subject: "국어", teacher: "이지은", isChanged: false, time: "09:00" },
-    { period: 2, subject: "수학Ⅰ", teacher: "최민수", isChanged: false, time: "09:50" },
-    { period: 3, subject: "자습", teacher: "박OO (대체)", isChanged: true, original: "화학Ⅰ", time: "10:40" },
-    { period: 4, subject: "영어", teacher: "한가인", isChanged: false, time: "11:30" },
-    { period: 5, subject: "수학Ⅰ", teacher: "김OO (보강)", isChanged: true, original: "체육", time: "13:10" },
-    { period: 6, subject: "한국사", teacher: "정약용", isChanged: false, time: "14:00" },
-    { period: 7, subject: "동아리", teacher: "담당교사", isChanged: false, time: "14:50" }
-  ],
-  teacherSchedule: [
-    { period: "1교시", target: "1학년 3반", subject: "통합과학", changed: false },
-    { period: "3교시", target: "1학년 5반", subject: "보강(자습)", changed: true },
-    { period: "4교시", target: "1학년 2반", subject: "통합과학", changed: false },
-    { period: "6교시", target: "1학년 3반", subject: "창체(동아리)", changed: false }
-  ],
+  students: [],
+  urgentDocuments: [],
+  attendanceHistory: [],
+  teacherTodayAttendance: [],
+  timetable: [],
+  teacherSchedule: [],
   meals: {
-    lunch: {
-      calories: "785 kcal",
-      menu: [
-        { name: "친환경 흑미밥", allergy: "" },
-        { name: "쇠고기 미역국", allergy: "16" },
-        { name: "수제 떡갈비 구이", allergy: "1, 2, 5, 6, 10, 15, 16" },
-        { name: "매콤 콩나물무침", allergy: "5" },
-        { name: "배추김치", allergy: "9" },
-        { name: "샤인머스캣", allergy: "" }
-      ],
-      allergyNotice: "1.난류 2.우유 5.대두 6.밀 9.새우 10.돼지고기 16.소고기"
-    },
-    dinner: {
-      calories: "820 kcal",
-      menu: [
-        { name: "베이컨 김치볶음밥", allergy: "1, 5, 6, 10" },
-        { name: "유부 맑은장국", allergy: "5, 6" },
-        { name: "바삭 치킨텐더 & 렌치드레싱", allergy: "1, 2, 5, 6, 15" },
-        { name: "수제 오이피클", allergy: "" },
-        { name: "요구르트(런)", allergy: "2" }
-      ],
-      allergyNotice: "1.난류 2.우유 5.대두 6.밀 10.돼지고기"
-    }
+    lunch: null,
+    dinner: null
   },
-  circulars: [
-    {
-      id: "CIR-104",
-      docNum: "서울고등학교 제2025-104호",
-      title: "2025학년도 2학기 현장체험학습 참가 동의 조사",
-      deadline: "2025-11-21 마감",
-      status: "pending",
-      submittedCount: 24,
-      totalCount: 28,
-      content: "학부모님의 가정에 늘 평안과 행복이 깃들기를 기원합니다. 본교에서는 교육과정의 일환으로 학생들의 자율성과 협동심을 기르고자 현장체험학습을 실시하고자 하오니, 참가 여부를 회신해 주시기 바랍니다.",
-      meta: ["일시: 2025년 11월 28일(금) 09:00~17:00", "장소: 국립중앙박물관 및 서울숲 일대", "비용: 학교운영지원비 전액 지원"]
-    },
-    {
-      id: "CIR-102",
-      docNum: "서울고등학교 제2025-102호",
-      title: "2학기 기말고사 시험 시간표 및 부정행위 예방 안내",
-      deadline: "2025-11-12 마감",
-      status: "submitted",
-      submittedCount: 28,
-      totalCount: 28,
-      content: "2025학년도 2학기 2차 지필평가(기말고사) 실시 계획 및 시험 유의사항을 안내하오니 가정에서도 지도 부탁드립니다.",
-      meta: ["기간: 2025년 12월 08일(월) ~ 12월 11일(목)", "준비물: 컴퓨터용 사인펜, 학생증"]
-    }
-  ],
+  circulars: [],
   budget: {
-    balance: 184500,
-    income: 300000,
-    expense: 115500,
-    transactions: [
-      { id: "TX-1", date: "11/12", title: "체육대회 학급 단체 반티 추가 제작비", type: "expense", amount: 42000, store: "유니폼팩토리", card: "학급체크카드 (****-4821)" },
-      { id: "TX-2", date: "10/28", title: "중간고사 응원 간식(초콜릿·음료) 구입", type: "expense", amount: 53500, store: "이마트24 서울고점", card: "학급체크카드 (****-4821)" },
-      { id: "TX-3", date: "09/15", title: "학급 환경미화 게시판 문구류", type: "expense", amount: 20000, store: "다이소 역삼점", card: "학급체크카드 (****-4821)" },
-      { id: "TX-4", date: "09/02", title: "2학기 학급운영비 배정 입금", type: "income", amount: 300000, store: "학교회계 전입금", card: "계좌이체" }
-    ]
+    balance: 0,
+    income: 0,
+    expense: 0,
+    transactions: []
   },
-  chatRooms: [
-    {
-      roomId: "ROOM-10315",
-      studentId: "10315",
-      studentName: "유재석",
-      partnerLabel: "유재석 학생 학부모",
-      subtitle: "1학년 3반 15번 유재석",
-      unread: 1,
-      messages: [
-        { sender: "teacher", text: "안녕하세요, 1학년 3반 담임 박은혜입니다. 궁금한 사항이나 전달하실 말씀이 있으면 편하게 남겨주세요.", time: "어제 15:20" },
-        { sender: "user", text: "선생님 안녕하세요! 11/10~11 질병결석 건 나이스 결석신고서 오늘 저녁 중으로 올리겠습니다.", time: "오늘 08:15" }
-      ]
-    },
-    {
-      roomId: "ROOM-10309",
-      studentId: "10309",
-      studentName: "박명수",
-      partnerLabel: "10309 박명수 (학생)",
-      subtitle: "1학년 3반 9번 박명수",
-      unread: 0,
-      messages: [
-        { sender: "user", text: "선생님 오늘 6교시 끝나고 치과 진료 때문에 조퇴해야 할 것 같습니다.", time: "어제 16:40" },
-        { sender: "teacher", text: "알겠습니다. 진료 확인서 챙겨서 나이스로 제출해 주세요.", time: "어제 16:52" }
-      ]
-    }
-  ],
-  remoteTasks: [
-    { id: "JOB-01", type: "과세특/행특 AI 초안 생성", timing: "완료 (어제 18:12)", prompt: "1학년 통합과학 수행평가 보고서 기반 세특 초안 28명 생성", status: "done", log: "28명 초안 생성 및 HWPX 저장 완료" },
-    { id: "JOB-02", type: "학급 주간 출결 보고서(HWPX) 자동 생성", timing: "예약됨 (오늘 17:30)", prompt: "11월 2주차 1-3반 출결 및 미제출 서류 현황표 생성", status: "pending", log: "PC EduFlow 워커 대기 중" }
-  ]
+  chatRooms: [],
+  remoteTasks: [],
+  notifications: []
 };
 
 // Global Application State
@@ -277,8 +117,9 @@ const state = {
   activeMealTab: 'lunch',
   selectedAttType: '질병결석',
   currentCircularId: null,
+  currentUnsubmittedCircularId: null,
   teacherDocFilter: 'pending',
-  activeTeacherChatRoomId: 'ROOM-10315',
+  activeTeacherChatRoomId: '',
   isSignBoxPinned: true,
   hasDrawnSignature: false
 };
@@ -305,8 +146,57 @@ function closeModal(modalId) {
 }
 
 function toggleNoticeModal() {
-  document.getElementById('noticeModal').classList.toggle('hidden');
-  document.getElementById('unreadDot').classList.add('hidden');
+  const modal = document.getElementById('noticeModal');
+  modal.classList.toggle('hidden');
+  if (!modal.classList.contains('hidden')) {
+    renderNotificationsModal();
+    document.getElementById('unreadDot').classList.add('hidden');
+  }
+}
+
+function renderNotificationsModal() {
+  const list = document.getElementById('noticeModalList');
+  if (!list) return;
+  const items = Array.isArray(mockData.notifications) ? mockData.notifications : [];
+  if (items.length === 0) {
+    list.innerHTML = `<div class="text-center py-8 text-slate-400">수신된 알림 내역이 없습니다.</div>`;
+    return;
+  }
+  list.innerHTML = items.map(n => {
+    const isUnread = String(n.is_read) !== '1';
+    const ch = (n.channel || '').toLowerCase();
+    let boxCls = 'bg-slate-50 border-slate-200/80';
+    let badgeCls = 'text-indigo-600';
+    if (ch.includes('doc') || ch.includes('urgent')) {
+      boxCls = 'bg-red-50/70 border-red-100';
+      badgeCls = 'text-red-600';
+    } else if (ch.includes('timetable')) {
+      boxCls = 'bg-amber-50/70 border-amber-100';
+      badgeCls = 'text-amber-700';
+    }
+    return `
+      <div onclick="markNotificationRead('${n.remote_id}')" class="p-3 ${boxCls} border rounded-xl cursor-pointer transition-all hover:opacity-90">
+        <div class="flex items-center justify-between mb-0.5">
+          <span class="text-[10px] font-bold ${badgeCls}">${n.sender || '학급 알림'}</span>
+          ${isUnread ? '<span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>' : ''}
+        </div>
+        <p class="font-semibold text-slate-800">${n.title || ''}</p>
+        ${n.message ? `<p class="text-[11px] text-slate-600 mt-0.5 leading-relaxed">${n.message}</p>` : ''}
+        <p class="text-[10px] text-slate-400 mt-1">${n.created_at || ''}</p>
+      </div>
+    `;
+  }).join('');
+}
+
+async function markNotificationRead(remoteId) {
+  const item = (mockData.notifications || []).find(n => n.remote_id === remoteId);
+  if (item) {
+    item.is_read = 1;
+    renderNotificationsModal();
+  }
+  if (gasApi.isConfigured() && remoteId) {
+    gasApi.post('mark_notification_read', { remote_id: remoteId }).catch(() => {});
+  }
 }
 
 // Login & Role Switching
@@ -323,15 +213,12 @@ function selectRole(role) {
   if (role === 'student') {
     idLabel.innerText = "학번 (5자리)";
     idInput.placeholder = "학번 5자리(예: 10315)";
-    idInput.value = "10315";
   } else if (role === 'parent') {
     idLabel.innerText = "학부모 아이디";
-    idInput.placeholder = "휴대폰 번호 또는 학부모 ID";
-    idInput.value = "P-010-8899-7711";
+    idInput.placeholder = "학부모 ID(예: parent01)";
   } else {
     idLabel.innerText = "교사 교원번호/ID";
-    idInput.placeholder = "나이스 교원 인증 ID";
-    idInput.value = "T-2024091";
+    idInput.placeholder = "교사 ID(예: teacher01)";
   }
 }
 
@@ -354,10 +241,14 @@ async function handleLogin(e) {
         _applyAuthenticatedUser(res.user);
       }
       await refreshFromGas(false);
+      if ('Notification' in window && Notification.permission === 'granted') {
+        subscribeToWebPush(true).catch(() => {});
+      }
     } catch (err) {
       if (err && err.isDemo) {
         mockData.currentUser.role = state.activeRole;
-        showToast('데모 모드로 로그인되었습니다.', 'ℹ️');
+        mockData.currentUser.userId = userId;
+        showToast('데모 모드로 로그인되었습니다 (연동된 시트 없음).', 'ℹ️');
       } else {
         showToast(`로그인 실패: ${err.message}`, '⚠️');
         return;
@@ -365,9 +256,8 @@ async function handleLogin(e) {
     }
   } else {
     mockData.currentUser.role = state.activeRole;
-    if (gasApi.isConfigured()) {
-      refreshFromGas(false).catch(() => {});
-    }
+    mockData.currentUser.userId = userId;
+    showToast('로컬 데모 모드로 실행 중입니다.', 'ℹ️');
   }
 
   applyRoleUI();
@@ -380,24 +270,30 @@ async function handleLogin(e) {
 
 function _applyAuthenticatedUser(user) {
   const role = (user.role || state.activeRole).toLowerCase();
-  const grade = user.grade || '1';
-  const classNo = user.class_no || '3';
-  const rawName = user.name || mockData.currentUser.studentName;
+  const grade = user.grade !== undefined && user.grade !== '' ? String(user.grade) : '';
+  const classNo = user.class_no !== undefined && user.class_no !== '' ? String(user.class_no) : '';
+  const rawName = user.name || '';
   const masked = rawName.length >= 2 ? rawName[0] + 'OO' : rawName;
+  const gradeClass = (grade && classNo) ? `${grade}학년 ${classNo}반` : '';
 
   mockData.currentUser = {
     ...mockData.currentUser,
     role,
     userId: user.teacher_id || user.student_id || user.parent_id || user.remote_id || '',
-    studentId: user.student_id || mockData.currentUser.studentId,
-    studentName: role === 'parent' ? (user.student_name || mockData.currentUser.studentName) : rawName,
+    studentId: user.student_id || '',
+    studentName: role === 'parent' ? (user.student_name || '') : rawName,
     maskedName: masked,
-    parentName: role === 'parent' ? rawName : `${masked} 학부모님`,
-    grade: String(grade),
-    classNo: String(classNo),
-    gradeClass: `${grade}학년 ${classNo}반`,
-    schoolName: user.school_name || mockData.currentUser.schoolName,
-    teacherName: role === 'teacher' ? rawName : mockData.currentUser.teacherName
+    parentName: role === 'parent' ? rawName : (masked ? `${masked} 학부모님` : ''),
+    grade,
+    classNo,
+    gradeClass,
+    schoolName: user.school_name || '',
+    teacherName: role === 'teacher' ? rawName : (mockData.currentUser.teacherName || ''),
+    subject: user.subject || '',
+    phone: user.phone || '',
+    consultationHours: user.consultation_hours || '',
+    neisOfficeCode: user.neis_office_code || '',
+    neisSchoolCode: user.neis_school_code || ''
   };
 }
 
@@ -426,27 +322,71 @@ async function refreshFromGas(showFeedback = true) {
   }
 }
 
+function _getKoreanTodayDayChar() {
+  return ['일', '월', '화', '수', '목', '금', '토'][new Date().getDay()];
+}
+
 function hydrateMockDataFromBundle(bundle) {
   if (!bundle || !bundle.ok) return;
 
-  // 1. 교사 & 상담 ON/OFF 상태
-  if (Array.isArray(bundle.teachers) && bundle.teachers.length > 0) {
-    const t = bundle.teachers[0];
-    mockData.currentUser.teacherName = t.name || mockData.currentUser.teacherName;
-    mockData.currentUser.schoolName = t.school_name || mockData.currentUser.schoolName;
-    mockData.isCounselingOpen = String(t.consultation_enabled) === '1' || t.consultation_enabled === true;
+  // 1. 학생 목록 (재적 인원 및 미제출자 비교용)
+  if (Array.isArray(bundle.students)) {
+    mockData.students = bundle.students;
+    if (state.activeRole !== 'teacher' && bundle.students.length > 0 && !mockData.currentUser.grade) {
+      const me = bundle.students[0];
+      mockData.currentUser.grade = String(me.grade || '');
+      mockData.currentUser.classNo = String(me.class_no || '');
+      mockData.currentUser.gradeClass = (me.grade && me.class_no) ? `${me.grade}학년 ${me.class_no}반` : '';
+    }
   }
 
-  // 2. 서류 규정
-  if (Array.isArray(bundle.doc_rules) && bundle.doc_rules.length > 0) {
+  // 2. 교사 & 상담 ON/OFF 상태
+  if (Array.isArray(bundle.teachers)) {
+    const cu = mockData.currentUser;
+    let t = null;
+    if (state.activeRole === 'teacher' && cu.userId) {
+      t = bundle.teachers.find(x =>
+        String(x.teacher_id || '') === String(cu.userId) || String(x.remote_id || '') === String(cu.userId)
+      );
+    } else if (cu.grade && cu.classNo) {
+      t = bundle.teachers.find(x =>
+        String(x.grade || '') === String(cu.grade) && String(x.class_no || '') === String(cu.classNo)
+      );
+    }
+    if (!t && bundle.teachers.length > 0) {
+      t = bundle.teachers[0];
+    }
+    if (t) {
+      mockData.currentUser.teacherName = t.name || mockData.currentUser.teacherName || '';
+      mockData.currentUser.schoolName = t.school_name || mockData.currentUser.schoolName || '';
+      if (state.activeRole === 'teacher') {
+        mockData.currentUser.grade = t.grade !== undefined && t.grade !== '' ? String(t.grade) : mockData.currentUser.grade;
+        mockData.currentUser.classNo = t.class_no !== undefined && t.class_no !== '' ? String(t.class_no) : mockData.currentUser.classNo;
+        mockData.currentUser.gradeClass = (mockData.currentUser.grade && mockData.currentUser.classNo)
+          ? `${mockData.currentUser.grade}학년 ${mockData.currentUser.classNo}반`
+          : '';
+        mockData.currentUser.subject = t.subject || '';
+        mockData.currentUser.phone = t.phone || '';
+        mockData.currentUser.consultationHours = t.consultation_hours || '';
+        mockData.currentUser.neisOfficeCode = t.neis_office_code || '';
+        mockData.currentUser.neisSchoolCode = t.neis_school_code || '';
+      }
+      mockData.isCounselingOpen = String(t.consultation_enabled) === '1' || t.consultation_enabled === true;
+    } else {
+      mockData.isCounselingOpen = false;
+    }
+  }
+
+  // 3. 서류 규정
+  if (Array.isArray(bundle.doc_rules)) {
     const abs = bundle.doc_rules.find(r => r.rule_code === 'ABSENCE_REPORT');
     const fld = bundle.doc_rules.find(r => r.rule_code === 'FIELD_TRIP');
     if (abs && abs.due_business_days) mockData.rules.sickDays = parseInt(abs.due_business_days, 10) || 5;
     if (fld && fld.due_business_days) mockData.rules.fieldPostDays = parseInt(fld.due_business_days, 10) || 5;
   }
 
-  // 3. 서류 추적 (urgentDocuments)
-  if (Array.isArray(bundle.doc_tracking) && bundle.doc_tracking.length > 0) {
+  // 4. 서류 추적 (urgentDocuments)
+  if (Array.isArray(bundle.doc_tracking)) {
     mockData.urgentDocuments = bundle.doc_tracking.map(d => {
       const rawStatus = (d.status || '').trim();
       let status = 'pending';
@@ -469,8 +409,8 @@ function hydrateMockDataFromBundle(bundle) {
     });
   }
 
-  // 4. 일일 출결 (학생 이력 + 교사용 오늘 출결)
-  if (Array.isArray(bundle.attendance) && bundle.attendance.length > 0) {
+  // 5. 일일 출결 (학생 이력 + 교사용 오늘 출결)
+  if (Array.isArray(bundle.attendance)) {
     mockData.attendanceHistory = bundle.attendance.map(a => ({
       id: a.remote_id,
       period: a.date || '',
@@ -478,7 +418,9 @@ function hydrateMockDataFromBundle(bundle) {
       reason: a.reason || '',
       docStatus: String(a.teacher_confirmed) === '1' ? '교사 최종완료' : '접수됨'
     }));
-    mockData.teacherTodayAttendance = bundle.attendance.map(a => ({
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayAtt = bundle.attendance.filter(a => !a.date || a.date === todayStr);
+    mockData.teacherTodayAttendance = todayAtt.map(a => ({
       id: a.remote_id,
       studentId: String(a.student_id || ''),
       name: a.student_name || '',
@@ -488,13 +430,33 @@ function hydrateMockDataFromBundle(bundle) {
     }));
   }
 
-  // 5. 시간표 (기본 + 변동 병합)
-  if (Array.isArray(bundle.timetable_base) && bundle.timetable_base.length > 0) {
+  // 6. 시간표 (오늘 요일 필터 + 변동 병합)
+  if (Array.isArray(bundle.timetable_base)) {
     const todayStr = new Date().toISOString().split('T')[0];
+    const dayChar = _getKoreanTodayDayChar();
     const changes = Array.isArray(bundle.timetable_changes) ? bundle.timetable_changes : [];
-    mockData.timetable = bundle.timetable_base.map(tb => {
+    const cu = mockData.currentUser;
+
+    const stuTitleEl = document.getElementById('studentTimetableTitle');
+    if (stuTitleEl) stuTitleEl.innerText = `오늘의 시간표 (${dayChar}요일)`;
+
+    const todayBase = bundle.timetable_base
+      .filter(tb => {
+        const d = String(tb.day_of_week || '').trim();
+        return !d || d.startsWith(dayChar);
+      })
+      .sort((a, b) => Number(a.period || 0) - Number(b.period || 0));
+
+    const classBase = (cu.grade && cu.classNo)
+      ? todayBase.filter(tb => String(tb.grade || '') === String(cu.grade) && String(tb.class_no || '') === String(cu.classNo))
+      : todayBase;
+
+    mockData.timetable = classBase.map(tb => {
       const chg = changes.find(c =>
-        String(c.period) === String(tb.period) && (!c.date || c.date === todayStr)
+        String(c.period) === String(tb.period) &&
+        (!c.grade || String(c.grade) === String(tb.grade)) &&
+        (!c.class_no || String(c.class_no) === String(tb.class_no)) &&
+        (!c.date || c.date === todayStr)
       );
       if (chg) {
         return {
@@ -514,10 +476,31 @@ function hydrateMockDataFromBundle(bundle) {
         time: `${8 + Number(tb.period || 1)}:50`
       };
     });
+
+    // 교사 본인 시간표 구성 (teacherName 일치 행)
+    const tName = String(cu.teacherName || '').trim();
+    const teacherBase = tName
+      ? todayBase.filter(tb => String(tb.teacher_name || '').trim() === tName)
+      : [];
+    mockData.teacherSchedule = teacherBase.map(tb => {
+      const chg = changes.find(c =>
+        String(c.period) === String(tb.period) &&
+        String(c.grade || '') === String(tb.grade || '') &&
+        String(c.class_no || '') === String(tb.class_no || '') &&
+        (!c.date || c.date === todayStr)
+      );
+      const targetStr = (tb.grade && tb.class_no) ? `${tb.grade}학년 ${tb.class_no}반` : '';
+      return {
+        period: `${tb.period}교시`,
+        target: targetStr,
+        subject: chg ? (chg.changed_subject || tb.subject) : (tb.subject || ''),
+        changed: Boolean(chg)
+      };
+    });
   }
 
-  // 6. 급식 식단표 (NEIS)
-  if (Array.isArray(bundle.meals) && bundle.meals.length > 0) {
+  // 7. 급식 식단표 (NEIS)
+  if (Array.isArray(bundle.meals)) {
     const todayStr = new Date().toISOString().split('T')[0];
     const todayMeals = bundle.meals.filter(m => m.meal_date === todayStr);
     const pool = todayMeals.length > 0 ? todayMeals : bundle.meals;
@@ -528,17 +511,20 @@ function hydrateMockDataFromBundle(bundle) {
       menu: (m.menu_text || '').split('\n').filter(Boolean).map(name => ({ name: name.trim(), allergy: '' })),
       allergyNotice: m.allergy_info || '나이스(NEIS) 식단 연동됨'
     });
-    if (lunch) mockData.meals.lunch = mapMeal(lunch);
-    if (dinner) mockData.meals.dinner = mapMeal(dinner);
+    mockData.meals = {
+      lunch: lunch ? mapMeal(lunch) : null,
+      dinner: dinner ? mapMeal(dinner) : null
+    };
   }
 
-  // 7. 가정통신문 목록 & 회신
-  if (Array.isArray(bundle.notices) && bundle.notices.length > 0) {
+  // 8. 가정통신문 목록 & 회신
+  if (Array.isArray(bundle.notices)) {
     const replies = Array.isArray(bundle.notice_replies) ? bundle.notice_replies : [];
     const cuId = String(mockData.currentUser.studentId || '');
+    const classTotal = mockData.students.length;
     mockData.circulars = bundle.notices.map(n => {
       const nReplies = replies.filter(r => r.notice_id === n.remote_id);
-      const myReply = nReplies.find(r => String(r.student_id) === cuId);
+      const myReply = cuId ? nReplies.find(r => String(r.student_id) === cuId) : null;
       return {
         id: n.remote_id,
         docNum: n.category || '가정통신문',
@@ -546,25 +532,57 @@ function hydrateMockDataFromBundle(bundle) {
         deadline: n.due_date ? `${n.due_date} 마감` : '상시',
         status: myReply ? 'submitted' : 'pending',
         submittedCount: nReplies.length,
-        totalCount: Math.max(nReplies.length, 28),
+        totalCount: classTotal > 0 ? classTotal : nReplies.length,
+        submittedStudentIds: nReplies.map(r => String(r.student_id || '')),
         content: n.content || '',
         meta: n.attachment_url ? [`첨부: ${n.attachment_url}`] : [`작성: ${n.author_name || '담임교사'}`]
       };
     });
   }
 
-  // 8. 1:1 상담 채팅
-  if (Array.isArray(bundle.chat_messages) && bundle.chat_messages.length > 0) {
+  // 9. 학급회비
+  if (Array.isArray(bundle.budget)) {
+    let income = 0;
+    let expense = 0;
+    const transactions = bundle.budget.map(b => {
+      const amt = Number(b.amount || 0) || 0;
+      const bType = String(b.type || 'expense').toLowerCase() === 'income' ? 'income' : 'expense';
+      if (bType === 'income') income += amt;
+      else expense += amt;
+      return {
+        id: b.remote_id,
+        date: b.date || '',
+        title: b.title || '',
+        type: bType,
+        amount: amt,
+        store: b.store || '-',
+        card: b.card || '-',
+        receiptUrl: b.receipt_url || ''
+      };
+    });
+    mockData.budget = {
+      balance: income - expense,
+      income,
+      expense,
+      transactions
+    };
+  }
+
+  // 10. 1:1 상담 채팅
+  if (Array.isArray(bundle.chat_messages)) {
     const roomMap = {};
     bundle.chat_messages.forEach(c => {
       const rId = c.room_id || 'ROOM-DEFAULT';
       if (!roomMap[rId]) {
+        const stuIdFromRoom = rId.replace('ROOM-', '');
+        const stuObj = mockData.students.find(s => String(s.student_id) === stuIdFromRoom);
+        const stuName = stuObj ? stuObj.name : (c.sender_role !== 'teacher' ? (c.sender_name || stuIdFromRoom) : stuIdFromRoom);
         roomMap[rId] = {
           roomId: rId,
-          studentId: rId.replace('ROOM-', ''),
-          studentName: c.sender_role !== 'teacher' ? (c.sender_name || '학생') : '학생',
-          partnerLabel: c.sender_role !== 'teacher' ? (c.sender_name || rId) : rId,
-          subtitle: rId,
+          studentId: stuIdFromRoom,
+          studentName: stuName || '학생',
+          partnerLabel: stuName ? `${stuName} (${stuIdFromRoom})` : rId,
+          subtitle: stuObj ? `${stuObj.grade}학년 ${stuObj.class_no}반 ${stuObj.student_no || ''}번 ${stuObj.name}` : rId,
           unread: 0,
           messages: []
         };
@@ -579,13 +597,13 @@ function hydrateMockDataFromBundle(bundle) {
       });
     });
     mockData.chatRooms = Object.values(roomMap);
-    if (mockData.chatRooms.length > 0) {
+    if (mockData.chatRooms.length > 0 && !state.activeTeacherChatRoomId) {
       state.activeTeacherChatRoomId = mockData.chatRooms[0].roomId;
     }
   }
 
-  // 9. PC 원격 예약 작업 (Tasks 시트)
-  if (Array.isArray(bundle.remote_tasks) && bundle.remote_tasks.length > 0) {
+  // 11. PC 원격 예약 작업 (Tasks 시트)
+  if (Array.isArray(bundle.remote_tasks)) {
     mockData.remoteTasks = bundle.remote_tasks.map(t => ({
       id: t.remote_id,
       type: t.title || t.task_type || '원격 작업',
@@ -595,6 +613,17 @@ function hydrateMockDataFromBundle(bundle) {
       log: t.memo || (t.exec_status === 'done' ? 'PC 작업 완료' : 'PC EduFlow 워커 대기 중')
     }));
   }
+
+  // 12. 알림 (Notifications 시트)
+  if (Array.isArray(bundle.notifications)) {
+    mockData.notifications = [...bundle.notifications].reverse();
+    const hasUnread = mockData.notifications.some(n => String(n.is_read) !== '1');
+    const dot = document.getElementById('unreadDot');
+    if (dot) dot.classList.toggle('hidden', !hasUnread);
+    renderNotificationsModal();
+  }
+
+  applyRoleUI();
 }
 
 function applyRoleUI() {
@@ -602,17 +631,23 @@ function applyRoleUI() {
   const subElem = document.getElementById('userSubDisplay');
   const badgeElem = document.getElementById('userBadge');
   const avatarElem = document.getElementById('userAvatarText');
+  const profileBtn = document.getElementById('teacherProfileHeaderBtn');
 
   const studentNav = document.getElementById('studentBottomNav');
   const teacherNav = document.getElementById('teacherBottomNav');
 
+  const cu = mockData.currentUser;
+  const gc = cu.gradeClass || '';
+  const school = cu.schoolName || '소속 학교 미설정';
+  const tName = cu.teacherName || '담임교사';
+
   if (state.activeRole === 'teacher') {
-    const tName = mockData.currentUser.teacherName || '담임';
-    nameElem.innerText = `${mockData.currentUser.gradeClass} ${tName} 담임교사`;
-    subElem.innerText = `${mockData.currentUser.schoolName} ${mockData.currentUser.gradeClass} · 관리자 모드`;
+    nameElem.innerText = `${gc ? gc + ' ' : ''}${tName} 교사`;
+    subElem.innerText = `${school}${gc ? ' ' + gc : ''} · 관리자 모드`;
     badgeElem.innerText = "교사";
     badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-purple-100 text-purple-700";
-    avatarElem.innerText = tName[0] || "교";
+    avatarElem.innerText = (tName && tName[0]) || "교";
+    if (profileBtn) profileBtn.classList.remove('hidden');
 
     studentNav.classList.add('hidden');
     teacherNav.classList.remove('hidden');
@@ -621,18 +656,31 @@ function applyRoleUI() {
       switchTeacherBottomTab('home');
     }
   } else {
+    if (profileBtn) profileBtn.classList.add('hidden');
     if (state.activeRole === 'student') {
-      nameElem.innerText = `${mockData.currentUser.gradeClass} ${mockData.currentUser.maskedName} 학생`;
+      const stuDisplay = cu.maskedName || cu.studentName || cu.userId || '학생';
+      nameElem.innerText = `${gc ? gc + ' ' : ''}${stuDisplay} 학생`;
       badgeElem.innerText = "학생";
       badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-indigo-100 text-indigo-700";
-      avatarElem.innerText = (mockData.currentUser.maskedName || "학")[0];
+      avatarElem.innerText = (stuDisplay && stuDisplay[0]) || "학";
     } else {
-      nameElem.innerText = `${mockData.currentUser.gradeClass} ${mockData.currentUser.parentName}`;
+      const pDisplay = cu.parentName || cu.userId || '학부모';
+      nameElem.innerText = `${gc ? gc + ' ' : ''}${pDisplay}`;
       badgeElem.innerText = "학부모";
       badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700";
       avatarElem.innerText = "학";
     }
-    subElem.innerText = `${mockData.currentUser.schoolName} ${mockData.currentUser.gradeClass} · 담임 ${mockData.currentUser.teacherName} 선생님`;
+    subElem.innerText = `${school}${gc ? ' ' + gc : ''} · 담임 ${tName} 선생님`;
+
+    const cAvatar = document.getElementById('counselingTeacherAvatar');
+    const cName = document.getElementById('counselingTeacherName');
+    const cClass = document.getElementById('counselingTeacherClass');
+    if (cAvatar) cAvatar.innerText = (tName && tName[0]) || '담';
+    if (cName) cName.innerText = `${tName} 담임선생님`;
+    if (cClass) cClass.innerText = gc ? `(${gc})` : '';
+
+    const bLabel = document.getElementById('budgetClassLabel');
+    if (bLabel) bLabel.innerText = `${gc ? gc + ' ' : ''}학급회비 잔액`;
 
     teacherNav.classList.add('hidden');
     teacherNav.classList.remove('flex');
@@ -667,6 +715,107 @@ function renderAll() {
   if (typeof renderTeacherChatRooms === 'function') renderTeacherChatRooms();
 }
 
+// PWA Standalone Push Permission Gate
+function isStandalonePwa() {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+
+function _urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+function checkAndEnforcePwaPushGate() {
+  const gateModal = document.getElementById('pwaPushGateModal');
+  const deniedGuide = document.getElementById('pwaPushDeniedGuide');
+  if (!gateModal) return;
+
+  if (isStandalonePwa() && 'Notification' in window && Notification.permission !== 'granted') {
+    gateModal.classList.remove('hidden');
+    if (deniedGuide) {
+      deniedGuide.classList.toggle('hidden', Notification.permission !== 'denied');
+    }
+  } else {
+    gateModal.classList.add('hidden');
+  }
+}
+
+async function subscribeToWebPush(silent = false) {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return false;
+  }
+  const reg = await navigator.serviceWorker.ready;
+  let subscription = await reg.pushManager.getSubscription();
+
+  if (!subscription) {
+    let publicKey = '';
+    try {
+      const resp = await fetch('/api/push', { method: 'GET' });
+      const json = await resp.json();
+      publicKey = (json && json.publicKey) ? json.publicKey.trim() : '';
+    } catch (_) {
+      publicKey = '';
+    }
+    if (!publicKey) {
+      if (!silent) showToast('서버 VAPID 공개키가 설정되지 않아 푸시 구독을 건너뜁니다.', 'ℹ️');
+      return false;
+    }
+    subscription = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: _urlBase64ToUint8Array(publicKey)
+    });
+  }
+
+  const subJson = subscription.toJSON ? subscription.toJSON() : JSON.parse(JSON.stringify(subscription));
+  const cu = mockData.currentUser;
+  if (gasApi.isConfigured()) {
+    await gasApi.post('save_push_subscription', {
+      data: {
+        user_id: cu.userId || cu.studentId || 'anonymous',
+        role: state.activeRole,
+        endpoint: subJson.endpoint || '',
+        p256dh: (subJson.keys && subJson.keys.p256dh) || '',
+        auth: (subJson.keys && subJson.keys.auth) || '',
+        user_agent: navigator.userAgent || ''
+      }
+    });
+  }
+  return true;
+}
+
+async function requestPwaNotificationPermission() {
+  if (!('Notification' in window)) {
+    showToast('이 브라우저는 알림 기능을 지원하지 않습니다.', '⚠️');
+    return;
+  }
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      try {
+        await subscribeToWebPush(true);
+      } catch (err) {
+        console.warn('Web Push 구독 저장 중 오류:', err);
+      }
+      const gateModal = document.getElementById('pwaPushGateModal');
+      if (gateModal) gateModal.classList.add('hidden');
+      showToast('알림 권한이 허용되었습니다.', '🔔');
+    } else {
+      const deniedGuide = document.getElementById('pwaPushDeniedGuide');
+      if (deniedGuide) deniedGuide.classList.remove('hidden');
+      showToast('알림 권한이 거부되었습니다. 기기 설정에서 허용해 주세요.', '⚠️');
+    }
+  } catch (err) {
+    showToast(`알림 권한 요청 오류: ${err.message}`, '⚠️');
+  }
+}
+
 // Initialize Dates, Canvas & Service Worker on Load
 window.addEventListener('DOMContentLoaded', () => {
   if ('serviceWorker' in navigator) {
@@ -683,4 +832,6 @@ window.addEventListener('DOMContentLoaded', () => {
   if (typeof initSignaturePad === 'function') {
     initSignaturePad();
   }
+
+  checkAndEnforcePwaPushGate();
 });

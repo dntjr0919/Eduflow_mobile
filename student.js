@@ -30,8 +30,10 @@ function switchBottomTab(tabName) {
 function renderUrgentDocuments() {
   const container = document.getElementById('urgentDocContainer');
   const badge = document.getElementById('pendingCountBadge');
-  const targetStuId = String(mockData.currentUser.studentId || '10315');
-  const myDocs = mockData.urgentDocuments.filter(d => String(d.studentId) === targetStuId && d.status !== 'closed');
+  const targetStuId = String(mockData.currentUser.studentId || mockData.currentUser.userId || '');
+  const myDocs = targetStuId
+    ? mockData.urgentDocuments.filter(d => String(d.studentId) === targetStuId && d.status !== 'closed')
+    : [];
   const pendingDocs = myDocs.filter(d => d.status === 'pending');
 
   const attDot = document.getElementById('attNavDot');
@@ -43,6 +45,11 @@ function renderUrgentDocuments() {
     badge.className = "text-[11px] px-2 py-0.5 font-bold rounded-full bg-red-100 text-red-600";
     badge.innerText = `미제출 ${pendingDocs.length}건`;
     if (attDot) attDot.classList.remove('hidden');
+  }
+
+  if (myDocs.length === 0) {
+    container.innerHTML = `<div class="bg-white border border-slate-200/80 rounded-2xl p-4 text-center text-xs text-slate-400">현재 제출 대상 증빙서류가 없습니다.</div>`;
+    return;
   }
 
   container.innerHTML = myDocs.map(doc => {
@@ -128,6 +135,22 @@ async function handleDocSubmit(docId) {
 
 function renderTimetable() {
   const container = document.getElementById('timetableList');
+  const changeBadge = document.getElementById('studentTimetableChangeBadge');
+  const changedItems = mockData.timetable.filter(t => t.isChanged);
+  if (changeBadge) {
+    if (changedItems.length > 0) {
+      changeBadge.classList.remove('hidden');
+      changeBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>${changedItems.map(c => c.period + '교시').join(', ')} 변동`;
+    } else {
+      changeBadge.classList.add('hidden');
+    }
+  }
+
+  if (mockData.timetable.length === 0) {
+    container.innerHTML = `<div class="w-full py-5 text-center text-xs text-slate-400">등록된 시간표가 없습니다.</div>`;
+    return;
+  }
+
   container.innerHTML = mockData.timetable.map(t => t.isChanged ? `
     <div class="shrink-0 w-24 bg-amber-50/90 border border-amber-300 rounded-xl p-2.5 flex flex-col justify-between text-center relative shadow-xs">
       <span class="absolute -top-1.5 -right-1.5 px-1.5 py-0.2 bg-amber-500 text-white text-[9px] font-bold rounded-full shadow-xs">변동</span>
@@ -160,6 +183,10 @@ function switchMealTab(tab) {
 function renderMeals() {
   const container = document.getElementById('mealContentBox');
   const meal = mockData.meals[state.activeMealTab];
+  if (!meal) {
+    container.innerHTML = `<div class="py-5 text-center text-xs text-slate-400">등록된 ${state.activeMealTab === 'lunch' ? '중식' : '석식'} 식단표가 없습니다.</div>`;
+    return;
+  }
   container.innerHTML = `
     <div class="flex items-center justify-between mb-2">
       <span class="text-[11px] font-bold text-slate-700">🍽️ ${state.activeMealTab === 'lunch' ? '중식 식단' : '석식 식단'}</span>
@@ -205,7 +232,7 @@ async function handleAttendanceSubmit(e) {
   const periodStr = sDate === eDate ? sDate : `${sDate} ~ ${eDate}`;
   const attId = 'ATT-' + Date.now();
   const docId = 'DOC-' + Date.now();
-  const stuId = String(mockData.currentUser.studentId || '10315');
+  const stuId = String(mockData.currentUser.studentId || mockData.currentUser.userId || '');
   const stuName = mockData.currentUser.studentName || '학생';
   const ruleCode = state.selectedAttType === '교외체험학습' ? 'FIELD_TRIP' : 'ABSENCE_REPORT';
   const docName = state.selectedAttType === '교외체험학습' ? '체험학습 신청서' : '출결신고서';
@@ -282,6 +309,10 @@ async function handleAttendanceSubmit(e) {
 function renderAttendanceHistory() {
   const list = document.getElementById('attendanceHistoryList');
   document.getElementById('attHistoryCount').innerText = `총 ${mockData.attendanceHistory.length}건`;
+  if (mockData.attendanceHistory.length === 0) {
+    list.innerHTML = `<div class="bg-white p-5 rounded-2xl border border-slate-200/80 text-center text-xs text-slate-400">등록된 출결 이력이 없습니다.</div>`;
+    return;
+  }
   list.innerHTML = mockData.attendanceHistory.map(item => {
     let badgeStyle = 'bg-red-100 text-red-700';
     if (item.docStatus === '학생확인완료') badgeStyle = 'bg-blue-100 text-blue-700';
@@ -308,6 +339,10 @@ function switchLettersSubTab(sub) {
 
 function renderCirculars() {
   const list = document.getElementById('circularsList');
+  if (mockData.circulars.length === 0) {
+    list.innerHTML = `<div class="bg-white p-5 rounded-2xl border border-slate-200/80 text-center text-xs text-slate-400">등록된 가정통신문이 없습니다.</div>`;
+    return;
+  }
   list.innerHTML = mockData.circulars.map(c => `
     <div onclick="openCircularModal('${c.id}')" class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-indigo-300 transition-all cursor-pointer flex items-center justify-between gap-3">
       <div class="space-y-1">
@@ -418,7 +453,7 @@ async function submitCircularSignature() {
       await gasApi.post('submit_notice_reply', {
         data: {
           notice_id: cId,
-          student_id: mockData.currentUser.studentId || '10315',
+          student_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
           student_name: mockData.currentUser.studentName || '학생',
           parent_id: mockData.currentUser.userId || '',
           parent_name: mockData.currentUser.parentName || '학부모',
@@ -435,10 +470,14 @@ async function submitCircularSignature() {
 }
 
 function renderBudget() {
-  document.getElementById('budgetBalance').innerText = mockData.budget.balance.toLocaleString() + '원';
-  document.getElementById('budgetIncome').innerText = mockData.budget.income.toLocaleString() + '원';
-  document.getElementById('budgetExpense').innerText = mockData.budget.expense.toLocaleString() + '원';
+  document.getElementById('budgetBalance').innerText = (mockData.budget.balance || 0).toLocaleString() + '원';
+  document.getElementById('budgetIncome').innerText = (mockData.budget.income || 0).toLocaleString() + '원';
+  document.getElementById('budgetExpense').innerText = (mockData.budget.expense || 0).toLocaleString() + '원';
   const list = document.getElementById('budgetTransactionsList');
+  if (!mockData.budget.transactions || mockData.budget.transactions.length === 0) {
+    list.innerHTML = `<div class="bg-white p-5 rounded-xl border border-slate-200/80 text-center text-xs text-slate-400">등록된 학급회비 입출금 내역이 없습니다.</div>`;
+    return;
+  }
   list.innerHTML = mockData.budget.transactions.map(tx => `
     <div class="bg-white p-3 rounded-xl border border-slate-200/80 flex items-center justify-between">
       <div>
@@ -460,9 +499,10 @@ function openReceiptModal(txId) {
   if (!tx) return;
   document.getElementById('receiptModalBody').innerHTML = `
     <p class="font-bold text-slate-800 text-sm border-b border-slate-200 pb-2">${tx.store}</p>
-    <p>거래일시: 2025-${tx.date.replace('/', '-')} 14:22:10</p>
+    <p>거래일자: ${tx.date}</p>
     <p>적요항목: ${tx.title}</p>
     <p>결제수단: ${tx.card}</p>
+    ${tx.receiptUrl ? `<p>증빙링크: <a href="${tx.receiptUrl}" target="_blank" rel="noopener" class="text-indigo-600 underline">영수증 원본 보기</a></p>` : ''}
     <p class="font-bold text-indigo-700 pt-2 border-t border-slate-200">합계금액: ${tx.amount.toLocaleString()}원</p>
   `;
   openModal('receiptModal');
@@ -473,12 +513,39 @@ function closeReceiptModal() {
 }
 
 // --- TAB 4: 1:1 Counseling & Chat ---
+function _getOrCreateStudentChatRoom() {
+  const stuId = String(mockData.currentUser.studentId || mockData.currentUser.userId || 'ME');
+  let room = mockData.chatRooms.find(r => String(r.studentId) === stuId) || mockData.chatRooms[0];
+  if (!room) {
+    room = {
+      roomId: `ROOM-${stuId}`,
+      studentId: stuId,
+      studentName: mockData.currentUser.studentName || '학생',
+      partnerLabel: mockData.currentUser.studentName || stuId,
+      subtitle: mockData.currentUser.gradeClass || '',
+      unread: 0,
+      messages: []
+    };
+    mockData.chatRooms.push(room);
+  }
+  return room;
+}
+
 function renderStudentChat() {
   const banner = document.getElementById('counselingCtaBanner');
   banner.classList.toggle('hidden', !mockData.isCounselingOpen);
 
-  const room = mockData.chatRooms[0];
+  const teacherLabel = mockData.currentUser.teacherName
+    ? `${mockData.currentUser.teacherName} 담임선생님`
+    : '담임선생님';
+  const room = _getOrCreateStudentChatRoom();
   const container = document.getElementById('chatMessagesContainer');
+
+  if (!room.messages || room.messages.length === 0) {
+    container.innerHTML = `<div class="text-center py-10 text-xs text-slate-400">${teacherLabel}과의 1:1 비공개 상담방입니다. 메시지를 입력해 대화를 시작해 보세요.</div>`;
+    return;
+  }
+
   container.innerHTML = room.messages.map(m => m.sender === 'user' ? `
     <div class="flex flex-col items-end">
       <div class="bg-indigo-600 text-white text-xs px-3.5 py-2.5 rounded-2xl rounded-tr-xs max-w-[80%] shadow-xs leading-relaxed">${m.text}</div>
@@ -486,7 +553,7 @@ function renderStudentChat() {
     </div>
   ` : `
     <div class="flex flex-col items-start">
-      <span class="text-[10px] font-semibold text-slate-500 mb-1">박은혜 담임선생님</span>
+      <span class="text-[10px] font-semibold text-slate-500 mb-1">${teacherLabel}</span>
       <div class="bg-white text-slate-800 border border-slate-200/80 text-xs px-3.5 py-2.5 rounded-2xl rounded-tl-xs max-w-[80%] shadow-xs leading-relaxed">${m.text}</div>
       <span class="text-[9px] text-slate-400 mt-1">${m.time}</span>
     </div>
@@ -500,7 +567,7 @@ async function sendChatMessage() {
   if (!text) return;
   const now = new Date();
   const timeStr = `오늘 ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
-  const room = mockData.chatRooms[0];
+  const room = _getOrCreateStudentChatRoom();
   room.messages.push({ sender: 'user', text, time: timeStr });
   room.unread += 1;
   input.value = '';
@@ -511,9 +578,9 @@ async function sendChatMessage() {
     try {
       await gasApi.post('send_chat_message', {
         data: {
-          room_id: room.roomId || `ROOM-${mockData.currentUser.studentId}`,
-          sender_id: mockData.currentUser.studentId || '10315',
-          sender_name: mockData.currentUser.studentName || '학생',
+          room_id: room.roomId,
+          sender_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
+          sender_name: mockData.currentUser.studentName || mockData.currentUser.parentName || '학생',
           sender_role: state.activeRole,
           receiver_id: 'teacher_001',
           message: text,
@@ -541,7 +608,7 @@ async function handleCounselingBooking(e) {
   const topic = document.querySelector('input[name="counselTopic"]:checked').value;
   const notes = document.getElementById('counselNotes').value.trim();
   const msg = `📅 [상담 신청] ${date} / ${slot} / 주제: ${topic}${notes ? ' (' + notes + ')' : ''}`;
-  const room = mockData.chatRooms[0];
+  const room = _getOrCreateStudentChatRoom();
   room.messages.push({ sender: 'user', text: msg, time: '방금 전' });
   room.unread += 1;
   closeCounselingModal();
@@ -552,9 +619,9 @@ async function handleCounselingBooking(e) {
     try {
       await gasApi.post('send_chat_message', {
         data: {
-          room_id: room.roomId || `ROOM-${mockData.currentUser.studentId}`,
-          sender_id: mockData.currentUser.studentId || '10315',
-          sender_name: mockData.currentUser.studentName || '학생',
+          room_id: room.roomId,
+          sender_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
+          sender_name: mockData.currentUser.studentName || mockData.currentUser.parentName || '학생',
           sender_role: state.activeRole,
           receiver_id: 'teacher_001',
           message: msg,

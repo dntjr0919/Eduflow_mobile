@@ -53,32 +53,178 @@ async function toggleCounselingAcceptance(isOpen) {
   }
 }
 
+// Helper: Dispatch Web Push in background (best-effort; sheet notification is primary)
+async function _dispatchWebPush(payload) {
+  try {
+    await fetch('/api/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json;charset=utf-8' },
+      body: JSON.stringify(payload)
+    });
+  } catch (_) {
+    // Web Push 실패 시에도 시트 알림은 정상 저장됨
+  }
+}
+
 function renderTeacherHome() {
+  const toggleEl = document.getElementById('counselingToggleSwitch');
+  const cBadge = document.getElementById('teacherCounselStatusBadge');
+  if (toggleEl) toggleEl.checked = Boolean(mockData.isCounselingOpen);
+  if (cBadge) {
+    cBadge.innerText = mockData.isCounselingOpen ? '접수 ON' : '접수 OFF';
+    cBadge.className = mockData.isCounselingOpen
+      ? 'text-[10px] px-1.5 py-0.2 rounded font-bold bg-indigo-100 text-indigo-700'
+      : 'text-[10px] px-1.5 py-0.2 rounded font-bold bg-slate-100 text-slate-600';
+  }
+
+  const gc = mockData.currentUser.gradeClass || '';
+  const attTitle = document.getElementById('teacherAttClassTitle');
+  if (attTitle) attTitle.innerText = gc ? `오늘 우리 반 출결 현황 (${gc})` : '오늘 우리 반 출결 현황';
+
+  const totalStudents = mockData.students.length;
+  const totalBadge = document.getElementById('teacherTotalStudentsBadge');
+  if (totalBadge) totalBadge.innerText = `재적 ${totalStudents}명 기준`;
+
+  let absentCnt = 0;
+  let lateCnt = 0;
+  let fieldCnt = 0;
+  mockData.teacherTodayAttendance.forEach(item => {
+    const t = item.type || '';
+    if (t.includes('체험학습')) fieldCnt++;
+    else if (t.includes('지각') || t.includes('조퇴')) lateCnt++;
+    else absentCnt++;
+  });
+  const presentCnt = Math.max(0, totalStudents - absentCnt - lateCnt - fieldCnt);
+  const elPres = document.getElementById('summaryPresentCount');
+  const elAbs = document.getElementById('summaryAbsentCount');
+  const elLate = document.getElementById('summaryLateCount');
+  const elField = document.getElementById('summaryFieldCount');
+  if (elPres) elPres.innerText = `${presentCnt}명`;
+  if (elAbs) elAbs.innerText = `${absentCnt}명`;
+  if (elLate) elLate.innerText = `${lateCnt}명`;
+  if (elField) elField.innerText = `${fieldCnt}명`;
+
   const list = document.getElementById('teacherLiveAttList');
-  list.innerHTML = mockData.teacherTodayAttendance.map(item => `
-    <div class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200/70">
-      <div>
-        <div class="flex items-center gap-1.5">
-          <span class="text-xs font-bold text-slate-800">${item.studentId} ${item.name}</span>
-          <span class="text-[10px] px-1.5 py-0.2 rounded font-bold bg-red-100 text-red-700">${item.type}</span>
+  if (mockData.teacherTodayAttendance.length === 0) {
+    list.innerHTML = `<div class="p-4 bg-slate-50 rounded-xl border border-slate-200/70 text-center text-xs text-slate-400">오늘 접수된 출결 변동 내역이 없습니다.</div>`;
+  } else {
+    list.innerHTML = mockData.teacherTodayAttendance.map(item => `
+      <div class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200/70">
+        <div>
+          <div class="flex items-center gap-1.5">
+            <span class="text-xs font-bold text-slate-800">${item.studentId} ${item.name}</span>
+            <span class="text-[10px] px-1.5 py-0.2 rounded font-bold bg-red-100 text-red-700">${item.type}</span>
+          </div>
+          <p class="text-[10px] text-slate-500 mt-0.5">${item.reason}</p>
         </div>
-        <p class="text-[10px] text-slate-500 mt-0.5">${item.reason}</p>
+        ${item.confirmed
+          ? `<span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">확인완료</span>`
+          : `<button onclick="confirmTeacherAtt('${item.id}')" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-lg shadow-xs">교사 확인</button>`
+        }
       </div>
-      ${item.confirmed
-        ? `<span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">확인완료</span>`
-        : `<button onclick="confirmTeacherAtt('${item.id}')" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-lg shadow-xs">교사 확인</button>`
-      }
-    </div>
-  `).join('');
+    `).join('');
+  }
+
+  const dayChar = typeof _getKoreanTodayDayChar === 'function' ? _getKoreanTodayDayChar() : '';
+  const tName = mockData.currentUser.teacherName || '담임';
+  const schedTitle = document.getElementById('teacherScheduleTitle');
+  if (schedTitle) schedTitle.innerText = `${tName} 선생님 오늘 수업 (${dayChar}요일)`;
+
+  const schedChgBadge = document.getElementById('teacherScheduleChangeBadge');
+  const changedScheds = mockData.teacherSchedule.filter(s => s.changed);
+  if (schedChgBadge) {
+    if (changedScheds.length > 0) {
+      schedChgBadge.classList.remove('hidden');
+      schedChgBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>${changedScheds.map(s => s.period).join(', ')} 변동`;
+    } else {
+      schedChgBadge.classList.add('hidden');
+    }
+  }
 
   const sched = document.getElementById('teacherScheduleList');
-  sched.innerHTML = mockData.teacherSchedule.map(s => `
-    <div class="p-2 rounded-xl border text-center ${s.changed ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200/70'}">
-      <span class="text-[10px] font-semibold ${s.changed ? 'text-amber-700' : 'text-slate-400'}">${s.period}</span>
-      <p class="text-xs font-bold text-slate-800 mt-0.5">${s.target}</p>
-      <p class="text-[10px] ${s.changed ? 'text-amber-800 font-bold' : 'text-slate-500'}">${s.subject}</p>
-    </div>
-  `).join('');
+  if (mockData.teacherSchedule.length === 0) {
+    sched.innerHTML = `<div class="col-span-4 py-4 text-center text-xs text-slate-400">오늘 등록된 수업이 없습니다.</div>`;
+  } else {
+    sched.innerHTML = mockData.teacherSchedule.map(s => `
+      <div class="p-2 rounded-xl border text-center ${s.changed ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200/70'}">
+        <span class="text-[10px] font-semibold ${s.changed ? 'text-amber-700' : 'text-slate-400'}">${s.period}</span>
+        <p class="text-xs font-bold text-slate-800 mt-0.5">${s.target}</p>
+        <p class="text-[10px] ${s.changed ? 'text-amber-800 font-bold' : 'text-slate-500'}">${s.subject}</p>
+      </div>
+    `).join('');
+  }
+}
+
+async function syncNeisMealsNow() {
+  if (!gasApi.isConfigured()) {
+    showToast('데모 모드에서는 나이스 급식 동기화를 실행할 수 없습니다.', 'ℹ️');
+    return;
+  }
+  try {
+    showToast('나이스(NEIS) 급식 식단표를 동기화 중입니다...', '🍽️');
+    const res = await gasApi.post('sync_neis_meals', {});
+    await refreshFromGas(false);
+    showToast(`나이스 급식 동기화 완료 (${res.count || 0}건 반영)`, '✅');
+  } catch (err) {
+    showToast(`나이스 급식 동기화 실패: ${err.message}`, '⚠️');
+  }
+}
+
+function openTeacherProfileModal() {
+  const cu = mockData.currentUser;
+  document.getElementById('tpName').value = cu.teacherName || '';
+  document.getElementById('tpSchoolName').value = cu.schoolName || '';
+  document.getElementById('tpGrade').value = cu.grade || '';
+  document.getElementById('tpClassNo').value = cu.classNo || '';
+  document.getElementById('tpSubject').value = cu.subject || '';
+  document.getElementById('tpPhone').value = cu.phone || '';
+  document.getElementById('tpConsultationHours').value = cu.consultationHours || '';
+  document.getElementById('tpNeisOfficeCode').value = cu.neisOfficeCode || '';
+  document.getElementById('tpNeisSchoolCode').value = cu.neisSchoolCode || '';
+  openModal('teacherProfileModal');
+}
+
+async function saveTeacherProfile(e) {
+  e.preventDefault();
+  const payload = {
+    teacher_id: mockData.currentUser.userId || 'teacher01',
+    name: document.getElementById('tpName').value.trim(),
+    school_name: document.getElementById('tpSchoolName').value.trim(),
+    grade: document.getElementById('tpGrade').value.trim(),
+    class_no: document.getElementById('tpClassNo').value.trim(),
+    subject: document.getElementById('tpSubject').value.trim(),
+    phone: document.getElementById('tpPhone').value.trim(),
+    consultation_hours: document.getElementById('tpConsultationHours').value.trim(),
+    neis_office_code: document.getElementById('tpNeisOfficeCode').value.trim(),
+    neis_school_code: document.getElementById('tpNeisSchoolCode').value.trim()
+  };
+
+  if (gasApi.isConfigured()) {
+    try {
+      await gasApi.post('upsert_teacher_profile', payload);
+    } catch (err) {
+      showToast(`교사 프로필 저장 실패: ${err.message}`, '⚠️');
+      return;
+    }
+  }
+
+  mockData.currentUser.teacherName = payload.name;
+  mockData.currentUser.schoolName = payload.school_name;
+  mockData.currentUser.grade = payload.grade;
+  mockData.currentUser.classNo = payload.class_no;
+  mockData.currentUser.gradeClass = (payload.grade && payload.class_no)
+    ? `${payload.grade}학년 ${payload.class_no}반`
+    : '';
+  mockData.currentUser.subject = payload.subject;
+  mockData.currentUser.phone = payload.phone;
+  mockData.currentUser.consultationHours = payload.consultation_hours;
+  mockData.currentUser.neisOfficeCode = payload.neis_office_code;
+  mockData.currentUser.neisSchoolCode = payload.neis_school_code;
+
+  closeModal('teacherProfileModal');
+  applyRoleUI();
+  renderTeacherHome();
+  showToast('교사 프로필이 저장되었습니다.', '✅');
 }
 
 async function confirmTeacherAtt(id) {
@@ -139,11 +285,43 @@ function renderTeacherDocs() {
       ` : doc.status === 'pending' ? `
         <div class="flex items-center justify-between pt-1">
           <span class="text-[10px] text-urgent-600 font-semibold">매일 아침 자동 독촉 알림 발송 중</span>
-          <button onclick="showToast('${doc.studentName} 학생에게 즉시 독촉 알림을 보냈습니다.', '🔔')" class="text-[10px] px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg">수동 재알림</button>
+          <button onclick="sendDocReminderNotification('${doc.id}')" class="text-[10px] px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg">수동 재알림</button>
         </div>
       ` : `<span class="inline-block text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-semibold">${doc.submittedAt || '최종 종결됨'}</span>`}
     </div>
   `).join('');
+}
+
+async function sendDocReminderNotification(docId) {
+  const doc = mockData.urgentDocuments.find(d => d.id === docId);
+  if (!doc) return;
+  const title = `[서류 제출 독촉] ${doc.docName}`;
+  const message = `${doc.studentName} 학생의 ${doc.title} 증빙서류를 나이스(NEIS)에 제출 후 앱에서 "제출했습니다" 확인을 눌러주세요. (마감: ${doc.deadline || '기한 내'})`;
+
+  if (gasApi.isConfigured()) {
+    try {
+      await gasApi.post('send_notification', {
+        channel: 'doc_reminder',
+        sender: mockData.currentUser.teacherName || '담임교사',
+        title,
+        message,
+        target_role: 'all',
+        target_student_id: doc.studentId,
+        grade: mockData.currentUser.grade || '',
+        class_no: mockData.currentUser.classNo || ''
+      });
+      await _dispatchWebPush({
+        title,
+        message,
+        target_role: 'all',
+        target_student_ids: [doc.studentId]
+      });
+    } catch (err) {
+      showToast(`독촉 알림 전송 실패: ${err.message}`, '⚠️');
+      return;
+    }
+  }
+  showToast(`${doc.studentName} 학생에게 즉시 독촉 알림을 보냈습니다.`, '🔔');
 }
 
 async function finalizeTeacherDoc(docId, nextStatus) {
@@ -231,8 +409,13 @@ async function saveRulesSettings(e) {
 function renderTeacherCirculars() {
   const container = document.getElementById('teacherCircularsContainer');
   document.getElementById('teacherCircularCount').innerText = `총 ${mockData.circulars.length}건 진행중`;
+  if (mockData.circulars.length === 0) {
+    container.innerHTML = `<div class="bg-white p-5 rounded-2xl border border-slate-200/80 text-center text-xs text-slate-400">등록된 가정통신문이 없습니다.</div>`;
+    return;
+  }
   container.innerHTML = mockData.circulars.map(c => {
-    const pct = Math.round((c.submittedCount / c.totalCount) * 100);
+    const pct = c.totalCount > 0 ? Math.round((c.submittedCount / c.totalCount) * 100) : 0;
+    const unsubmittedCount = Math.max(0, c.totalCount - c.submittedCount);
     return `
       <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-2.5">
         <div class="flex items-center justify-between">
@@ -244,7 +427,7 @@ function renderTeacherCirculars() {
           <div class="bg-indigo-600 h-full rounded-full transition-all" style="width: ${pct}%"></div>
         </div>
         <div class="flex gap-2 pt-1">
-          <button onclick="openUnsubmittedModal()" class="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-xl">미제출자 명단 (${c.totalCount - c.submittedCount}명)</button>
+          <button onclick="openUnsubmittedModal('${c.id}')" class="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-xl">미제출자 명단 (${unsubmittedCount}명)</button>
           <button onclick="showToast('제출된 서명 이미지가 원본 PDF 좌표에 합성되어 인쇄 대기열로 전송되었습니다.', '🖨️')" class="flex-1 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded-xl">서명본 PDF 일괄 출력</button>
         </div>
       </div>
@@ -286,9 +469,10 @@ async function publishNewCircular() {
     deadline: `${dueDate} 마감`,
     status: 'pending',
     submittedCount: 0,
-    totalCount: 28,
+    totalCount: mockData.students.length,
+    submittedStudentIds: [],
     content: '학부모님의 가정에 늘 행운이 가득하시길 기원합니다. 참가 희망 여부를 전자 서명 후 회신 바랍니다.',
-    meta: [`대상: ${mockData.currentUser.gradeClass || '1학년 3반'} 전체`, '전자서명 좌표 매핑 완료']
+    meta: [`대상: ${mockData.currentUser.gradeClass || '우리 반'} 전체`, '전자서명 좌표 매핑 완료']
   });
   closeNewCircularModal();
   if (typeof renderCirculars === 'function') renderCirculars();
@@ -318,7 +502,42 @@ async function publishNewCircular() {
   showToast('새 가정통신문이 배포되었습니다.');
 }
 
-function openUnsubmittedModal() {
+function _getUnsubmittedStudents(circularId) {
+  const c = mockData.circulars.find(x => x.id === circularId);
+  const submittedSet = new Set((c && Array.isArray(c.submittedStudentIds)) ? c.submittedStudentIds.map(String) : []);
+  return (mockData.students || []).filter(s => !submittedSet.has(String(s.student_id || '')));
+}
+
+function openUnsubmittedModal(circularId) {
+  state.currentUnsubmittedCircularId = circularId;
+  const unsubmitted = _getUnsubmittedStudents(circularId);
+  const titleEl = document.getElementById('unsubmittedModalTitle');
+  const listEl = document.getElementById('unsubmittedModalList');
+  const btnEl = document.getElementById('unsubmittedBulkBtn');
+
+  if (titleEl) titleEl.innerHTML = `<span>📋 미제출자 명단 (${unsubmitted.length}명)</span>`;
+  if (listEl) {
+    if (unsubmitted.length === 0) {
+      listEl.innerHTML = `<div class="text-center py-6 text-slate-400">미제출 학생이 없습니다.</div>`;
+    } else {
+      listEl.innerHTML = unsubmitted.map(s => `
+        <div class="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl">
+          <div class="flex items-center gap-2">
+            <span class="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center font-bold text-[10px] text-slate-700">${s.student_no || '-'}</span>
+            <div>
+              <p class="font-bold text-slate-800 text-xs">${s.student_id || ''} ${s.name || ''}</p>
+              <p class="text-[10px] text-slate-400">${s.phone || '연락처 미등록'}</p>
+            </div>
+          </div>
+          <span class="text-[10px] text-urgent-600 font-semibold">미회신</span>
+        </div>
+      `).join('');
+    }
+  }
+  if (btnEl) {
+    btnEl.disabled = unsubmitted.length === 0;
+    btnEl.innerHTML = `<span>📲 미제출 ${unsubmitted.length}명 학부모에게 독촉 알림 일괄 발송</span>`;
+  }
   openModal('unsubmittedModal');
 }
 
@@ -326,9 +545,92 @@ function closeUnsubmittedModal() {
   closeModal('unsubmittedModal');
 }
 
-function sendBulkPromptToUnsubmitted() {
+async function sendBulkPromptToUnsubmitted() {
+  const cId = state.currentUnsubmittedCircularId;
+  const c = mockData.circulars.find(x => x.id === cId);
+  const unsubmitted = _getUnsubmittedStudents(cId);
+  if (unsubmitted.length === 0) {
+    closeUnsubmittedModal();
+    return;
+  }
+  const targetIds = unsubmitted.map(s => String(s.student_id)).filter(Boolean);
+  const title = `[가정통신문 회신 요청] ${(c && c.title) || '미제출 안내'}`;
+  const message = `아직 전자서명 회신이 완료되지 않았습니다. 앱의 [가정통신·회비] 탭에서 확인 및 서명해 주세요.`;
+
+  if (gasApi.isConfigured()) {
+    try {
+      await gasApi.post('send_notification', {
+        channel: 'circular_reminder',
+        sender: mockData.currentUser.teacherName || '담임교사',
+        title,
+        message,
+        target_role: 'all',
+        target_student_ids: targetIds,
+        grade: mockData.currentUser.grade || '',
+        class_no: mockData.currentUser.classNo || ''
+      });
+      await _dispatchWebPush({
+        title,
+        message,
+        target_role: 'all',
+        target_student_ids: targetIds
+      });
+    } catch (err) {
+      showToast(`독촉 알림 발송 실패: ${err.message}`, '⚠️');
+      return;
+    }
+  }
   closeUnsubmittedModal();
-  showToast('미제출 4명 학부모에게 회신 독촉 알림을 일괄 발송했습니다.', '📲');
+  showToast(`미제출 ${unsubmitted.length}명에게 회신 독촉 알림을 일괄 발송했습니다.`, '📲');
+}
+
+function openSendNoticeModal() {
+  const select = document.getElementById('sendNoticeTargetStudent');
+  if (select) {
+    const opts = ['<option value="ALL">우리 반 전체</option>'];
+    (mockData.students || []).forEach(s => {
+      opts.push(`<option value="${s.student_id}">${s.student_no ? s.student_no + '번 ' : ''}${s.name} (${s.student_id})</option>`);
+    });
+    select.innerHTML = opts.join('');
+  }
+  document.getElementById('sendNoticeTitle').value = '';
+  document.getElementById('sendNoticeMessage').value = '';
+  openModal('sendNoticeModal');
+}
+
+async function handleSendNotification(e) {
+  e.preventDefault();
+  const targetStudentId = document.getElementById('sendNoticeTargetStudent').value || 'ALL';
+  const targetRole = document.getElementById('sendNoticeTargetRole').value || 'all';
+  const title = document.getElementById('sendNoticeTitle').value.trim();
+  const message = document.getElementById('sendNoticeMessage').value.trim();
+  if (!title || !message) return;
+
+  if (gasApi.isConfigured()) {
+    try {
+      await gasApi.post('send_notification', {
+        channel: 'teacher_notice',
+        sender: mockData.currentUser.teacherName || '담임교사',
+        title,
+        message,
+        target_role: targetRole,
+        target_student_id: targetStudentId,
+        grade: mockData.currentUser.grade || '',
+        class_no: mockData.currentUser.classNo || ''
+      });
+      await _dispatchWebPush({
+        title,
+        message,
+        target_role: targetRole,
+        target_student_id: targetStudentId
+      });
+    } catch (err) {
+      showToast(`알림 발송 실패: ${err.message}`, '⚠️');
+      return;
+    }
+  }
+  closeModal('sendNoticeModal');
+  showToast('학급 알림이 발송되었습니다.', '📢');
 }
 
 // --- TEACHER TAB 4: PC Remote Task Queue ---
@@ -391,6 +693,10 @@ async function handleCreateRemoteTask(e) {
 function renderRemoteTasks() {
   const container = document.getElementById('remoteTasksContainer');
   document.getElementById('remoteTaskCountBadge').innerText = `${mockData.remoteTasks.length}건 대기/완료`;
+  if (mockData.remoteTasks.length === 0) {
+    container.innerHTML = `<div class="bg-white p-5 rounded-2xl border border-slate-200/80 text-center text-xs text-slate-400">등록된 PC 원격 작업이 없습니다.</div>`;
+    return;
+  }
   container.innerHTML = mockData.remoteTasks.map(job => {
     let badge = `<span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700">대기중</span>`;
     if (job.status === 'running') badge = `<span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-100 text-indigo-700 animate-pulse">PC 실행중</span>`;
@@ -419,7 +725,9 @@ function renderTeacherChatRooms() {
   const totalUnread = mockData.chatRooms.reduce((acc, r) => acc + r.unread, 0);
   document.getElementById('teacherChatUnreadDot').classList.toggle('hidden', totalUnread === 0);
 
-  list.innerHTML = rooms.map(r => {
+  list.innerHTML = rooms.length === 0
+    ? `<div class="p-8 text-center text-xs text-slate-400">진행 중인 1:1 상담 대화방이 없습니다.</div>`
+    : rooms.map(r => {
     const lastMsg = r.messages[r.messages.length - 1];
     return `
       <div onclick="openTeacherChatDetail('${r.roomId}')" class="p-3.5 bg-white hover:bg-slate-50 cursor-pointer flex items-center justify-between gap-3 transition-colors">
