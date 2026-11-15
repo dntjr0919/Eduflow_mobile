@@ -56,13 +56,19 @@ async function toggleCounselingAcceptance(isOpen) {
 // Helper: Dispatch Web Push in background (best-effort; sheet notification is primary)
 async function _dispatchWebPush(payload) {
   try {
-    await fetch('/api/push', {
+    const resp = await fetch('/api/push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json;charset=utf-8' },
       body: JSON.stringify(payload)
     });
-  } catch (_) {
-    // Web Push 실패 시에도 시트 알림은 정상 저장됨
+    const json = await resp.json().catch(() => null);
+    if (!resp.ok || (json && json.ok === false && !json.skipped)) {
+      console.warn('[EduFlow Push Dispatch] 발송 실패/부분 실패:', json || resp.status);
+    }
+    return json || { ok: resp.ok };
+  } catch (err) {
+    console.warn('[EduFlow Push Dispatch] 네트워크 오류:', err);
+    return { ok: false, error: err && err.message ? err.message : 'Network error' };
   }
 }
 

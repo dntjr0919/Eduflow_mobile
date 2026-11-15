@@ -61,6 +61,8 @@ module.exports = async function handler(req, res) {
   const targetStudentIds = Array.isArray(body.target_student_ids)
     ? body.target_student_ids.map((s) => String(s).trim()).filter(Boolean)
     : (body.target_student_id ? [String(body.target_student_id).trim()] : []);
+  const targetUserId = String(body.target_user_id || '').trim();
+  const targetEndpoint = String(body.endpoint || '').trim();
   const url = String(body.url || '/').trim();
 
   try {
@@ -72,6 +74,12 @@ module.exports = async function handler(req, res) {
     if (targetStudentIds.length > 0) {
       gasTarget.searchParams.set('target_student_ids', targetStudentIds.join(','));
     }
+    if (targetUserId) {
+      gasTarget.searchParams.set('target_user_id', targetUserId);
+    }
+    if (targetEndpoint) {
+      gasTarget.searchParams.set('endpoint', targetEndpoint);
+    }
     if (apiSecret) {
       gasTarget.searchParams.set('api_secret', apiSecret);
     }
@@ -80,7 +88,16 @@ module.exports = async function handler(req, res) {
       method: 'GET',
       redirect: 'follow'
     });
-    const gasJson = await gasResp.json();
+    const rawGasText = await gasResp.text();
+    let gasJson = null;
+    try {
+      gasJson = JSON.parse(rawGasText);
+    } catch (_) {
+      return res.status(502).json({
+        ok: false,
+        error: `Apps Script 응답 파싱 실패 (HTTP ${gasResp.status})`
+      });
+    }
     if (!gasJson || gasJson.ok === false) {
       return res.status(502).json({
         ok: false,
@@ -89,6 +106,17 @@ module.exports = async function handler(req, res) {
     }
 
     const subs = Array.isArray(gasJson.subscriptions) ? gasJson.subscriptions : [];
+    const validSubs = subs.filter((s) => s.endpoint && s.p256dh && s.auth);
+    if (validSubs.length === 0) {
+      return res.status(200).json({
+        ok: false,
+        total: 0,
+        sent: 0,
+        failed: 0,
+        error: '등록된 푸시 구독이 없습니다. 기기에서 알림 허용 후 다시 시도해 주세요.'
+      });
+    }
+
     const payload = JSON.stringify({
       title,
       body: message,
@@ -98,30 +126,52 @@ module.exports = async function handler(req, res) {
     });
 
     const results = await Promise.allSettled(
-      subs
-        .filter((s) => s.endpoint && s.p256dh && s.auth)
-        .map((s) =>
-          webpush.sendNotification(
-            {
-              endpoint: s.endpoint,
-              keys: {
-                p256dh: s.p256dh,
-                auth: s.auth
-              }
-            },
-            payload
-          )
+      validSubs.map((s) =>
+        webpush.sendNotification(
+          {
+            endpoint: s.endpoint,
+            keys: {
+              p256dh: s.p256dh,
+              auth: s.auth
+            }
+          },
+          payload
         )
+      )
     );
 
     const sent = results.filter((r) => r.status === 'fulfilled').length;
-    const failed = results.filter((r) => r.status === 'rejected').length;
+    const errors = results
+      .filter((r) => r.status === 'rejected')
+      .map((r) => {
+        const err = r.reason || {};
+        return {
+          statusCode: err.statusCode || null,
+          message: err.message || 'Unknown push error',
+          body: err.body ? String(err.body).slice(0, 200) : ''
+        };
+      });
+    const failed = errors.length;
+
+    const firstErr = errors[0];
+    let errorSummary = '';
+    if (sent === 0 && firstErr) {
+      if (firstErr.statusCode === 410 || firstErr.statusCode === 404) {
+        errorSummary = `구독이 만료되었습니다 (${firstErr.statusCode} Gone). 구독을 다시 등록해 주세요.`;
+      } else if (firstErr.statusCode === 401 || firstErr.statusCode === 403) {
+        errorSummary = `VAPID 인증 오류 (${firstErr.statusCode}): 서버 VAPID 키와 구독 키가 일치하지 않습니다.`;
+      } else {
+        errorSummary = `푸시 발송 실패${firstErr.statusCode ? ' (' + firstErr.statusCode + ')' : ''}: ${firstErr.message}`;
+      }
+    }
 
     return res.status(200).json({
-      ok: true,
-      total: subs.length,
+      ok: sent > 0,
+      total: validSubs.length,
       sent,
-      failed
+      failed,
+      errors,
+      error: errorSummary || undefined
     });
   } catch (err) {
     return res.status(502).json({

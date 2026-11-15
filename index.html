@@ -736,6 +736,13 @@
 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
 </button>
 </div>
+<div class="bg-slate-50 border border-slate-200/80 rounded-2xl p-2.5 flex items-center justify-between gap-2 shrink-0" id="pushStatusBar">
+<div class="min-w-0">
+<p class="text-[10px] font-bold text-slate-500">이 기기 푸시 구독 상태</p>
+<p class="text-[11px] font-semibold text-slate-800 truncate" id="pushStatusText">확인 중...</p>
+</div>
+<button class="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-xl whitespace-nowrap shadow-xs transition-all shrink-0" id="testPushBtn" onclick="sendTestPushToMyDevice(this)" type="button">🔔 내 기기 테스트 알림</button>
+</div>
 <div class="space-y-2.5 overflow-y-auto pr-1 text-xs" id="noticeModalList">
 <div class="text-center py-6 text-slate-400">새로운 알림이 없습니다.</div>
 </div>

@@ -200,6 +200,7 @@ function toggleNoticeModal() {
   if (!modal.classList.contains('hidden')) {
     renderNotificationsModal();
     document.getElementById('unreadDot').classList.add('hidden');
+    void refreshPushStatusUI();
   }
 }
 
@@ -946,28 +947,109 @@ function checkAndEnforcePwaPushGate(options = {}) {
   }
 }
 
+async function _getServiceWorkerRegistrationReady(timeoutMs = 8000) {
+  if (!('serviceWorker' in navigator)) {
+    throw new Error('이 브라우저는 Service Worker를 지원하지 않습니다.');
+  }
+  let reg = await navigator.serviceWorker.getRegistration('/sw.js');
+  if (!reg) {
+    reg = await navigator.serviceWorker.register('/sw.js');
+  }
+  return await Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('ServiceWorker ready timeout')), timeoutMs))
+  ]);
+}
+
+async function getPushSubscriptionStatus() {
+  if (!('Notification' in window)) {
+    return { supported: false, permission: 'unsupported', hasSubscription: false, endpoint: '' };
+  }
+  const permission = Notification.permission;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return { supported: false, permission, hasSubscription: false, endpoint: '' };
+  }
+  try {
+    const reg = await _getServiceWorkerRegistrationReady(5000);
+    const sub = await reg.pushManager.getSubscription();
+    return {
+      supported: true,
+      permission,
+      hasSubscription: Boolean(sub),
+      endpoint: sub ? sub.endpoint : '',
+      subscription: sub || null
+    };
+  } catch (err) {
+    return {
+      supported: true,
+      permission,
+      hasSubscription: false,
+      endpoint: '',
+      error: err && err.message ? err.message : '구독 상태 조회 실패'
+    };
+  }
+}
+
+async function refreshPushStatusUI() {
+  const el = document.getElementById('pushStatusText');
+  if (!el) return;
+  el.innerText = '확인 중...';
+  el.className = 'text-[11px] font-semibold text-slate-500 truncate';
+
+  const status = await getPushSubscriptionStatus();
+  if (!status.supported) {
+    el.innerText = '이 브라우저는 웹 푸시를 지원하지 않습니다.';
+    el.className = 'text-[11px] font-semibold text-slate-500 truncate';
+    return;
+  }
+
+  const permLabel = status.permission === 'granted'
+    ? '권한 허용'
+    : (status.permission === 'denied' ? '권한 차단됨' : '권한 미결정');
+  const subLabel = status.hasSubscription ? '구독 등록됨' : '구독 없음';
+
+  if (status.error) {
+    el.innerText = `${permLabel} · 오류(${status.error})`;
+    el.className = 'text-[11px] font-semibold text-red-600 truncate';
+  } else if (status.permission === 'granted' && status.hasSubscription) {
+    el.innerText = `${permLabel} · ${subLabel}`;
+    el.className = 'text-[11px] font-semibold text-emerald-700 truncate';
+  } else if (status.permission === 'denied') {
+    el.innerText = `${permLabel} · 기기 설정 필요`;
+    el.className = 'text-[11px] font-semibold text-red-600 truncate';
+  } else {
+    el.innerText = `${permLabel} · ${subLabel}`;
+    el.className = 'text-[11px] font-semibold text-amber-700 truncate';
+  }
+}
+
 async function subscribeToWebPush(silent = false) {
+  state.lastPushError = '';
   try {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      state.lastPushError = '이 브라우저는 Web Push(PushManager)를 지원하지 않습니다.';
+      console.warn('[EduFlow Push]', state.lastPushError);
       return false;
     }
-    const reg = await Promise.race([
-      navigator.serviceWorker.ready,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('ServiceWorker ready timeout')), 5000))
-    ]);
+
+    const reg = await _getServiceWorkerRegistrationReady(8000);
     let subscription = await reg.pushManager.getSubscription();
 
     if (!subscription) {
       let publicKey = '';
+      let vapidErrMsg = '';
       try {
         const resp = await fetch('/api/push', { method: 'GET' });
         const json = await resp.json();
         publicKey = (json && json.publicKey) ? json.publicKey.trim() : '';
-      } catch (_) {
-        publicKey = '';
+        if (!publicKey && json && json.error) vapidErrMsg = json.error;
+      } catch (fetchErr) {
+        vapidErrMsg = fetchErr && fetchErr.message ? fetchErr.message : 'VAPID 공개키 조회 실패';
       }
       if (!publicKey) {
-        if (!silent) showToast('서버 VAPID 공개키가 설정되지 않아 푸시 구독을 건너뜁니다.', 'ℹ️');
+        state.lastPushError = vapidErrMsg || '서버 VAPID 공개키가 설정되지 않았습니다.';
+        console.warn('[EduFlow Push] VAPID public key missing:', state.lastPushError);
+        if (!silent) showToast(state.lastPushError, '⚠️');
         return false;
       }
       subscription = await reg.pushManager.subscribe({
@@ -979,7 +1061,7 @@ async function subscribeToWebPush(silent = false) {
     const subJson = subscription.toJSON ? subscription.toJSON() : JSON.parse(JSON.stringify(subscription));
     const cu = mockData.currentUser;
     if (gasApi.isConfigured()) {
-      await gasApi.post('save_push_subscription', {
+      const saveRes = await gasApi.post('save_push_subscription', {
         data: {
           user_id: cu.userId || cu.studentId || 'anonymous',
           role: state.activeRole,
@@ -989,14 +1071,84 @@ async function subscribeToWebPush(silent = false) {
           user_agent: navigator.userAgent || ''
         }
       });
+      if (saveRes && saveRes.ok === false) {
+        throw new Error(saveRes.error || 'save_push_subscription 실패');
+      }
     }
+    void refreshPushStatusUI();
     return true;
   } catch (err) {
+    state.lastPushError = err && err.message ? err.message : 'Web Push 구독 처리 오류';
+    console.warn('[EduFlow Push] 구독 처리 중 오류:', err);
     if (!silent) {
-      console.warn('Web Push 구독 처리 중 오류:', err);
+      showToast(`푸시 구독 오류: ${state.lastPushError}`, '⚠️');
     }
+    void refreshPushStatusUI();
     return false;
   }
+}
+
+async function sendTestPushToMyDevice(btnEl) {
+  if (!('Notification' in window)) {
+    showToast('이 브라우저는 알림 기능을 지원하지 않습니다.', '⚠️');
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    showToast('알림 권한이 차단되어 있습니다. 기기 설정에서 허용해 주세요.', '⚠️');
+    openPwaPushGuide();
+    return;
+  }
+
+  await withButtonLoading(btnEl, '발송 중...', async () => {
+    if (Notification.permission === 'default') {
+      const perm = await Notification.requestPermission();
+      checkAndEnforcePwaPushGate();
+      if (perm !== 'granted') {
+        showToast('알림 권한을 허용해야 테스트 푸시를 받을 수 있습니다.', '⚠️');
+        return;
+      }
+    }
+
+    const subscribed = await subscribeToWebPush(false);
+    if (!subscribed) {
+      showToast(state.lastPushError || '푸시 구독 등록에 실패했습니다.', '⚠️');
+      return;
+    }
+
+    const status = await getPushSubscriptionStatus();
+    if (!status.hasSubscription || !status.endpoint) {
+      showToast('브라우저 푸시 구독 정보를 찾을 수 없습니다. (구독 없음)', '⚠️');
+      return;
+    }
+
+    const cu = mockData.currentUser;
+    try {
+      const resp = await fetch('/api/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json;charset=utf-8' },
+        body: JSON.stringify({
+          title: '🔔 EduFlow 내 기기 푸시 테스트',
+          message: `${cu.studentName || cu.teacherName || cu.userId || '사용자'}님 기기의 웹 푸시 알림이 정상 동작 중입니다.`,
+          target_role: state.activeRole,
+          target_user_id: cu.userId || cu.studentId || '',
+          endpoint: status.endpoint,
+          url: '/'
+        })
+      });
+      const json = await resp.json();
+      if (json && json.ok && json.sent > 0) {
+        showToast('테스트 푸시 발송 완료! 잠시 후 OS 알림을 확인하세요.', '🔔');
+      } else {
+        const errMsg = (json && json.error) || '푸시 발송에 실패했습니다.';
+        console.warn('[EduFlow Push Test] Failed:', json);
+        showToast(`푸시 테스트 실패: ${errMsg}`, '⚠️');
+      }
+    } catch (err) {
+      showToast(`푸시 테스트 요청 오류: ${err.message}`, '⚠️');
+    } finally {
+      void refreshPushStatusUI();
+    }
+  });
 }
 
 async function requestPwaNotificationPermission() {
