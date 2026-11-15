@@ -121,7 +121,7 @@ module.exports = async function handler(req, res) {
       title,
       body: message,
       icon: '/icon.svg',
-      badge: '/icon.svg',
+      badge: '/badge-96.png',
       url
     });
 

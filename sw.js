@@ -1,5 +1,5 @@
-// 배포 시 버전을 올리면(예: v3 -> v4) activate 단계에서 이전 캐시가 자동 정리됩니다.
-const CACHE_VERSION = 'v3';
+// 배포 시 버전을 올리면(예: v4 -> v5) activate 단계에서 이전 캐시가 자동 정리됩니다.
+const CACHE_VERSION = 'v4';
 const CACHE_NAME = `eduflow-mobile-${CACHE_VERSION}`;
 const STATIC_ASSETS = [
   '/',
@@ -9,7 +9,8 @@ const STATIC_ASSETS = [
   '/student.js',
   '/teacher.js',
   '/manifest.json',
-  '/icon.svg'
+  '/icon.svg',
+  '/badge-96.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -56,7 +57,7 @@ self.addEventListener('push', (event) => {
     title: 'EduFlow 알림',
     body: '새로운 학급 알림이 도착했습니다.',
     icon: '/icon.svg',
-    badge: '/icon.svg',
+    badge: '/badge-96.png',
     url: '/'
   };
 
@@ -73,7 +74,7 @@ self.addEventListener('push', (event) => {
     self.registration.showNotification(data.title, {
       body: data.body,
       icon: data.icon || '/icon.svg',
-      badge: data.badge || '/icon.svg',
+      badge: data.badge || '/badge-96.png',
       data: { url: data.url || '/' }
     })
   );
