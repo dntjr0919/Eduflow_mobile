@@ -3,29 +3,20 @@
    Google Apps Script(GAS) REST API 연동 + 오프라인/데모 폴백 지원
    ========================================================= */
 
-const GAS_STORAGE_KEYS = {
-  url: 'eduflow_gas_url',
-  sheetId: 'eduflow_gas_sheet_id',
-  session: 'eduflow_user_session'
-};
+const GAS_PROXY_ENDPOINT = '/api/gas';
 
 const gasApi = {
+  demoMode: typeof window !== 'undefined' && window.location.protocol === 'file:',
   getUrl() {
-    return (localStorage.getItem(GAS_STORAGE_KEYS.url) || '').trim();
-  },
-  getSheetId() {
-    return (localStorage.getItem(GAS_STORAGE_KEYS.sheetId) || '').trim();
-  },
-  setConfig(url, sheetId = '') {
-    const cleanUrl = (url || '').trim();
-    const cleanSid = (sheetId || '').trim();
-    if (cleanUrl) localStorage.setItem(GAS_STORAGE_KEYS.url, cleanUrl);
-    else localStorage.removeItem(GAS_STORAGE_KEYS.url);
-    if (cleanSid) localStorage.setItem(GAS_STORAGE_KEYS.sheetId, cleanSid);
-    else localStorage.removeItem(GAS_STORAGE_KEYS.sheetId);
+    return GAS_PROXY_ENDPOINT;
   },
   isConfigured() {
-    return /^https:\/\/script\.google\.com\/macros\/s\//.test(this.getUrl());
+    return !this.demoMode && typeof window !== 'undefined' && window.location.protocol !== 'file:';
+  },
+  _demoError(message) {
+    const err = new Error(message || '데모 모드로 동작 중입니다.');
+    err.isDemo = true;
+    return err;
   },
   async sha256Hex(text) {
     const data = new TextEncoder().encode(String(text || ''));
@@ -38,36 +29,36 @@ const gasApi = {
     return String(text || '');
   },
   async get(action, params = {}) {
-    const baseUrl = this.getUrl();
-    if (!baseUrl) throw new Error('Apps Script URL이 설정되지 않았습니다.');
+    if (!this.isConfigured()) throw this._demoError('로컬 실행 또는 데모 모드입니다.');
     const qs = new URLSearchParams({ action, ...params });
-    const sid = this.getSheetId();
-    if (sid && !qs.has('sheetId')) qs.set('sheetId', sid);
-    const sep = baseUrl.includes('?') ? '&' : '?';
-    const resp = await fetch(`${baseUrl}${sep}${qs.toString()}`, {
+    const resp = await fetch(`${GAS_PROXY_ENDPOINT}?${qs.toString()}`, {
       method: 'GET',
       redirect: 'follow'
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const json = await resp.json();
+    if (json && json.demo === true) {
+      this.demoMode = true;
+      throw this._demoError(json.error || 'GAS_WEB_APP_URL not configured');
+    }
     if (json && json.ok === false) throw new Error(json.error || 'Apps Script 오류');
     return json;
   },
   async post(action, payload = {}) {
-    const baseUrl = this.getUrl();
-    if (!baseUrl) throw new Error('Apps Script URL이 설정되지 않았습니다.');
+    if (!this.isConfigured()) throw this._demoError('로컬 실행 또는 데모 모드입니다.');
     const body = { action, ...payload };
-    const sid = this.getSheetId();
-    if (sid && !body.sheetId) body.sheetId = sid;
-    // text/plain 사용으로 브라우저 CORS Preflight(OPTIONS) 우회
-    const resp = await fetch(baseUrl, {
+    const resp = await fetch(GAS_PROXY_ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      headers: { 'Content-Type': 'application/json;charset=utf-8' },
       body: JSON.stringify(body),
       redirect: 'follow'
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const json = await resp.json();
+    if (json && json.demo === true) {
+      this.demoMode = true;
+      throw this._demoError(json.error || 'GAS_WEB_APP_URL not configured');
+    }
     if (json && json.ok === false) throw new Error(json.error || 'Apps Script 오류');
     return json;
   }
@@ -369,8 +360,13 @@ async function handleLogin(e, isQuickDemo = false) {
       }
       await refreshFromGas(false);
     } catch (err) {
-      showToast(`로그인 실패: ${err.message}`, '⚠️');
-      return;
+      if (err && err.isDemo) {
+        mockData.currentUser.role = state.activeRole;
+        showToast('데모 모드로 로그인되었습니다.', 'ℹ️');
+      } else {
+        showToast(`로그인 실패: ${err.message}`, '⚠️');
+        return;
+      }
     }
   } else {
     mockData.currentUser.role = state.activeRole;
@@ -412,7 +408,7 @@ function _applyAuthenticatedUser(user) {
 
 async function refreshFromGas(showFeedback = true) {
   if (!gasApi.isConfigured()) {
-    if (showFeedback) showToast('데모 모드입니다. 로그인 화면 [API 연동]에서 URL을 설정하세요.', 'ℹ️');
+    if (showFeedback) showToast('데모 모드로 동작 중입니다.', 'ℹ️');
     return;
   }
   try {
@@ -427,6 +423,10 @@ async function refreshFromGas(showFeedback = true) {
     renderAll();
     if (showFeedback) showToast('Google Sheets 최신 데이터를 불러왔습니다.', '🔄');
   } catch (err) {
+    if (err && err.isDemo) {
+      if (showFeedback) showToast('데모 모드로 동작 중입니다.', 'ℹ️');
+      return;
+    }
     if (showFeedback) showToast(`동기화 오류: ${err.message}`, '⚠️');
   }
 }
@@ -602,39 +602,6 @@ function hydrateMockDataFromBundle(bundle) {
   }
 }
 
-function openApiConfigModal() {
-  const urlEl = document.getElementById('gasUrlInput');
-  const sidEl = document.getElementById('gasSheetIdInput');
-  if (urlEl) urlEl.value = gasApi.getUrl();
-  if (sidEl) sidEl.value = gasApi.getSheetId();
-  openModal('apiConfigModal');
-}
-
-function saveApiConfig(e) {
-  e.preventDefault();
-  const url = document.getElementById('gasUrlInput').value;
-  const sid = document.getElementById('gasSheetIdInput').value;
-  gasApi.setConfig(url, sid);
-  closeModal('apiConfigModal');
-  showToast(gasApi.isConfigured() ? 'Apps Script 연동 URL이 저장되었습니다.' : '데모(오프라인) 모드로 전환되었습니다.', '🔗');
-}
-
-async function testGasConnection() {
-  const url = document.getElementById('gasUrlInput').value.trim();
-  const sid = document.getElementById('gasSheetIdInput').value.trim();
-  if (!url) {
-    showToast('Apps Script 웹 앱 URL을 먼저 입력하세요.', '⚠️');
-    return;
-  }
-  gasApi.setConfig(url, sid);
-  try {
-    const res = await gasApi.get('ping');
-    showToast(`연결 성공: ${res.spreadsheet_name || '시트'} (${(res.all_sheets || []).length}개 시트)`, '✅');
-  } catch (err) {
-    showToast(`연결 실패: ${err.message}`, '❌');
-  }
-}
-
 function toggleTeacherStudentMode() {
   state.activeRole = (state.activeRole === 'teacher') ? 'student' : 'teacher';
   mockData.currentUser.role = state.activeRole;
@@ -716,14 +683,8 @@ function renderAll() {
   if (typeof renderTeacherChatRooms === 'function') renderTeacherChatRooms();
 }
 
-// Initialize Dates, Canvas, URL API Param & Service Worker on Load
+// Initialize Dates, Canvas & Service Worker on Load
 window.addEventListener('DOMContentLoaded', () => {
-  const urlParams = new URLSearchParams(window.location.search);
-  const apiParam = urlParams.get('api');
-  const sidParam = urlParams.get('sheetId') || '';
-  if (apiParam) {
-    gasApi.setConfig(apiParam, sidParam);
-  }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   }

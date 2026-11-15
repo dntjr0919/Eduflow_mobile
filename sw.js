@@ -28,8 +28,13 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = event.request.url;
-  // Apps Script API 및 외부 CDN은 캐시하지 않고 네트워크 직결
-  if (url.includes('script.google.com') || event.request.method !== 'GET') {
+  const reqUrl = new URL(url);
+  // 프록시 API(/api/gas), Apps Script API 및 비-GET 요청은 캐시하지 않고 네트워크 직결
+  if (
+    reqUrl.pathname.startsWith('/api/gas') ||
+    url.includes('script.google.com') ||
+    event.request.method !== 'GET'
+  ) {
     return;
   }
   event.respondWith(
