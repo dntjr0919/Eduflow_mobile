@@ -272,54 +272,41 @@ function selectRole(role) {
   }
 }
 
-async function handleLogin(e) {
-  if (e) e.preventDefault();
-  const userId = (document.getElementById('loginIdInput')?.value || '').trim();
-  const password = (document.getElementById('loginPwInput')?.value || '');
-  const submitBtn = (e && e.submitter) || document.querySelector('#loginScreen form button[type="submit"]');
+const AUTO_LOGIN_STORAGE_KEY = 'eduflow_saved_auth';
 
-  let loginSucceeded = false;
-  await withButtonLoading(submitBtn, '로그인 중...', async () => {
-    if (gasApi.isConfigured()) {
-      showLoading('Google Sheets 계정 인증 중...');
-      try {
-        const pwHash = await gasApi.sha256Hex(password);
-        const res = await gasApi.post('login', {
-          role: state.activeRole,
-          user_id: userId,
-          password: password,
-          password_hash: pwHash
-        });
-        if (res.user) {
-          _applyAuthenticatedUser(res.user);
-        }
-        await refreshFromGas(false);
-        if ('Notification' in window && Notification.permission === 'granted') {
-          void subscribeToWebPush(true);
-        }
-        loginSucceeded = true;
-      } catch (err) {
-        if (err && err.isDemo) {
-          mockData.currentUser.role = state.activeRole;
-          mockData.currentUser.userId = userId;
-          showToast('데모 모드로 로그인되었습니다 (연동된 시트 없음).', 'ℹ️');
-          loginSucceeded = true;
-        } else {
-          showToast(`로그인 실패: ${err.message}`, '⚠️');
-        }
-      } finally {
-        hideLoading();
-      }
-    } else {
-      mockData.currentUser.role = state.activeRole;
-      mockData.currentUser.userId = userId;
-      showToast('로컬 데모 모드로 실행 중입니다.', 'ℹ️');
-      loginSucceeded = true;
-    }
-  });
+function _saveAutoLoginAuth(auth) {
+  try {
+    localStorage.setItem(AUTO_LOGIN_STORAGE_KEY, JSON.stringify({
+      role: auth.role,
+      userId: auth.userId,
+      password: auth.password || '',
+      passwordHash: auth.passwordHash || '',
+      savedAt: Date.now()
+    }));
+  } catch (err) {
+    console.warn('[EduFlow Auth] 자동 로그인 저장 실패:', err);
+  }
+}
 
-  if (!loginSucceeded) return;
+function _loadAutoLoginAuth() {
+  try {
+    const raw = localStorage.getItem(AUTO_LOGIN_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.role || !parsed.userId) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
 
+function _clearAutoLoginAuth() {
+  try {
+    localStorage.removeItem(AUTO_LOGIN_STORAGE_KEY);
+  } catch (_) {}
+}
+
+function _enterDashboardAfterLogin() {
   applyRoleUI();
   document.getElementById('loginScreen').classList.add('hidden');
   const dash = document.getElementById('dashboardScreen');
@@ -327,6 +314,121 @@ async function handleLogin(e) {
   dash.classList.add('flex');
   renderAll();
   checkAndEnforcePwaPushGate({ openGuideOnDenied: true });
+}
+
+async function _performLoginAuth(role, userId, password, precomputedHash = '', options = {}) {
+  state.activeRole = role;
+  let pwHash = precomputedHash || '';
+
+  if (gasApi.isConfigured()) {
+    try {
+      if (!pwHash && password) {
+        pwHash = await gasApi.sha256Hex(password);
+      }
+      const res = await gasApi.post('login', {
+        role,
+        user_id: userId,
+        password: password,
+        password_hash: pwHash
+      });
+      if (res.user) {
+        _applyAuthenticatedUser(res.user);
+      }
+      await refreshFromGas(false);
+      if ('Notification' in window && Notification.permission === 'granted') {
+        void subscribeToWebPush(true);
+      }
+      return { ok: true, pwHash, isDemo: false };
+    } catch (err) {
+      if (err && err.isDemo) {
+        mockData.currentUser.role = role;
+        mockData.currentUser.userId = userId;
+        if (!options.isAutoLogin) {
+          showToast('데모 모드로 로그인되었습니다 (연동된 시트 없음).', 'ℹ️');
+        }
+        return { ok: true, pwHash, isDemo: true };
+      }
+      return { ok: false, error: err && err.message ? err.message : '인증 실패' };
+    }
+  }
+
+  mockData.currentUser.role = role;
+  mockData.currentUser.userId = userId;
+  if (!options.isAutoLogin) {
+    showToast('로컬 데모 모드로 실행 중입니다.', 'ℹ️');
+  }
+  return { ok: true, pwHash, isDemo: true };
+}
+
+async function handleLogin(e) {
+  if (e) e.preventDefault();
+  const userId = (document.getElementById('loginIdInput')?.value || '').trim();
+  const password = (document.getElementById('loginPwInput')?.value || '');
+  const autoLoginChecked = Boolean(document.getElementById('autoLoginCheck')?.checked);
+  const submitBtn = (e && e.submitter) || document.querySelector('#loginScreen form button[type="submit"]');
+
+  let authResult = { ok: false };
+  await withButtonLoading(submitBtn, '로그인 중...', async () => {
+    if (gasApi.isConfigured()) showLoading('Google Sheets 계정 인증 중...');
+    try {
+      authResult = await _performLoginAuth(state.activeRole, userId, password);
+      if (!authResult.ok) {
+        showToast(`로그인 실패: ${authResult.error}`, '⚠️');
+      }
+    } finally {
+      if (gasApi.isConfigured()) hideLoading();
+    }
+  });
+
+  if (!authResult.ok) return;
+
+  if (autoLoginChecked) {
+    _saveAutoLoginAuth({
+      role: state.activeRole,
+      userId,
+      password,
+      passwordHash: authResult.pwHash
+    });
+  } else {
+    _clearAutoLoginAuth();
+  }
+
+  _enterDashboardAfterLogin();
+}
+
+async function tryAutoLogin() {
+  const saved = _loadAutoLoginAuth();
+  if (!saved) return;
+
+  const validRoles = ['student', 'parent', 'teacher'];
+  const role = validRoles.includes(saved.role) ? saved.role : 'student';
+  selectRole(role);
+
+  const idInput = document.getElementById('loginIdInput');
+  const autoCheck = document.getElementById('autoLoginCheck');
+  if (idInput) idInput.value = saved.userId;
+  if (autoCheck) autoCheck.checked = true;
+
+  showLoading('자동 로그인 중...');
+  try {
+    const authResult = await _performLoginAuth(
+      role,
+      saved.userId,
+      saved.password || '',
+      saved.passwordHash || '',
+      { isAutoLogin: true }
+    );
+    if (authResult.ok) {
+      _enterDashboardAfterLogin();
+    } else {
+      _clearAutoLoginAuth();
+      const pwInput = document.getElementById('loginPwInput');
+      if (pwInput) pwInput.value = '';
+      showToast('자동 로그인 인증에 실패했습니다. 다시 로그인해 주세요.', '⚠️');
+    }
+  } finally {
+    hideLoading();
+  }
 }
 
 function _applyAuthenticatedUser(user) {
@@ -759,9 +861,12 @@ function applyRoleUI() {
 }
 
 function logout() {
+  _clearAutoLoginAuth();
   _hideAllPwaPushUI();
   state.pwaPushBannerDismissed = false;
   state.pwaPushGuideDismissed = false;
+  const pwInput = document.getElementById('loginPwInput');
+  if (pwInput) pwInput.value = '';
   document.getElementById('dashboardScreen').classList.add('hidden');
   document.getElementById('dashboardScreen').classList.remove('flex');
   document.getElementById('loginScreen').classList.remove('hidden');
@@ -1284,4 +1389,5 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   checkAndEnforcePwaPushGate();
+  void tryAutoLogin();
 });
