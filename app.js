@@ -242,7 +242,7 @@ async function handleLogin(e) {
       }
       await refreshFromGas(false);
       if ('Notification' in window && Notification.permission === 'granted') {
-        subscribeToWebPush(true).catch(() => {});
+        void subscribeToWebPush(true);
       }
     } catch (err) {
       if (err && err.isDemo) {
@@ -266,6 +266,7 @@ async function handleLogin(e) {
   dash.classList.remove('hidden');
   dash.classList.add('flex');
   renderAll();
+  checkAndEnforcePwaPushGate();
 }
 
 function _applyAuthenticatedUser(user) {
@@ -735,12 +736,23 @@ function _urlBase64ToUint8Array(base64String) {
 function checkAndEnforcePwaPushGate() {
   const gateModal = document.getElementById('pwaPushGateModal');
   const deniedGuide = document.getElementById('pwaPushDeniedGuide');
+  const descEl = document.getElementById('pwaPushDesc');
+  const btnEl = document.getElementById('pwaPushEnableBtn');
   if (!gateModal) return;
 
   if (isStandalonePwa() && 'Notification' in window && Notification.permission !== 'granted') {
     gateModal.classList.remove('hidden');
+    const isDenied = Notification.permission === 'denied';
     if (deniedGuide) {
-      deniedGuide.classList.toggle('hidden', Notification.permission !== 'denied');
+      deniedGuide.classList.toggle('hidden', !isDenied);
+    }
+    if (descEl) {
+      descEl.innerHTML = isDenied
+        ? "브라우저/기기 설정에서 알림 권한을 <strong>'허용'</strong>으로 변경한 뒤 아래 <strong>[권한 상태 다시 확인]</strong> 버튼을 눌러주세요."
+        : "홈 화면 앱(PWA)에서는 출결·서류 마감 독촉, 가정통신문, 긴급 공지를 실시간으로 받기 위해 <strong>알림 권한 허용이 필수</strong>입니다.";
+    }
+    if (btnEl) {
+      btnEl.innerText = isDenied ? '권한 상태 다시 확인' : '알림 권한 켜기';
     }
   } else {
     gateModal.classList.add('hidden');
@@ -748,46 +760,56 @@ function checkAndEnforcePwaPushGate() {
 }
 
 async function subscribeToWebPush(silent = false) {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    return false;
-  }
-  const reg = await navigator.serviceWorker.ready;
-  let subscription = await reg.pushManager.getSubscription();
-
-  if (!subscription) {
-    let publicKey = '';
-    try {
-      const resp = await fetch('/api/push', { method: 'GET' });
-      const json = await resp.json();
-      publicKey = (json && json.publicKey) ? json.publicKey.trim() : '';
-    } catch (_) {
-      publicKey = '';
-    }
-    if (!publicKey) {
-      if (!silent) showToast('서버 VAPID 공개키가 설정되지 않아 푸시 구독을 건너뜁니다.', 'ℹ️');
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       return false;
     }
-    subscription = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: _urlBase64ToUint8Array(publicKey)
-    });
-  }
+    const reg = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('ServiceWorker ready timeout')), 5000))
+    ]);
+    let subscription = await reg.pushManager.getSubscription();
 
-  const subJson = subscription.toJSON ? subscription.toJSON() : JSON.parse(JSON.stringify(subscription));
-  const cu = mockData.currentUser;
-  if (gasApi.isConfigured()) {
-    await gasApi.post('save_push_subscription', {
-      data: {
-        user_id: cu.userId || cu.studentId || 'anonymous',
-        role: state.activeRole,
-        endpoint: subJson.endpoint || '',
-        p256dh: (subJson.keys && subJson.keys.p256dh) || '',
-        auth: (subJson.keys && subJson.keys.auth) || '',
-        user_agent: navigator.userAgent || ''
+    if (!subscription) {
+      let publicKey = '';
+      try {
+        const resp = await fetch('/api/push', { method: 'GET' });
+        const json = await resp.json();
+        publicKey = (json && json.publicKey) ? json.publicKey.trim() : '';
+      } catch (_) {
+        publicKey = '';
       }
-    });
+      if (!publicKey) {
+        if (!silent) showToast('서버 VAPID 공개키가 설정되지 않아 푸시 구독을 건너뜁니다.', 'ℹ️');
+        return false;
+      }
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _urlBase64ToUint8Array(publicKey)
+      });
+    }
+
+    const subJson = subscription.toJSON ? subscription.toJSON() : JSON.parse(JSON.stringify(subscription));
+    const cu = mockData.currentUser;
+    if (gasApi.isConfigured()) {
+      await gasApi.post('save_push_subscription', {
+        data: {
+          user_id: cu.userId || cu.studentId || 'anonymous',
+          role: state.activeRole,
+          endpoint: subJson.endpoint || '',
+          p256dh: (subJson.keys && subJson.keys.p256dh) || '',
+          auth: (subJson.keys && subJson.keys.auth) || '',
+          user_agent: navigator.userAgent || ''
+        }
+      });
+    }
+    return true;
+  } catch (err) {
+    if (!silent) {
+      console.warn('Web Push 구독 처리 중 오류:', err);
+    }
+    return false;
   }
-  return true;
 }
 
 async function requestPwaNotificationPermission() {
@@ -795,23 +817,27 @@ async function requestPwaNotificationPermission() {
     showToast('이 브라우저는 알림 기능을 지원하지 않습니다.', '⚠️');
     return;
   }
+
+  const gateModal = document.getElementById('pwaPushGateModal');
+  if (Notification.permission === 'granted') {
+    if (gateModal) gateModal.classList.add('hidden');
+    showToast('알림 권한이 확인되었습니다.', '🔔');
+    void subscribeToWebPush(true);
+    return;
+  }
+
   try {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      try {
-        await subscribeToWebPush(true);
-      } catch (err) {
-        console.warn('Web Push 구독 저장 중 오류:', err);
-      }
-      const gateModal = document.getElementById('pwaPushGateModal');
       if (gateModal) gateModal.classList.add('hidden');
       showToast('알림 권한이 허용되었습니다.', '🔔');
+      void subscribeToWebPush(true);
     } else {
-      const deniedGuide = document.getElementById('pwaPushDeniedGuide');
-      if (deniedGuide) deniedGuide.classList.remove('hidden');
+      checkAndEnforcePwaPushGate();
       showToast('알림 권한이 거부되었습니다. 기기 설정에서 허용해 주세요.', '⚠️');
     }
   } catch (err) {
+    checkAndEnforcePwaPushGate();
     showToast(`알림 권한 요청 오류: ${err.message}`, '⚠️');
   }
 }
@@ -849,6 +875,8 @@ function initServiceWorkerAndAutoSync() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
 
+    checkAndEnforcePwaPushGate();
+
     if (_swRegistration && typeof _swRegistration.update === 'function') {
       _swRegistration.update().catch(() => {});
     }
@@ -863,6 +891,9 @@ function initServiceWorkerAndAutoSync() {
       }
     }
   });
+
+  window.addEventListener('pageshow', checkAndEnforcePwaPushGate);
+  window.addEventListener('focus', checkAndEnforcePwaPushGate);
 }
 
 // Initialize Dates, Canvas & Service Worker on Load
