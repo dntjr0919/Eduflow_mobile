@@ -1,7 +1,77 @@
 /* =========================================================
-   EduFlow Mobile - Core Application State, Data & Shared UI
-   추후 Google Apps Script(GAS) REST API 연동 시 mockData 레이어 교체
+   EduFlow Mobile - Core Application State, GAS REST API & Shared UI
+   Google Apps Script(GAS) REST API 연동 + 오프라인/데모 폴백 지원
    ========================================================= */
+
+const GAS_STORAGE_KEYS = {
+  url: 'eduflow_gas_url',
+  sheetId: 'eduflow_gas_sheet_id',
+  session: 'eduflow_user_session'
+};
+
+const gasApi = {
+  getUrl() {
+    return (localStorage.getItem(GAS_STORAGE_KEYS.url) || '').trim();
+  },
+  getSheetId() {
+    return (localStorage.getItem(GAS_STORAGE_KEYS.sheetId) || '').trim();
+  },
+  setConfig(url, sheetId = '') {
+    const cleanUrl = (url || '').trim();
+    const cleanSid = (sheetId || '').trim();
+    if (cleanUrl) localStorage.setItem(GAS_STORAGE_KEYS.url, cleanUrl);
+    else localStorage.removeItem(GAS_STORAGE_KEYS.url);
+    if (cleanSid) localStorage.setItem(GAS_STORAGE_KEYS.sheetId, cleanSid);
+    else localStorage.removeItem(GAS_STORAGE_KEYS.sheetId);
+  },
+  isConfigured() {
+    return /^https:\/\/script\.google\.com\/macros\/s\//.test(this.getUrl());
+  },
+  async sha256Hex(text) {
+    const data = new TextEncoder().encode(String(text || ''));
+    if (window.crypto && window.crypto.subtle) {
+      const hashBuf = await window.crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hashBuf))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+    }
+    return String(text || '');
+  },
+  async get(action, params = {}) {
+    const baseUrl = this.getUrl();
+    if (!baseUrl) throw new Error('Apps Script URL이 설정되지 않았습니다.');
+    const qs = new URLSearchParams({ action, ...params });
+    const sid = this.getSheetId();
+    if (sid && !qs.has('sheetId')) qs.set('sheetId', sid);
+    const sep = baseUrl.includes('?') ? '&' : '?';
+    const resp = await fetch(`${baseUrl}${sep}${qs.toString()}`, {
+      method: 'GET',
+      redirect: 'follow'
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const json = await resp.json();
+    if (json && json.ok === false) throw new Error(json.error || 'Apps Script 오류');
+    return json;
+  },
+  async post(action, payload = {}) {
+    const baseUrl = this.getUrl();
+    if (!baseUrl) throw new Error('Apps Script URL이 설정되지 않았습니다.');
+    const body = { action, ...payload };
+    const sid = this.getSheetId();
+    if (sid && !body.sheetId) body.sheetId = sid;
+    // text/plain 사용으로 브라우저 CORS Preflight(OPTIONS) 우회
+    const resp = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body),
+      redirect: 'follow'
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const json = await resp.json();
+    if (json && json.ok === false) throw new Error(json.error || 'Apps Script 오류');
+    return json;
+  }
+};
 
 let mockData = {
   currentUser: {
@@ -276,18 +346,293 @@ function selectRole(role) {
 
 function quickLogin(role) {
   selectRole(role);
-  handleLogin(new Event('submit'));
+  handleLogin(new Event('submit'), true);
 }
 
-function handleLogin(e) {
+async function handleLogin(e, isQuickDemo = false) {
   if (e) e.preventDefault();
-  mockData.currentUser.role = state.activeRole;
+  const userId = (document.getElementById('loginIdInput')?.value || '').trim();
+  const password = (document.getElementById('loginPwInput')?.value || '');
+
+  if (!isQuickDemo && gasApi.isConfigured()) {
+    try {
+      showToast('Google Sheets 계정 인증 중...', '🔐');
+      const pwHash = await gasApi.sha256Hex(password);
+      const res = await gasApi.post('login', {
+        role: state.activeRole,
+        user_id: userId,
+        password: password,
+        password_hash: pwHash
+      });
+      if (res.user) {
+        _applyAuthenticatedUser(res.user);
+      }
+      await refreshFromGas(false);
+    } catch (err) {
+      showToast(`로그인 실패: ${err.message}`, '⚠️');
+      return;
+    }
+  } else {
+    mockData.currentUser.role = state.activeRole;
+    if (gasApi.isConfigured()) {
+      refreshFromGas(false).catch(() => {});
+    }
+  }
+
   applyRoleUI();
   document.getElementById('loginScreen').classList.add('hidden');
   const dash = document.getElementById('dashboardScreen');
   dash.classList.remove('hidden');
   dash.classList.add('flex');
   renderAll();
+}
+
+function _applyAuthenticatedUser(user) {
+  const role = (user.role || state.activeRole).toLowerCase();
+  const grade = user.grade || '1';
+  const classNo = user.class_no || '3';
+  const rawName = user.name || mockData.currentUser.studentName;
+  const masked = rawName.length >= 2 ? rawName[0] + 'OO' : rawName;
+
+  mockData.currentUser = {
+    ...mockData.currentUser,
+    role,
+    userId: user.teacher_id || user.student_id || user.parent_id || user.remote_id || '',
+    studentId: user.student_id || mockData.currentUser.studentId,
+    studentName: role === 'parent' ? (user.student_name || mockData.currentUser.studentName) : rawName,
+    maskedName: masked,
+    parentName: role === 'parent' ? rawName : `${masked} 학부모님`,
+    grade: String(grade),
+    classNo: String(classNo),
+    gradeClass: `${grade}학년 ${classNo}반`,
+    schoolName: user.school_name || mockData.currentUser.schoolName,
+    teacherName: role === 'teacher' ? rawName : mockData.currentUser.teacherName
+  };
+}
+
+async function refreshFromGas(showFeedback = true) {
+  if (!gasApi.isConfigured()) {
+    if (showFeedback) showToast('데모 모드입니다. 로그인 화면 [API 연동]에서 URL을 설정하세요.', 'ℹ️');
+    return;
+  }
+  try {
+    const cu = mockData.currentUser;
+    const bundle = await gasApi.get('get_mobile_bundle', {
+      role: state.activeRole,
+      student_id: cu.studentId || '',
+      grade: cu.grade || '',
+      class_no: cu.classNo || ''
+    });
+    hydrateMockDataFromBundle(bundle);
+    renderAll();
+    if (showFeedback) showToast('Google Sheets 최신 데이터를 불러왔습니다.', '🔄');
+  } catch (err) {
+    if (showFeedback) showToast(`동기화 오류: ${err.message}`, '⚠️');
+  }
+}
+
+function hydrateMockDataFromBundle(bundle) {
+  if (!bundle || !bundle.ok) return;
+
+  // 1. 교사 & 상담 ON/OFF 상태
+  if (Array.isArray(bundle.teachers) && bundle.teachers.length > 0) {
+    const t = bundle.teachers[0];
+    mockData.currentUser.teacherName = t.name || mockData.currentUser.teacherName;
+    mockData.currentUser.schoolName = t.school_name || mockData.currentUser.schoolName;
+    mockData.isCounselingOpen = String(t.consultation_enabled) === '1' || t.consultation_enabled === true;
+  }
+
+  // 2. 서류 규정
+  if (Array.isArray(bundle.doc_rules) && bundle.doc_rules.length > 0) {
+    const abs = bundle.doc_rules.find(r => r.rule_code === 'ABSENCE_REPORT');
+    const fld = bundle.doc_rules.find(r => r.rule_code === 'FIELD_TRIP');
+    if (abs && abs.due_business_days) mockData.rules.sickDays = parseInt(abs.due_business_days, 10) || 5;
+    if (fld && fld.due_business_days) mockData.rules.fieldPostDays = parseInt(fld.due_business_days, 10) || 5;
+  }
+
+  // 3. 서류 추적 (urgentDocuments)
+  if (Array.isArray(bundle.doc_tracking) && bundle.doc_tracking.length > 0) {
+    mockData.urgentDocuments = bundle.doc_tracking.map(d => {
+      const rawStatus = (d.status || '').trim();
+      let status = 'pending';
+      if (rawStatus === '제출했습니다' || rawStatus === 'submitted') status = 'submitted';
+      else if (rawStatus === '확인완료' || rawStatus === 'closed') status = 'closed';
+      return {
+        id: d.remote_id,
+        studentId: String(d.student_id || ''),
+        studentName: d.student_name || '',
+        type: (d.rule_code === 'FIELD_TRIP') ? 'planning' : 'urgency',
+        dDayText: status === 'submitted' ? '검수대기' : (status === 'closed' ? '종결' : '마감임박'),
+        dDayColor: status === 'closed' ? 'success' : (d.rule_code === 'FIELD_TRIP' ? 'alert' : 'urgent'),
+        title: `${d.doc_type || '서류'} (${d.base_date || ''})`,
+        docName: d.doc_type || '증빙서류',
+        description: d.memo || `마감일: ${d.due_date || ''}`,
+        deadline: d.due_date || '',
+        status,
+        submittedAt: d.submitted_at || null
+      };
+    });
+  }
+
+  // 4. 일일 출결 (학생 이력 + 교사용 오늘 출결)
+  if (Array.isArray(bundle.attendance) && bundle.attendance.length > 0) {
+    mockData.attendanceHistory = bundle.attendance.map(a => ({
+      id: a.remote_id,
+      period: a.date || '',
+      type: a.attendance_type || '출결',
+      reason: a.reason || '',
+      docStatus: String(a.teacher_confirmed) === '1' ? '교사 최종완료' : '접수됨'
+    }));
+    mockData.teacherTodayAttendance = bundle.attendance.map(a => ({
+      id: a.remote_id,
+      studentId: String(a.student_id || ''),
+      name: a.student_name || '',
+      type: a.attendance_type || '출결',
+      reason: a.reason || '',
+      confirmed: String(a.teacher_confirmed) === '1'
+    }));
+  }
+
+  // 5. 시간표 (기본 + 변동 병합)
+  if (Array.isArray(bundle.timetable_base) && bundle.timetable_base.length > 0) {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const changes = Array.isArray(bundle.timetable_changes) ? bundle.timetable_changes : [];
+    mockData.timetable = bundle.timetable_base.map(tb => {
+      const chg = changes.find(c =>
+        String(c.period) === String(tb.period) && (!c.date || c.date === todayStr)
+      );
+      if (chg) {
+        return {
+          period: Number(tb.period) || tb.period,
+          subject: chg.changed_subject || tb.subject,
+          teacher: chg.changed_teacher || tb.teacher_name || '',
+          isChanged: true,
+          original: chg.original_subject || tb.subject,
+          time: `${8 + Number(tb.period || 1)}:50`
+        };
+      }
+      return {
+        period: Number(tb.period) || tb.period,
+        subject: tb.subject || '',
+        teacher: tb.teacher_name || '',
+        isChanged: false,
+        time: `${8 + Number(tb.period || 1)}:50`
+      };
+    });
+  }
+
+  // 6. 급식 식단표 (NEIS)
+  if (Array.isArray(bundle.meals) && bundle.meals.length > 0) {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayMeals = bundle.meals.filter(m => m.meal_date === todayStr);
+    const pool = todayMeals.length > 0 ? todayMeals : bundle.meals;
+    const lunch = pool.find(m => (m.meal_type || '').includes('중식'));
+    const dinner = pool.find(m => (m.meal_type || '').includes('석식'));
+    const mapMeal = (m) => ({
+      calories: m.calories || '-',
+      menu: (m.menu_text || '').split('\n').filter(Boolean).map(name => ({ name: name.trim(), allergy: '' })),
+      allergyNotice: m.allergy_info || '나이스(NEIS) 식단 연동됨'
+    });
+    if (lunch) mockData.meals.lunch = mapMeal(lunch);
+    if (dinner) mockData.meals.dinner = mapMeal(dinner);
+  }
+
+  // 7. 가정통신문 목록 & 회신
+  if (Array.isArray(bundle.notices) && bundle.notices.length > 0) {
+    const replies = Array.isArray(bundle.notice_replies) ? bundle.notice_replies : [];
+    const cuId = String(mockData.currentUser.studentId || '');
+    mockData.circulars = bundle.notices.map(n => {
+      const nReplies = replies.filter(r => r.notice_id === n.remote_id);
+      const myReply = nReplies.find(r => String(r.student_id) === cuId);
+      return {
+        id: n.remote_id,
+        docNum: n.category || '가정통신문',
+        title: n.title || '',
+        deadline: n.due_date ? `${n.due_date} 마감` : '상시',
+        status: myReply ? 'submitted' : 'pending',
+        submittedCount: nReplies.length,
+        totalCount: Math.max(nReplies.length, 28),
+        content: n.content || '',
+        meta: n.attachment_url ? [`첨부: ${n.attachment_url}`] : [`작성: ${n.author_name || '담임교사'}`]
+      };
+    });
+  }
+
+  // 8. 1:1 상담 채팅
+  if (Array.isArray(bundle.chat_messages) && bundle.chat_messages.length > 0) {
+    const roomMap = {};
+    bundle.chat_messages.forEach(c => {
+      const rId = c.room_id || 'ROOM-DEFAULT';
+      if (!roomMap[rId]) {
+        roomMap[rId] = {
+          roomId: rId,
+          studentId: rId.replace('ROOM-', ''),
+          studentName: c.sender_role !== 'teacher' ? (c.sender_name || '학생') : '학생',
+          partnerLabel: c.sender_role !== 'teacher' ? (c.sender_name || rId) : rId,
+          subtitle: rId,
+          unread: 0,
+          messages: []
+        };
+      }
+      if (String(c.is_read) !== '1' && c.sender_role !== 'teacher') {
+        roomMap[rId].unread += 1;
+      }
+      roomMap[rId].messages.push({
+        sender: c.sender_role === 'teacher' ? 'teacher' : 'user',
+        text: c.message || '',
+        time: (c.created_at || '').slice(11, 16) || '방금'
+      });
+    });
+    mockData.chatRooms = Object.values(roomMap);
+    if (mockData.chatRooms.length > 0) {
+      state.activeTeacherChatRoomId = mockData.chatRooms[0].roomId;
+    }
+  }
+
+  // 9. PC 원격 예약 작업 (Tasks 시트)
+  if (Array.isArray(bundle.remote_tasks) && bundle.remote_tasks.length > 0) {
+    mockData.remoteTasks = bundle.remote_tasks.map(t => ({
+      id: t.remote_id,
+      type: t.title || t.task_type || '원격 작업',
+      timing: t.scheduled_time || '즉시 실행',
+      prompt: t.target_info || t.action_payload || '',
+      status: t.exec_status === 'done' ? 'done' : (t.exec_status === 'running' ? 'running' : 'pending'),
+      log: t.memo || (t.exec_status === 'done' ? 'PC 작업 완료' : 'PC EduFlow 워커 대기 중')
+    }));
+  }
+}
+
+function openApiConfigModal() {
+  const urlEl = document.getElementById('gasUrlInput');
+  const sidEl = document.getElementById('gasSheetIdInput');
+  if (urlEl) urlEl.value = gasApi.getUrl();
+  if (sidEl) sidEl.value = gasApi.getSheetId();
+  openModal('apiConfigModal');
+}
+
+function saveApiConfig(e) {
+  e.preventDefault();
+  const url = document.getElementById('gasUrlInput').value;
+  const sid = document.getElementById('gasSheetIdInput').value;
+  gasApi.setConfig(url, sid);
+  closeModal('apiConfigModal');
+  showToast(gasApi.isConfigured() ? 'Apps Script 연동 URL이 저장되었습니다.' : '데모(오프라인) 모드로 전환되었습니다.', '🔗');
+}
+
+async function testGasConnection() {
+  const url = document.getElementById('gasUrlInput').value.trim();
+  const sid = document.getElementById('gasSheetIdInput').value.trim();
+  if (!url) {
+    showToast('Apps Script 웹 앱 URL을 먼저 입력하세요.', '⚠️');
+    return;
+  }
+  gasApi.setConfig(url, sid);
+  try {
+    const res = await gasApi.get('ping');
+    showToast(`연결 성공: ${res.spreadsheet_name || '시트'} (${(res.all_sheets || []).length}개 시트)`, '✅');
+  } catch (err) {
+    showToast(`연결 실패: ${err.message}`, '❌');
+  }
 }
 
 function toggleTeacherStudentMode() {
@@ -309,11 +654,12 @@ function applyRoleUI() {
   const teacherNav = document.getElementById('teacherBottomNav');
 
   if (state.activeRole === 'teacher') {
-    nameElem.innerText = `${mockData.currentUser.gradeClass} 박은혜 담임교사`;
-    subElem.innerText = `서울고등학교 1-3반 · 관리자 모드`;
+    const tName = mockData.currentUser.teacherName || '담임';
+    nameElem.innerText = `${mockData.currentUser.gradeClass} ${tName} 담임교사`;
+    subElem.innerText = `${mockData.currentUser.schoolName} ${mockData.currentUser.gradeClass} · 관리자 모드`;
     badgeElem.innerText = "교사";
     badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-purple-100 text-purple-700";
-    avatarElem.innerText = "박";
+    avatarElem.innerText = tName[0] || "교";
     toggleText.innerText = "학생모드 전환";
 
     studentNav.classList.add('hidden');
@@ -327,14 +673,14 @@ function applyRoleUI() {
       nameElem.innerText = `${mockData.currentUser.gradeClass} ${mockData.currentUser.maskedName} 학생`;
       badgeElem.innerText = "학생";
       badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-indigo-100 text-indigo-700";
-      avatarElem.innerText = "유";
+      avatarElem.innerText = (mockData.currentUser.maskedName || "학")[0];
     } else {
       nameElem.innerText = `${mockData.currentUser.gradeClass} ${mockData.currentUser.parentName}`;
       badgeElem.innerText = "학부모";
       badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700";
       avatarElem.innerText = "학";
     }
-    subElem.innerText = `서울고등학교 1-3반 · 담임 박은혜 선생님`;
+    subElem.innerText = `${mockData.currentUser.schoolName} ${mockData.currentUser.gradeClass} · 담임 ${mockData.currentUser.teacherName} 선생님`;
     toggleText.innerText = "교사모드 전환";
 
     teacherNav.classList.add('hidden');
@@ -370,8 +716,18 @@ function renderAll() {
   if (typeof renderTeacherChatRooms === 'function') renderTeacherChatRooms();
 }
 
-// Initialize Dates & Canvas on Load
+// Initialize Dates, Canvas, URL API Param & Service Worker on Load
 window.addEventListener('DOMContentLoaded', () => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const apiParam = urlParams.get('api');
+  const sidParam = urlParams.get('sheetId') || '';
+  if (apiParam) {
+    gasApi.setConfig(apiParam, sidParam);
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+
   const today = new Date().toISOString().split('T')[0];
   const attStart = document.getElementById('attStartDate');
   const attEnd = document.getElementById('attEndDate');

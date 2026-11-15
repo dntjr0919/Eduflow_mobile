@@ -1,0 +1,19 @@
+{
+  "name": "EduFlow Mobile - 우리 반 스마트 학사 알리미",
+  "short_name": "EduFlow",
+  "description": "교사·학생·학부모 실시간 출결, 증빙서류, 가정통신문 전자서명 및 1:1 상담 PWA",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F8FAFC",
+  "theme_color": "#4F46E5",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

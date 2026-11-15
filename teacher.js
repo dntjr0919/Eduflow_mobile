@@ -27,7 +27,7 @@ function switchTeacherBottomTab(tabName) {
 }
 
 // --- TEACHER TAB 1: Home & Live Attendance + Counseling Toggle ---
-function toggleCounselingAcceptance(isOpen) {
+async function toggleCounselingAcceptance(isOpen) {
   mockData.isCounselingOpen = isOpen;
   const badge = document.getElementById('teacherCounselStatusBadge');
   if (isOpen) {
@@ -40,6 +40,17 @@ function toggleCounselingAcceptance(isOpen) {
     showToast('상담 접수가 비활성화되었습니다.', '🔒');
   }
   if (typeof renderStudentChat === 'function') renderStudentChat();
+
+  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+    try {
+      await gasApi.post('set_consultation_status', {
+        teacher_id: mockData.currentUser.userId || 'teacher01',
+        consultation_enabled: isOpen ? 1 : 0
+      });
+    } catch (err) {
+      showToast(`상담 상태 동기화 실패: ${err.message}`, '⚠️');
+    }
+  }
 }
 
 function renderTeacherHome() {
@@ -70,10 +81,19 @@ function renderTeacherHome() {
   `).join('');
 }
 
-function confirmTeacherAtt(id) {
+async function confirmTeacherAtt(id) {
   const item = mockData.teacherTodayAttendance.find(x => x.id === id);
   if (item) item.confirmed = true;
   renderTeacherHome();
+
+  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+    try {
+      await gasApi.post('confirm_attendance', { remote_id: id });
+    } catch (err) {
+      showToast(`출결 확인 동기화 실패: ${err.message}`, '⚠️');
+      return;
+    }
+  }
   showToast('출결 보고가 확인 처리되었습니다.');
 }
 
@@ -126,7 +146,7 @@ function renderTeacherDocs() {
   `).join('');
 }
 
-function finalizeTeacherDoc(docId, nextStatus) {
+async function finalizeTeacherDoc(docId, nextStatus) {
   const doc = mockData.urgentDocuments.find(d => d.id === docId);
   if (!doc) return;
   doc.status = nextStatus;
@@ -138,6 +158,17 @@ function finalizeTeacherDoc(docId, nextStatus) {
     showToast('미제출 반려 처리되어 학생에게 다시 독촉 알림이 활성화됩니다.', '⚠️');
   }
   renderAll();
+
+  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+    try {
+      await gasApi.post('confirm_document', {
+        remote_id: docId,
+        status: nextStatus === 'closed' ? '확인완료' : '미제출'
+      });
+    } catch (err) {
+      showToast(`서류 상태 동기화 실패: ${err.message}`, '⚠️');
+    }
+  }
 }
 
 function openRulesModal() {
@@ -157,12 +188,42 @@ function adjustRuleDays(inputId, delta) {
   el.value = next;
 }
 
-function saveRulesSettings(e) {
+async function saveRulesSettings(e) {
   e.preventDefault();
   mockData.rules.sickDays = parseInt(document.getElementById('ruleSick').value, 10);
   mockData.rules.fieldPreDays = parseInt(document.getElementById('ruleFieldPre').value, 10);
   mockData.rules.fieldPostDays = parseInt(document.getElementById('ruleFieldPost').value, 10);
   closeRulesModal();
+
+  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+    try {
+      await gasApi.post('upsert_doc_rule', {
+        data: {
+          remote_id: 'rule_absence',
+          rule_code: 'ABSENCE_REPORT',
+          doc_name: '결석계 및 증빙서류',
+          category: '출결서류',
+          due_business_days: mockData.rules.sickDays,
+          target_roles: 'student,parent',
+          is_active: 1
+        }
+      });
+      await gasApi.post('upsert_doc_rule', {
+        data: {
+          remote_id: 'rule_fieldtrip',
+          rule_code: 'FIELD_TRIP',
+          doc_name: '교외체험학습 결과보고서',
+          category: '체험학습',
+          due_business_days: mockData.rules.fieldPostDays,
+          target_roles: 'student,parent',
+          is_active: 1
+        }
+      });
+    } catch (err) {
+      showToast(`규정 저장 실패: ${err.message}`, '⚠️');
+      return;
+    }
+  }
   showToast(`규정 저장 완료 (결석 +${mockData.rules.sickDays}일, 체험학습 -${mockData.rules.fieldPreDays}일/+${mockData.rules.fieldPostDays}일)`, '⚙️');
 }
 
@@ -212,23 +273,48 @@ function toggleSignBoxPin() {
   }
 }
 
-function publishNewCircular() {
+async function publishNewCircular() {
   const title = document.getElementById('newCircularTitle').value.trim();
   if (!title) return;
+  const noticeId = 'CIR-' + Date.now();
+  const dueDate = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+
   mockData.circulars.unshift({
-    id: 'CIR-' + Date.now(),
-    docNum: '서울고등학교 제2025-108호',
+    id: noticeId,
+    docNum: '가정통신문',
     title,
-    deadline: '2025-11-28 마감',
+    deadline: `${dueDate} 마감`,
     status: 'pending',
     submittedCount: 0,
     totalCount: 28,
-    content: '학부모님의 가정에 늘 행운이 가득하시길 기원합니다. 방과후 자기주도학습 참가 희망 여부를 전자 서명 후 회신 바랍니다.',
-    meta: ['대상: 1학년 3반 전체', '전자서명 좌표 매핑 완료']
+    content: '학부모님의 가정에 늘 행운이 가득하시길 기원합니다. 참가 희망 여부를 전자 서명 후 회신 바랍니다.',
+    meta: [`대상: ${mockData.currentUser.gradeClass || '1학년 3반'} 전체`, '전자서명 좌표 매핑 완료']
   });
   closeNewCircularModal();
   if (typeof renderCirculars === 'function') renderCirculars();
   renderTeacherCirculars();
+
+  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+    try {
+      await gasApi.post('upsert_notice', {
+        data: {
+          remote_id: noticeId,
+          title,
+          category: '가정통신문',
+          content: '참가 희망 여부를 전자 서명 후 회신 바랍니다.',
+          target_grade: mockData.currentUser.grade || '1',
+          target_class: mockData.currentUser.classNo || '3',
+          due_date: dueDate,
+          requires_reply: 1,
+          author_name: mockData.currentUser.teacherName || '담임교사',
+          is_published: 1
+        }
+      });
+    } catch (err) {
+      showToast(`가정통신문 배포 실패: ${err.message}`, '⚠️');
+      return;
+    }
+  }
   showToast('새 가정통신문이 배포되었습니다.');
 }
 
@@ -246,15 +332,28 @@ function sendBulkPromptToUnsubmitted() {
 }
 
 // --- TEACHER TAB 4: PC Remote Task Queue ---
-function handleCreateRemoteTask(e) {
+function _inferRemoteTaskType(label) {
+  const s = (label || '').toLowerCase();
+  if (s.includes('분류') || s.includes('정리')) return 'file_sort';
+  if (s.includes('엑셀') || s.includes('병합')) return 'excel_merge';
+  if (s.includes('서명') || s.includes('pdf')) return 'signature_pdf';
+  if (s.includes('가정통신문') || s.includes('추출')) return 'notice_extract';
+  return 'web_llm';
+}
+
+async function handleCreateRemoteTask(e) {
   e.preventDefault();
-  const type = document.getElementById('remoteTaskType').value;
+  const typeLabel = document.getElementById('remoteTaskType').value;
   const timingVal = document.querySelector('input[name="taskTiming"]:checked').value;
   const prompt = document.getElementById('remoteTaskPrompt').value.trim() || '기본 설정값으로 자동 실행';
+  const jobId = 'mob_' + Date.now();
+  const scheduledStr = timingVal === 'now'
+    ? new Date().toISOString().slice(0, 16).replace('T', ' ')
+    : `${new Date().toISOString().split('T')[0]} 17:30`;
 
   mockData.remoteTasks.unshift({
-    id: 'JOB-' + Date.now(),
-    type,
+    id: jobId,
+    type: typeLabel,
     timing: timingVal === 'now' ? '즉시 실행 요청됨' : '예약됨 (오늘 17:30)',
     prompt,
     status: timingVal === 'now' ? 'running' : 'pending',
@@ -262,6 +361,30 @@ function handleCreateRemoteTask(e) {
   });
   document.getElementById('remoteTaskPrompt').value = '';
   renderRemoteTasks();
+
+  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+    try {
+      await gasApi.post('enqueue_remote_task', {
+        data: {
+          remote_id: jobId,
+          task_type: _inferRemoteTaskType(typeLabel),
+          title: typeLabel,
+          due_date: new Date().toISOString().split('T')[0],
+          priority: timingVal === 'now' ? 'high' : 'normal',
+          is_mobile_task: 1,
+          scheduled_time: scheduledStr,
+          target_info: prompt,
+          action_payload: JSON.stringify({ prompt, mode: timingVal }),
+          exec_status: 'pending',
+          is_done: 0,
+          memo: 'EduFlow Mobile에서 예약됨'
+        }
+      });
+    } catch (err) {
+      showToast(`원격 작업 큐 등록 실패: ${err.message}`, '⚠️');
+      return;
+    }
+  }
   showToast('PC EduFlow 원격 작업 큐에 등록되었습니다.', '⚡');
 }
 
@@ -329,6 +452,10 @@ function openTeacherChatDetail(roomId) {
   detail.classList.add('flex');
   renderTeacherChatMessages();
   renderTeacherChatRooms();
+
+  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+    gasApi.post('mark_chat_read', { room_id: roomId, reader_role: 'teacher' }).catch(() => {});
+  }
 }
 
 function closeTeacherChatDetail() {
@@ -363,7 +490,7 @@ function insertTeacherQuickReply(text) {
   input.focus();
 }
 
-function sendTeacherMessage() {
+async function sendTeacherMessage() {
   const input = document.getElementById('teacherMsgInput');
   const text = input.value.trim();
   if (!text) return;
@@ -375,20 +502,61 @@ function sendTeacherMessage() {
   input.value = '';
   renderTeacherChatMessages();
   if (typeof renderStudentChat === 'function') renderStudentChat();
+
+  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+    try {
+      await gasApi.post('send_chat_message', {
+        data: {
+          room_id: room.roomId,
+          sender_id: mockData.currentUser.userId || 'teacher01',
+          sender_name: mockData.currentUser.teacherName || '담임교사',
+          sender_role: 'teacher',
+          receiver_id: room.studentId || '',
+          message: text,
+          is_read: 0
+        }
+      });
+    } catch (err) {
+      showToast(`메시지 전송 실패: ${err.message}`, '⚠️');
+    }
+  }
 }
 
-function quickRegisterAttFromChat() {
+async function quickRegisterAttFromChat() {
   const room = mockData.chatRooms.find(r => r.roomId === state.activeTeacherChatRoomId);
   if (!room) return;
   const lastUserMsg = [...room.messages].reverse().find(m => m.sender === 'user');
+  const attId = 'TA-' + Date.now();
+  const reason = lastUserMsg ? lastUserMsg.text : '1:1 상담방 접수 건';
   mockData.teacherTodayAttendance.unshift({
-    id: 'TA-' + Date.now(),
+    id: attId,
     studentId: room.studentId,
     name: room.studentName,
     type: '출결보고(채팅)',
-    reason: lastUserMsg ? lastUserMsg.text : '1:1 상담방 접수 건',
+    reason,
     confirmed: true
   });
   renderTeacherHome();
+
+  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+    try {
+      await gasApi.post('submit_attendance', {
+        data: {
+          remote_id: attId,
+          date: new Date().toISOString().split('T')[0],
+          student_id: room.studentId,
+          student_name: room.studentName,
+          attendance_type: '출결보고(채팅)',
+          reason,
+          submitted_by: mockData.currentUser.teacherName || '담임교사',
+          role: 'teacher',
+          teacher_confirmed: 1
+        }
+      });
+    } catch (err) {
+      showToast(`출결 등록 실패: ${err.message}`, '⚠️');
+      return;
+    }
+  }
   showToast(`${room.studentName} 학생의 채팅 내용이 출결 시트에 즉시 등록되었습니다.`, '⚡');
 }
