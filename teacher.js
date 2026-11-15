@@ -159,6 +159,54 @@ function renderTeacherHome() {
       </div>
     `).join('');
   }
+
+  // 담임 학급 당일 시간표 렌더링
+  const cu = mockData.currentUser;
+  const hrTitle = document.getElementById('teacherHomeroomScheduleTitle');
+  const hrChgBadge = document.getElementById('teacherHomeroomChangeBadge');
+  const hrList = document.getElementById('teacherHomeroomScheduleList');
+
+  if (hrTitle) {
+    hrTitle.innerText = (cu.grade && cu.classNo)
+      ? `${cu.grade}학년 ${cu.classNo}반 오늘 시간표 (${dayChar}요일)`
+      : `담임 학급 오늘 시간표 (${dayChar}요일)`;
+  }
+
+  const homeroomRows = Array.isArray(mockData.homeroomSchedule) ? mockData.homeroomSchedule : [];
+  const changedHomeroom = homeroomRows.filter(item => item.isChanged);
+  if (hrChgBadge) {
+    if (changedHomeroom.length > 0) {
+      hrChgBadge.classList.remove('hidden');
+      hrChgBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>${changedHomeroom.map(item => `${item.period}교시`).join(', ')} 변동`;
+    } else {
+      hrChgBadge.classList.add('hidden');
+    }
+  }
+
+  if (hrList) {
+    if (!cu.grade || !cu.classNo) {
+      hrList.innerHTML = `<div class="py-4 text-center text-xs text-slate-400">프로필에서 담임 학년·반을 설정하면 우리 반 시간표가 표시됩니다.</div>`;
+    } else if (homeroomRows.length === 0) {
+      hrList.innerHTML = `<div class="py-4 text-center text-xs text-slate-400">오늘 등록된 학급 시간표가 없습니다.</div>`;
+    } else {
+      hrList.innerHTML = homeroomRows.map(item => `
+        <div class="flex items-center justify-between px-3 py-2 rounded-xl border ${item.isChanged ? 'bg-amber-50/90 border-amber-300' : 'bg-slate-50 border-slate-200/70'}">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <span class="text-[11px] font-bold px-2 py-0.5 rounded-lg shrink-0 ${item.isChanged ? 'bg-amber-200/80 text-amber-900' : 'bg-white text-slate-600 border border-slate-200/80'}">${item.period}교시</span>
+            <div class="min-w-0">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-xs font-bold ${item.isChanged ? 'text-amber-950' : 'text-slate-800'}">${item.subject || '-'}</span>
+                ${item.isChanged ? `<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500 text-white">변경</span>` : ''}
+                ${item.isChanged && item.originalSubject ? `<span class="text-[10px] text-slate-400 line-through">${item.originalSubject}</span>` : ''}
+              </div>
+              ${item.isChanged && item.changedReason ? `<p class="text-[10px] text-amber-700 mt-0.5 truncate">${item.changedReason}</p>` : ''}
+            </div>
+          </div>
+          <span class="text-[11px] font-medium ${item.isChanged ? 'text-amber-800' : 'text-slate-500'} shrink-0 ml-2">${item.teacher ? `${item.teacher}T` : '-'}</span>
+        </div>
+      `).join('');
+    }
+  }
 }
 
 async function syncNeisMealsNow(btnEl) {
@@ -232,6 +280,14 @@ async function saveTeacherProfile(e) {
     mockData.currentUser.consultationHours = payload.consultation_hours;
     mockData.currentUser.neisOfficeCode = payload.neis_office_code;
     mockData.currentUser.neisSchoolCode = payload.neis_school_code;
+    if (typeof buildHomeroomSchedule === 'function') {
+      mockData.homeroomSchedule = buildHomeroomSchedule(
+        mockData.rawTimetableBase || [],
+        mockData.rawTimetableChanges || [],
+        payload.grade,
+        payload.class_no
+      );
+    }
 
     closeModal('teacherProfileModal');
     applyRoleUI();

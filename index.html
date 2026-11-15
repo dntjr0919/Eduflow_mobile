@@ -405,6 +405,24 @@
 </div>
 <div class="grid grid-cols-4 gap-2" id="teacherScheduleList"></div>
 </div>
+
+<div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
+<div class="flex items-center justify-between mb-3">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+<div>
+<h3 class="text-xs font-bold text-slate-800" id="teacherHomeroomScheduleTitle">담임 학급 오늘 시간표</h3>
+<p class="text-[10px] text-slate-400">우리 반 시간표 · 변동 자동 반영</p>
+</div>
+</div>
+<span class="hidden inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/70 px-2 py-0.5 rounded-full" id="teacherHomeroomChangeBadge">
+<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>수업 변동
+</span>
+</div>
+<div class="space-y-1.5" id="teacherHomeroomScheduleList"></div>
+</div>
 </main>
 
 <!-- TEACHER TAB 2: Documents & Rules -->

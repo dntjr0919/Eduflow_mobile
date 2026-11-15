@@ -95,6 +95,9 @@ let mockData = {
   teacherTodayAttendance: [],
   timetable: [],
   teacherSchedule: [],
+  homeroomSchedule: [],
+  rawTimetableBase: [],
+  rawTimetableChanges: [],
   meals: {
     lunch: null,
     dinner: null
@@ -495,6 +498,43 @@ function _getKoreanTodayDayChar() {
   return ['일', '월', '화', '수', '목', '금', '토'][new Date().getDay()];
 }
 
+function buildHomeroomSchedule(timetableBase, timetableChanges, grade, classNo) {
+  const g = String(grade || '').trim();
+  const cNo = String(classNo || '').trim();
+  if (!g || !cNo || !Array.isArray(timetableBase)) return [];
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const dayChar = _getKoreanTodayDayChar();
+  const changes = Array.isArray(timetableChanges) ? timetableChanges : [];
+
+  const classTodayBase = timetableBase
+    .filter(tb => {
+      const d = String(tb.day_of_week || '').trim();
+      const dayMatch = !d || d.startsWith(dayChar);
+      return dayMatch &&
+        String(tb.grade || '').trim() === g &&
+        String(tb.class_no || '').trim() === cNo;
+    })
+    .sort((a, b) => Number(a.period || 0) - Number(b.period || 0));
+
+  return classTodayBase.map(tb => {
+    const chg = changes.find(c =>
+      String(c.period) === String(tb.period) &&
+      (!c.grade || String(c.grade).trim() === g) &&
+      (!c.class_no || String(c.class_no).trim() === cNo) &&
+      (!c.date || c.date === todayStr)
+    );
+    return {
+      period: Number(tb.period) || tb.period,
+      subject: chg ? (chg.changed_subject || tb.subject || '') : (tb.subject || ''),
+      teacher: chg ? (chg.changed_teacher || tb.teacher_name || '') : (tb.teacher_name || ''),
+      isChanged: Boolean(chg),
+      originalSubject: chg ? (chg.original_subject || tb.subject || '') : '',
+      changedReason: chg ? (chg.reason || chg.changed_reason || chg.memo || '') : ''
+    };
+  });
+}
+
 function hydrateMockDataFromBundle(bundle) {
   if (!bundle || !bundle.ok) return;
 
@@ -605,6 +645,8 @@ function hydrateMockDataFromBundle(bundle) {
     const dayChar = _getKoreanTodayDayChar();
     const changes = Array.isArray(bundle.timetable_changes) ? bundle.timetable_changes : [];
     const cu = mockData.currentUser;
+    mockData.rawTimetableBase = bundle.timetable_base;
+    mockData.rawTimetableChanges = changes;
 
     const stuTitleEl = document.getElementById('studentTimetableTitle');
     if (stuTitleEl) stuTitleEl.innerText = `오늘의 시간표 (${dayChar}요일)`;
@@ -666,6 +708,13 @@ function hydrateMockDataFromBundle(bundle) {
         changed: Boolean(chg)
       };
     });
+
+    // 담임 학급 당일 시간표 구성 (교사 로그인 시 grade + class_no 기준)
+    if (cu.role === 'teacher' || state.activeRole === 'teacher') {
+      mockData.homeroomSchedule = buildHomeroomSchedule(bundle.timetable_base, changes, cu.grade, cu.classNo);
+    } else {
+      mockData.homeroomSchedule = [];
+    }
   }
 
   // 7. 급식 식단표 (NEIS)
