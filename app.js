@@ -134,6 +134,55 @@ function showToast(msg, icon = '✅') {
   window._toastTimer = setTimeout(() => toast.classList.add('hidden'), 2600);
 }
 
+// Global Loading Overlay & Button Loading Wrapper
+let _loadingCount = 0;
+
+function showLoading(message = '처리 중...') {
+  _loadingCount += 1;
+  const overlay = document.getElementById('globalLoadingOverlay');
+  const msgEl = document.getElementById('globalLoadingMsg');
+  if (msgEl) msgEl.innerText = message || '처리 중...';
+  if (overlay) overlay.classList.remove('hidden');
+}
+
+function hideLoading() {
+  _loadingCount = Math.max(0, _loadingCount - 1);
+  if (_loadingCount === 0) {
+    const overlay = document.getElementById('globalLoadingOverlay');
+    if (overlay) overlay.classList.add('hidden');
+  }
+}
+
+async function withButtonLoading(btnElement, loadingText, asyncFn) {
+  if (!btnElement) {
+    return await asyncFn();
+  }
+  if (btnElement.dataset.loading === '1') {
+    return;
+  }
+
+  const origHtml = btnElement.innerHTML;
+  const origDisabled = btnElement.disabled;
+  btnElement.dataset.loading = '1';
+  btnElement.disabled = true;
+  btnElement.classList.add('opacity-75', 'cursor-not-allowed');
+
+  if (loadingText) {
+    btnElement.innerHTML = `<span class="inline-flex items-center justify-center gap-1.5"><span class="spinner" aria-hidden="true"></span><span>${loadingText}</span></span>`;
+  } else {
+    btnElement.innerHTML = `<span class="spinner" aria-hidden="true"></span>`;
+  }
+
+  try {
+    return await asyncFn();
+  } finally {
+    btnElement.innerHTML = origHtml;
+    btnElement.disabled = origDisabled;
+    delete btnElement.dataset.loading;
+    btnElement.classList.remove('opacity-75', 'cursor-not-allowed');
+  }
+}
+
 // Common Modal Controls
 function openModal(modalId) {
   const el = document.getElementById(modalId);
@@ -226,39 +275,49 @@ async function handleLogin(e) {
   if (e) e.preventDefault();
   const userId = (document.getElementById('loginIdInput')?.value || '').trim();
   const password = (document.getElementById('loginPwInput')?.value || '');
+  const submitBtn = (e && e.submitter) || document.querySelector('#loginScreen form button[type="submit"]');
 
-  if (gasApi.isConfigured()) {
-    try {
-      showToast('Google Sheets 계정 인증 중...', '🔐');
-      const pwHash = await gasApi.sha256Hex(password);
-      const res = await gasApi.post('login', {
-        role: state.activeRole,
-        user_id: userId,
-        password: password,
-        password_hash: pwHash
-      });
-      if (res.user) {
-        _applyAuthenticatedUser(res.user);
+  let loginSucceeded = false;
+  await withButtonLoading(submitBtn, '로그인 중...', async () => {
+    if (gasApi.isConfigured()) {
+      showLoading('Google Sheets 계정 인증 중...');
+      try {
+        const pwHash = await gasApi.sha256Hex(password);
+        const res = await gasApi.post('login', {
+          role: state.activeRole,
+          user_id: userId,
+          password: password,
+          password_hash: pwHash
+        });
+        if (res.user) {
+          _applyAuthenticatedUser(res.user);
+        }
+        await refreshFromGas(false);
+        if ('Notification' in window && Notification.permission === 'granted') {
+          void subscribeToWebPush(true);
+        }
+        loginSucceeded = true;
+      } catch (err) {
+        if (err && err.isDemo) {
+          mockData.currentUser.role = state.activeRole;
+          mockData.currentUser.userId = userId;
+          showToast('데모 모드로 로그인되었습니다 (연동된 시트 없음).', 'ℹ️');
+          loginSucceeded = true;
+        } else {
+          showToast(`로그인 실패: ${err.message}`, '⚠️');
+        }
+      } finally {
+        hideLoading();
       }
-      await refreshFromGas(false);
-      if ('Notification' in window && Notification.permission === 'granted') {
-        void subscribeToWebPush(true);
-      }
-    } catch (err) {
-      if (err && err.isDemo) {
-        mockData.currentUser.role = state.activeRole;
-        mockData.currentUser.userId = userId;
-        showToast('데모 모드로 로그인되었습니다 (연동된 시트 없음).', 'ℹ️');
-      } else {
-        showToast(`로그인 실패: ${err.message}`, '⚠️');
-        return;
-      }
+    } else {
+      mockData.currentUser.role = state.activeRole;
+      mockData.currentUser.userId = userId;
+      showToast('로컬 데모 모드로 실행 중입니다.', 'ℹ️');
+      loginSucceeded = true;
     }
-  } else {
-    mockData.currentUser.role = state.activeRole;
-    mockData.currentUser.userId = userId;
-    showToast('로컬 데모 모드로 실행 중입니다.', 'ℹ️');
-  }
+  });
+
+  if (!loginSucceeded) return;
 
   applyRoleUI();
   document.getElementById('loginScreen').classList.add('hidden');
@@ -266,7 +325,7 @@ async function handleLogin(e) {
   dash.classList.remove('hidden');
   dash.classList.add('flex');
   renderAll();
-  checkAndEnforcePwaPushGate();
+  checkAndEnforcePwaPushGate({ openGuideOnDenied: true });
 }
 
 function _applyAuthenticatedUser(user) {
@@ -298,29 +357,35 @@ function _applyAuthenticatedUser(user) {
   };
 }
 
-async function refreshFromGas(showFeedback = true) {
+async function refreshFromGas(showFeedback = true, triggerBtn = null) {
   if (!gasApi.isConfigured()) {
     if (showFeedback) showToast('데모 모드로 동작 중입니다.', 'ℹ️');
     return;
   }
-  try {
-    const cu = mockData.currentUser;
-    const bundle = await gasApi.get('get_mobile_bundle', {
-      role: state.activeRole,
-      student_id: cu.studentId || '',
-      grade: cu.grade || '',
-      class_no: cu.classNo || ''
-    });
-    hydrateMockDataFromBundle(bundle);
-    renderAll();
-    if (showFeedback) showToast('Google Sheets 최신 데이터를 불러왔습니다.', '🔄');
-  } catch (err) {
-    if (err && err.isDemo) {
-      if (showFeedback) showToast('데모 모드로 동작 중입니다.', 'ℹ️');
-      return;
+  const btn = triggerBtn || (showFeedback ? document.getElementById('headerRefreshBtn') : null);
+  await withButtonLoading(btn, '', async () => {
+    if (showFeedback) showLoading('최신 데이터를 동기화 중...');
+    try {
+      const cu = mockData.currentUser;
+      const bundle = await gasApi.get('get_mobile_bundle', {
+        role: state.activeRole,
+        student_id: cu.studentId || '',
+        grade: cu.grade || '',
+        class_no: cu.classNo || ''
+      });
+      hydrateMockDataFromBundle(bundle);
+      renderAll();
+      if (showFeedback) showToast('Google Sheets 최신 데이터를 불러왔습니다.', '🔄');
+    } catch (err) {
+      if (err && err.isDemo) {
+        if (showFeedback) showToast('데모 모드로 동작 중입니다.', 'ℹ️');
+        return;
+      }
+      if (showFeedback) showToast(`동기화 오류: ${err.message}`, '⚠️');
+    } finally {
+      if (showFeedback) hideLoading();
     }
-    if (showFeedback) showToast(`동기화 오류: ${err.message}`, '⚠️');
-  }
+  });
 }
 
 function _getKoreanTodayDayChar() {
@@ -693,6 +758,9 @@ function applyRoleUI() {
 }
 
 function logout() {
+  _hideAllPwaPushUI();
+  state.pwaPushBannerDismissed = false;
+  state.pwaPushGuideDismissed = false;
   document.getElementById('dashboardScreen').classList.add('hidden');
   document.getElementById('dashboardScreen').classList.remove('flex');
   document.getElementById('loginScreen').classList.remove('hidden');
@@ -733,29 +801,148 @@ function _urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
-function checkAndEnforcePwaPushGate() {
-  const gateModal = document.getElementById('pwaPushGateModal');
-  const deniedGuide = document.getElementById('pwaPushDeniedGuide');
-  const descEl = document.getElementById('pwaPushDesc');
-  const btnEl = document.getElementById('pwaPushEnableBtn');
-  if (!gateModal) return;
+let _pwaPushSyncedThisSession = false;
 
-  if (isStandalonePwa() && 'Notification' in window && Notification.permission !== 'granted') {
-    gateModal.classList.remove('hidden');
-    const isDenied = Notification.permission === 'denied';
-    if (deniedGuide) {
-      deniedGuide.classList.toggle('hidden', !isDenied);
+function getPwaDevicePlatform() {
+  const ua = (navigator.userAgent || '').toLowerCase();
+  const isIos = /iphone|ipad|ipod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (isIos) return 'ios';
+  if (/android/.test(ua)) return 'android';
+  return 'desktop';
+}
+
+function _getDeviceDeniedStepsHtml() {
+  const platform = getPwaDevicePlatform();
+  if (platform === 'ios') {
+    return `
+      <p><strong>iPhone (iOS PWA)</strong>:</p>
+      <p>1. <strong>아이폰 설정</strong> 앱 열기</p>
+      <p>2. <strong>알림</strong> → <strong>EduFlow</strong>(또는 Safari) 선택</p>
+      <p>3. <strong>알림 허용</strong>을 켠 뒤 앱으로 돌아와 <strong>[권한 다시 확인]</strong>을 눌러주세요.</p>
+    `;
+  }
+  if (platform === 'android') {
+    return `
+      <p><strong>Android (Chrome)</strong>:</p>
+      <p>1. 상단 주소창 왼쪽 <strong>설정(🔒/⚙️)</strong> 아이콘 터치</p>
+      <p>2. <strong>권한</strong> → <strong>알림</strong>을 <strong>허용</strong>으로 변경</p>
+      <p class="text-[10px] text-amber-700/90 mt-1">* 홈 화면 앱인 경우 기기 <strong>설정 → 애플리케이션 → EduFlow → 알림 허용</strong> 후 <strong>[권한 다시 확인]</strong>을 눌러주세요.</p>
+    `;
+  }
+  return `
+    <p><strong>브라우저 알림 설정</strong>:</p>
+    <p>1. 주소창 왼쪽 <strong>사이트 정보(🔒/⚙️)</strong> 클릭</p>
+    <p>2. <strong>알림</strong> 권한을 <strong>허용</strong>으로 변경 후 <strong>[권한 다시 확인]</strong>을 눌러주세요.</p>
+  `;
+}
+
+function _hideAllPwaPushUI() {
+  const banner = document.getElementById('pwaPushBanner');
+  const bannerDefault = document.getElementById('pwaPushBannerDefault');
+  const bannerDenied = document.getElementById('pwaPushBannerDenied');
+  const guideModal = document.getElementById('pwaPushGuideModal');
+  if (banner) banner.classList.add('hidden');
+  if (bannerDefault) bannerDefault.classList.add('hidden');
+  if (bannerDenied) bannerDenied.classList.add('hidden');
+  if (guideModal) guideModal.classList.add('hidden');
+}
+
+function dismissPwaPushBanner() {
+  state.pwaPushBannerDismissed = true;
+  const banner = document.getElementById('pwaPushBanner');
+  const bannerDefault = document.getElementById('pwaPushBannerDefault');
+  if (bannerDefault) bannerDefault.classList.add('hidden');
+  if (banner && (!document.getElementById('pwaPushBannerDenied') || document.getElementById('pwaPushBannerDenied').classList.contains('hidden'))) {
+    banner.classList.add('hidden');
+  }
+}
+
+function openPwaPushGuide() {
+  const guideModal = document.getElementById('pwaPushGuideModal');
+  if (!guideModal || !('Notification' in window)) return;
+
+  const isDenied = Notification.permission === 'denied';
+  const titleEl = document.getElementById('pwaPushGuideTitle');
+  const descEl = document.getElementById('pwaPushDesc');
+  const deniedGuide = document.getElementById('pwaPushDeniedGuide');
+  const stepsEl = document.getElementById('pwaPushDeviceSteps');
+  const enableBtn = document.getElementById('pwaPushEnableBtn');
+  const recheckBtn = document.getElementById('pwaPushRecheckBtn');
+
+  if (titleEl) {
+    titleEl.innerText = isDenied ? '알림 권한이 차단되어 있어요' : '실시간 학사 알림 켜기';
+  }
+  if (descEl) {
+    descEl.innerHTML = isDenied
+      ? '웹앱 보안 정책상 설정 화면으로 자동 이동할 수 없습니다. 아래 기기별 안내에 따라 허용해 주세요.'
+      : '출결·서류 마감 독촉, 가정통신문, 긴급 공지를 실시간으로 받으려면 알림을 허용해 주세요.';
+  }
+  if (deniedGuide) {
+    deniedGuide.classList.toggle('hidden', !isDenied);
+  }
+  if (isDenied && stepsEl) {
+    stepsEl.innerHTML = _getDeviceDeniedStepsHtml();
+  }
+  if (enableBtn) {
+    enableBtn.classList.toggle('hidden', isDenied);
+  }
+  if (recheckBtn) {
+    recheckBtn.classList.toggle('hidden', !isDenied);
+  }
+
+  guideModal.classList.remove('hidden');
+}
+
+function dismissPwaPushGuide() {
+  state.pwaPushGuideDismissed = true;
+  const guideModal = document.getElementById('pwaPushGuideModal');
+  if (guideModal) guideModal.classList.add('hidden');
+  checkAndEnforcePwaPushGate();
+}
+
+function checkAndEnforcePwaPushGate(options = {}) {
+  const dash = document.getElementById('dashboardScreen');
+  const isLoggedIn = dash && !dash.classList.contains('hidden');
+  if (!isLoggedIn || !('Notification' in window)) {
+    _hideAllPwaPushUI();
+    return;
+  }
+
+  const perm = Notification.permission;
+  const banner = document.getElementById('pwaPushBanner');
+  const bannerDefault = document.getElementById('pwaPushBannerDefault');
+  const bannerDenied = document.getElementById('pwaPushBannerDenied');
+
+  if (perm === 'granted') {
+    _hideAllPwaPushUI();
+    if (!_pwaPushSyncedThisSession) {
+      _pwaPushSyncedThisSession = true;
+      void subscribeToWebPush(true);
     }
-    if (descEl) {
-      descEl.innerHTML = isDenied
-        ? "브라우저/기기 설정에서 알림 권한을 <strong>'허용'</strong>으로 변경한 뒤 아래 <strong>[권한 상태 다시 확인]</strong> 버튼을 눌러주세요."
-        : "홈 화면 앱(PWA)에서는 출결·서류 마감 독촉, 가정통신문, 긴급 공지를 실시간으로 받기 위해 <strong>알림 권한 허용이 필수</strong>입니다.";
+    return;
+  }
+
+  if (perm === 'default') {
+    if (bannerDenied) bannerDenied.classList.add('hidden');
+    if (state.pwaPushBannerDismissed) {
+      if (bannerDefault) bannerDefault.classList.add('hidden');
+      if (banner) banner.classList.add('hidden');
+    } else {
+      if (banner) banner.classList.remove('hidden');
+      if (bannerDefault) bannerDefault.classList.remove('hidden');
     }
-    if (btnEl) {
-      btnEl.innerText = isDenied ? '권한 상태 다시 확인' : '알림 권한 켜기';
-    }
-  } else {
-    gateModal.classList.add('hidden');
+    return;
+  }
+
+  // perm === 'denied'
+  if (bannerDefault) bannerDefault.classList.add('hidden');
+  if (banner) banner.classList.remove('hidden');
+  if (bannerDenied) bannerDenied.classList.remove('hidden');
+
+  const guideModal = document.getElementById('pwaPushGuideModal');
+  const isGuideOpen = guideModal && !guideModal.classList.contains('hidden');
+  if (isGuideOpen || (options && options.openGuideOnDenied && !state.pwaPushGuideDismissed)) {
+    openPwaPushGuide();
   }
 }
 
@@ -818,27 +1005,60 @@ async function requestPwaNotificationPermission() {
     return;
   }
 
-  const gateModal = document.getElementById('pwaPushGateModal');
   if (Notification.permission === 'granted') {
-    if (gateModal) gateModal.classList.add('hidden');
+    _hideAllPwaPushUI();
     showToast('알림 권한이 확인되었습니다.', '🔔');
+    _pwaPushSyncedThisSession = true;
     void subscribeToWebPush(true);
+    return;
+  }
+
+  if (Notification.permission === 'denied') {
+    openPwaPushGuide();
     return;
   }
 
   try {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      if (gateModal) gateModal.classList.add('hidden');
+      // 즉시(0ms) UI를 닫은 뒤 백그라운드에서 Web Push 구독 및 GAS 저장 실행
+      _hideAllPwaPushUI();
       showToast('알림 권한이 허용되었습니다.', '🔔');
+      _pwaPushSyncedThisSession = true;
       void subscribeToWebPush(true);
     } else {
       checkAndEnforcePwaPushGate();
-      showToast('알림 권한이 거부되었습니다. 기기 설정에서 허용해 주세요.', '⚠️');
+      if (permission === 'denied') {
+        openPwaPushGuide();
+        showToast('알림 권한이 차단되었습니다. 기기 설정에서 허용해 주세요.', '⚠️');
+      } else {
+        showToast('나중에 상단 배너에서 언제든 알림을 켤 수 있습니다.', 'ℹ️');
+      }
     }
   } catch (err) {
     checkAndEnforcePwaPushGate();
     showToast(`알림 권한 요청 오류: ${err.message}`, '⚠️');
+  }
+}
+
+function recheckPwaNotificationPermission() {
+  if (!('Notification' in window)) {
+    showToast('이 브라우저는 알림 기능을 지원하지 않습니다.', '⚠️');
+    return;
+  }
+  if (Notification.permission === 'granted') {
+    _hideAllPwaPushUI();
+    showToast('알림 권한이 허용되었습니다!', '🔔');
+    _pwaPushSyncedThisSession = true;
+    void subscribeToWebPush(true);
+  } else if (Notification.permission === 'default') {
+    const guideModal = document.getElementById('pwaPushGuideModal');
+    if (guideModal) guideModal.classList.add('hidden');
+    checkAndEnforcePwaPushGate();
+    showToast('알림 권한이 아직 결정되지 않았습니다. [알림 허용하기]를 눌러주세요.', 'ℹ️');
+  } else {
+    openPwaPushGuide();
+    showToast('아직 알림이 차단되어 있습니다. 설정에서 허용 후 다시 확인해 주세요.', '⚠️');
   }
 }
 

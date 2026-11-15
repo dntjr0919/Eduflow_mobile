@@ -119,7 +119,7 @@ function renderTeacherHome() {
         </div>
         ${item.confirmed
           ? `<span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">확인완료</span>`
-          : `<button onclick="confirmTeacherAtt('${item.id}')" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-lg shadow-xs">교사 확인</button>`
+          : `<button onclick="confirmTeacherAtt('${item.id}', this)" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-lg shadow-xs">교사 확인</button>`
         }
       </div>
     `).join('');
@@ -155,19 +155,23 @@ function renderTeacherHome() {
   }
 }
 
-async function syncNeisMealsNow() {
+async function syncNeisMealsNow(btnEl) {
   if (!gasApi.isConfigured()) {
     showToast('데모 모드에서는 나이스 급식 동기화를 실행할 수 없습니다.', 'ℹ️');
     return;
   }
-  try {
-    showToast('나이스(NEIS) 급식 식단표를 동기화 중입니다...', '🍽️');
-    const res = await gasApi.post('sync_neis_meals', {});
-    await refreshFromGas(false);
-    showToast(`나이스 급식 동기화 완료 (${res.count || 0}건 반영)`, '✅');
-  } catch (err) {
-    showToast(`나이스 급식 동기화 실패: ${err.message}`, '⚠️');
-  }
+  await withButtonLoading(btnEl, '동기화 중...', async () => {
+    showLoading('나이스(NEIS) 급식 식단표 동기화 중...');
+    try {
+      const res = await gasApi.post('sync_neis_meals', {});
+      await refreshFromGas(false);
+      showToast(`나이스 급식 동기화 완료 (${res.count || 0}건 반영)`, '✅');
+    } catch (err) {
+      showToast(`나이스 급식 동기화 실패: ${err.message}`, '⚠️');
+    } finally {
+      hideLoading();
+    }
+  });
 }
 
 function openTeacherProfileModal() {
@@ -186,6 +190,7 @@ function openTeacherProfileModal() {
 
 async function saveTeacherProfile(e) {
   e.preventDefault();
+  const submitBtn = e.submitter || (e.target && e.target.querySelector('button[type="submit"]'));
   const payload = {
     teacher_id: mockData.currentUser.userId || 'teacher01',
     name: document.getElementById('tpName').value.trim(),
@@ -199,48 +204,51 @@ async function saveTeacherProfile(e) {
     neis_school_code: document.getElementById('tpNeisSchoolCode').value.trim()
   };
 
-  if (gasApi.isConfigured()) {
-    try {
-      await gasApi.post('upsert_teacher_profile', payload);
-    } catch (err) {
-      showToast(`교사 프로필 저장 실패: ${err.message}`, '⚠️');
-      return;
+  await withButtonLoading(submitBtn, '저장 중...', async () => {
+    if (gasApi.isConfigured()) {
+      try {
+        await gasApi.post('upsert_teacher_profile', payload);
+      } catch (err) {
+        showToast(`교사 프로필 저장 실패: ${err.message}`, '⚠️');
+        return;
+      }
     }
-  }
 
-  mockData.currentUser.teacherName = payload.name;
-  mockData.currentUser.schoolName = payload.school_name;
-  mockData.currentUser.grade = payload.grade;
-  mockData.currentUser.classNo = payload.class_no;
-  mockData.currentUser.gradeClass = (payload.grade && payload.class_no)
-    ? `${payload.grade}학년 ${payload.class_no}반`
-    : '';
-  mockData.currentUser.subject = payload.subject;
-  mockData.currentUser.phone = payload.phone;
-  mockData.currentUser.consultationHours = payload.consultation_hours;
-  mockData.currentUser.neisOfficeCode = payload.neis_office_code;
-  mockData.currentUser.neisSchoolCode = payload.neis_school_code;
+    mockData.currentUser.teacherName = payload.name;
+    mockData.currentUser.schoolName = payload.school_name;
+    mockData.currentUser.grade = payload.grade;
+    mockData.currentUser.classNo = payload.class_no;
+    mockData.currentUser.gradeClass = (payload.grade && payload.class_no)
+      ? `${payload.grade}학년 ${payload.class_no}반`
+      : '';
+    mockData.currentUser.subject = payload.subject;
+    mockData.currentUser.phone = payload.phone;
+    mockData.currentUser.consultationHours = payload.consultation_hours;
+    mockData.currentUser.neisOfficeCode = payload.neis_office_code;
+    mockData.currentUser.neisSchoolCode = payload.neis_school_code;
 
-  closeModal('teacherProfileModal');
-  applyRoleUI();
-  renderTeacherHome();
-  showToast('교사 프로필이 저장되었습니다.', '✅');
+    closeModal('teacherProfileModal');
+    applyRoleUI();
+    renderTeacherHome();
+    showToast('교사 프로필이 저장되었습니다.', '✅');
+  });
 }
 
-async function confirmTeacherAtt(id) {
+async function confirmTeacherAtt(id, btnEl) {
   const item = mockData.teacherTodayAttendance.find(x => x.id === id);
-  if (item) item.confirmed = true;
-  renderTeacherHome();
-
-  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
-    try {
-      await gasApi.post('confirm_attendance', { remote_id: id });
-    } catch (err) {
-      showToast(`출결 확인 동기화 실패: ${err.message}`, '⚠️');
-      return;
+  await withButtonLoading(btnEl, '확인 중...', async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('confirm_attendance', { remote_id: id });
+      } catch (err) {
+        showToast(`출결 확인 동기화 실패: ${err.message}`, '⚠️');
+        return;
+      }
     }
-  }
-  showToast('출결 보고가 확인 처리되었습니다.');
+    if (item) item.confirmed = true;
+    renderTeacherHome();
+    showToast('출결 보고가 확인 처리되었습니다.');
+  });
 }
 
 // --- TEACHER TAB 2: NEIS Document Inspection & Rules ---
@@ -279,74 +287,80 @@ function renderTeacherDocs() {
       <p class="text-[11px] text-slate-600">${doc.title} — ${doc.description}</p>
       ${doc.status === 'submitted' ? `
         <div class="flex gap-2 pt-1">
-          <button onclick="finalizeTeacherDoc('${doc.id}', 'closed')" class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-xl">나이스 확인 후 최종종결</button>
-          <button onclick="finalizeTeacherDoc('${doc.id}', 'pending')" class="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[11px] font-bold rounded-xl">미제출 반려(재알림)</button>
+          <button onclick="finalizeTeacherDoc('${doc.id}', 'closed', this)" class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-xl">나이스 확인 후 최종종결</button>
+          <button onclick="finalizeTeacherDoc('${doc.id}', 'pending', this)" class="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[11px] font-bold rounded-xl">미제출 반려(재알림)</button>
         </div>
       ` : doc.status === 'pending' ? `
         <div class="flex items-center justify-between pt-1">
           <span class="text-[10px] text-urgent-600 font-semibold">매일 아침 자동 독촉 알림 발송 중</span>
-          <button onclick="sendDocReminderNotification('${doc.id}')" class="text-[10px] px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg">수동 재알림</button>
+          <button onclick="sendDocReminderNotification('${doc.id}', this)" class="text-[10px] px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg">수동 재알림</button>
         </div>
       ` : `<span class="inline-block text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-semibold">${doc.submittedAt || '최종 종결됨'}</span>`}
     </div>
   `).join('');
 }
 
-async function sendDocReminderNotification(docId) {
+async function sendDocReminderNotification(docId, btnEl) {
   const doc = mockData.urgentDocuments.find(d => d.id === docId);
   if (!doc) return;
   const title = `[서류 제출 독촉] ${doc.docName}`;
   const message = `${doc.studentName} 학생의 ${doc.title} 증빙서류를 나이스(NEIS)에 제출 후 앱에서 "제출했습니다" 확인을 눌러주세요. (마감: ${doc.deadline || '기한 내'})`;
 
-  if (gasApi.isConfigured()) {
-    try {
-      await gasApi.post('send_notification', {
-        channel: 'doc_reminder',
-        sender: mockData.currentUser.teacherName || '담임교사',
-        title,
-        message,
-        target_role: 'all',
-        target_student_id: doc.studentId,
-        grade: mockData.currentUser.grade || '',
-        class_no: mockData.currentUser.classNo || ''
-      });
-      await _dispatchWebPush({
-        title,
-        message,
-        target_role: 'all',
-        target_student_ids: [doc.studentId]
-      });
-    } catch (err) {
-      showToast(`독촉 알림 전송 실패: ${err.message}`, '⚠️');
-      return;
+  await withButtonLoading(btnEl, '발송 중...', async () => {
+    if (gasApi.isConfigured()) {
+      try {
+        await gasApi.post('send_notification', {
+          channel: 'doc_reminder',
+          sender: mockData.currentUser.teacherName || '담임교사',
+          title,
+          message,
+          target_role: 'all',
+          target_student_id: doc.studentId,
+          grade: mockData.currentUser.grade || '',
+          class_no: mockData.currentUser.classNo || ''
+        });
+        await _dispatchWebPush({
+          title,
+          message,
+          target_role: 'all',
+          target_student_ids: [doc.studentId]
+        });
+      } catch (err) {
+        showToast(`독촉 알림 전송 실패: ${err.message}`, '⚠️');
+        return;
+      }
     }
-  }
-  showToast(`${doc.studentName} 학생에게 즉시 독촉 알림을 보냈습니다.`, '🔔');
+    showToast(`${doc.studentName} 학생에게 즉시 독촉 알림을 보냈습니다.`, '🔔');
+  });
 }
 
-async function finalizeTeacherDoc(docId, nextStatus) {
+async function finalizeTeacherDoc(docId, nextStatus, btnEl) {
   const doc = mockData.urgentDocuments.find(d => d.id === docId);
   if (!doc) return;
-  doc.status = nextStatus;
-  if (nextStatus === 'closed') {
-    doc.submittedAt = '방금 전 최종완료';
-    showToast('나이스 서류 확인 후 최종 종결 처리되었습니다.');
-  } else {
-    doc.submittedAt = null;
-    showToast('미제출 반려 처리되어 학생에게 다시 독촉 알림이 활성화됩니다.', '⚠️');
-  }
-  renderAll();
 
-  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
-    try {
-      await gasApi.post('confirm_document', {
-        remote_id: docId,
-        status: nextStatus === 'closed' ? '확인완료' : '미제출'
-      });
-    } catch (err) {
-      showToast(`서류 상태 동기화 실패: ${err.message}`, '⚠️');
+  await withButtonLoading(btnEl, '처리 중...', async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('confirm_document', {
+          remote_id: docId,
+          status: nextStatus === 'closed' ? '확인완료' : '미제출'
+        });
+      } catch (err) {
+        showToast(`서류 상태 동기화 실패: ${err.message}`, '⚠️');
+        return;
+      }
     }
-  }
+
+    doc.status = nextStatus;
+    if (nextStatus === 'closed') {
+      doc.submittedAt = '방금 전 최종완료';
+      showToast('나이스 서류 확인 후 최종 종결 처리되었습니다.');
+    } else {
+      doc.submittedAt = null;
+      showToast('미제출 반려 처리되어 학생에게 다시 독촉 알림이 활성화됩니다.', '⚠️');
+    }
+    renderAll();
+  });
 }
 
 function openRulesModal() {
@@ -368,41 +382,48 @@ function adjustRuleDays(inputId, delta) {
 
 async function saveRulesSettings(e) {
   e.preventDefault();
-  mockData.rules.sickDays = parseInt(document.getElementById('ruleSick').value, 10);
-  mockData.rules.fieldPreDays = parseInt(document.getElementById('ruleFieldPre').value, 10);
-  mockData.rules.fieldPostDays = parseInt(document.getElementById('ruleFieldPost').value, 10);
-  closeRulesModal();
+  const submitBtn = e.submitter || (e.target && e.target.querySelector('button[type="submit"]'));
+  const nextSickDays = parseInt(document.getElementById('ruleSick').value, 10);
+  const nextFieldPreDays = parseInt(document.getElementById('ruleFieldPre').value, 10);
+  const nextFieldPostDays = parseInt(document.getElementById('ruleFieldPost').value, 10);
 
-  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
-    try {
-      await gasApi.post('upsert_doc_rule', {
-        data: {
-          remote_id: 'rule_absence',
-          rule_code: 'ABSENCE_REPORT',
-          doc_name: '결석계 및 증빙서류',
-          category: '출결서류',
-          due_business_days: mockData.rules.sickDays,
-          target_roles: 'student,parent',
-          is_active: 1
-        }
-      });
-      await gasApi.post('upsert_doc_rule', {
-        data: {
-          remote_id: 'rule_fieldtrip',
-          rule_code: 'FIELD_TRIP',
-          doc_name: '교외체험학습 결과보고서',
-          category: '체험학습',
-          due_business_days: mockData.rules.fieldPostDays,
-          target_roles: 'student,parent',
-          is_active: 1
-        }
-      });
-    } catch (err) {
-      showToast(`규정 저장 실패: ${err.message}`, '⚠️');
-      return;
+  await withButtonLoading(submitBtn, '저장 중...', async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('upsert_doc_rule', {
+          data: {
+            remote_id: 'rule_absence',
+            rule_code: 'ABSENCE_REPORT',
+            doc_name: '결석계 및 증빙서류',
+            category: '출결서류',
+            due_business_days: nextSickDays,
+            target_roles: 'student,parent',
+            is_active: 1
+          }
+        });
+        await gasApi.post('upsert_doc_rule', {
+          data: {
+            remote_id: 'rule_fieldtrip',
+            rule_code: 'FIELD_TRIP',
+            doc_name: '교외체험학습 결과보고서',
+            category: '체험학습',
+            due_business_days: nextFieldPostDays,
+            target_roles: 'student,parent',
+            is_active: 1
+          }
+        });
+      } catch (err) {
+        showToast(`규정 저장 실패: ${err.message}`, '⚠️');
+        return;
+      }
     }
-  }
-  showToast(`규정 저장 완료 (결석 +${mockData.rules.sickDays}일, 체험학습 -${mockData.rules.fieldPreDays}일/+${mockData.rules.fieldPostDays}일)`, '⚙️');
+
+    mockData.rules.sickDays = nextSickDays;
+    mockData.rules.fieldPreDays = nextFieldPreDays;
+    mockData.rules.fieldPostDays = nextFieldPostDays;
+    closeRulesModal();
+    showToast(`규정 저장 완료 (결석 +${mockData.rules.sickDays}일, 체험학습 -${mockData.rules.fieldPreDays}일/+${mockData.rules.fieldPostDays}일)`, '⚙️');
+  });
 }
 
 // --- TEACHER TAB 3: Circulars & Notices ---
@@ -545,7 +566,7 @@ function closeUnsubmittedModal() {
   closeModal('unsubmittedModal');
 }
 
-async function sendBulkPromptToUnsubmitted() {
+async function sendBulkPromptToUnsubmitted(btnEl) {
   const cId = state.currentUnsubmittedCircularId;
   const c = mockData.circulars.find(x => x.id === cId);
   const unsubmitted = _getUnsubmittedStudents(cId);
@@ -557,31 +578,33 @@ async function sendBulkPromptToUnsubmitted() {
   const title = `[가정통신문 회신 요청] ${(c && c.title) || '미제출 안내'}`;
   const message = `아직 전자서명 회신이 완료되지 않았습니다. 앱의 [가정통신·회비] 탭에서 확인 및 서명해 주세요.`;
 
-  if (gasApi.isConfigured()) {
-    try {
-      await gasApi.post('send_notification', {
-        channel: 'circular_reminder',
-        sender: mockData.currentUser.teacherName || '담임교사',
-        title,
-        message,
-        target_role: 'all',
-        target_student_ids: targetIds,
-        grade: mockData.currentUser.grade || '',
-        class_no: mockData.currentUser.classNo || ''
-      });
-      await _dispatchWebPush({
-        title,
-        message,
-        target_role: 'all',
-        target_student_ids: targetIds
-      });
-    } catch (err) {
-      showToast(`독촉 알림 발송 실패: ${err.message}`, '⚠️');
-      return;
+  await withButtonLoading(btnEl || document.getElementById('unsubmittedBulkBtn'), '일괄 발송 중...', async () => {
+    if (gasApi.isConfigured()) {
+      try {
+        await gasApi.post('send_notification', {
+          channel: 'circular_reminder',
+          sender: mockData.currentUser.teacherName || '담임교사',
+          title,
+          message,
+          target_role: 'all',
+          target_student_ids: targetIds,
+          grade: mockData.currentUser.grade || '',
+          class_no: mockData.currentUser.classNo || ''
+        });
+        await _dispatchWebPush({
+          title,
+          message,
+          target_role: 'all',
+          target_student_ids: targetIds
+        });
+      } catch (err) {
+        showToast(`독촉 알림 발송 실패: ${err.message}`, '⚠️');
+        return;
+      }
     }
-  }
-  closeUnsubmittedModal();
-  showToast(`미제출 ${unsubmitted.length}명에게 회신 독촉 알림을 일괄 발송했습니다.`, '📲');
+    closeUnsubmittedModal();
+    showToast(`미제출 ${unsubmitted.length}명에게 회신 독촉 알림을 일괄 발송했습니다.`, '📲');
+  });
 }
 
 function openSendNoticeModal() {
@@ -600,37 +623,40 @@ function openSendNoticeModal() {
 
 async function handleSendNotification(e) {
   e.preventDefault();
+  const submitBtn = e.submitter || (e.target && e.target.querySelector('button[type="submit"]'));
   const targetStudentId = document.getElementById('sendNoticeTargetStudent').value || 'ALL';
   const targetRole = document.getElementById('sendNoticeTargetRole').value || 'all';
   const title = document.getElementById('sendNoticeTitle').value.trim();
   const message = document.getElementById('sendNoticeMessage').value.trim();
   if (!title || !message) return;
 
-  if (gasApi.isConfigured()) {
-    try {
-      await gasApi.post('send_notification', {
-        channel: 'teacher_notice',
-        sender: mockData.currentUser.teacherName || '담임교사',
-        title,
-        message,
-        target_role: targetRole,
-        target_student_id: targetStudentId,
-        grade: mockData.currentUser.grade || '',
-        class_no: mockData.currentUser.classNo || ''
-      });
-      await _dispatchWebPush({
-        title,
-        message,
-        target_role: targetRole,
-        target_student_id: targetStudentId
-      });
-    } catch (err) {
-      showToast(`알림 발송 실패: ${err.message}`, '⚠️');
-      return;
+  await withButtonLoading(submitBtn, '발송 중...', async () => {
+    if (gasApi.isConfigured()) {
+      try {
+        await gasApi.post('send_notification', {
+          channel: 'teacher_notice',
+          sender: mockData.currentUser.teacherName || '담임교사',
+          title,
+          message,
+          target_role: targetRole,
+          target_student_id: targetStudentId,
+          grade: mockData.currentUser.grade || '',
+          class_no: mockData.currentUser.classNo || ''
+        });
+        await _dispatchWebPush({
+          title,
+          message,
+          target_role: targetRole,
+          target_student_id: targetStudentId
+        });
+      } catch (err) {
+        showToast(`알림 발송 실패: ${err.message}`, '⚠️');
+        return;
+      }
     }
-  }
-  closeModal('sendNoticeModal');
-  showToast('학급 알림이 발송되었습니다.', '📢');
+    closeModal('sendNoticeModal');
+    showToast('학급 알림이 발송되었습니다.', '📢');
+  });
 }
 
 // --- TEACHER TAB 4: PC Remote Task Queue ---
@@ -645,6 +671,7 @@ function _inferRemoteTaskType(label) {
 
 async function handleCreateRemoteTask(e) {
   e.preventDefault();
+  const submitBtn = e.submitter || (e.target && e.target.querySelector('button[type="submit"]'));
   const typeLabel = document.getElementById('remoteTaskType').value;
   const timingVal = document.querySelector('input[name="taskTiming"]:checked').value;
   const prompt = document.getElementById('remoteTaskPrompt').value.trim() || '기본 설정값으로 자동 실행';
@@ -653,41 +680,43 @@ async function handleCreateRemoteTask(e) {
     ? new Date().toISOString().slice(0, 16).replace('T', ' ')
     : `${new Date().toISOString().split('T')[0]} 17:30`;
 
-  mockData.remoteTasks.unshift({
-    id: jobId,
-    type: typeLabel,
-    timing: timingVal === 'now' ? '즉시 실행 요청됨' : '예약됨 (오늘 17:30)',
-    prompt,
-    status: timingVal === 'now' ? 'running' : 'pending',
-    log: timingVal === 'now' ? '집 PC EduFlow 백그라운드 워커가 작업을 수신했습니다...' : 'PC EduFlow 워커 대기 중'
-  });
-  document.getElementById('remoteTaskPrompt').value = '';
-  renderRemoteTasks();
-
-  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
-    try {
-      await gasApi.post('enqueue_remote_task', {
-        data: {
-          remote_id: jobId,
-          task_type: _inferRemoteTaskType(typeLabel),
-          title: typeLabel,
-          due_date: new Date().toISOString().split('T')[0],
-          priority: timingVal === 'now' ? 'high' : 'normal',
-          is_mobile_task: 1,
-          scheduled_time: scheduledStr,
-          target_info: prompt,
-          action_payload: JSON.stringify({ prompt, mode: timingVal }),
-          exec_status: 'pending',
-          is_done: 0,
-          memo: 'EduFlow Mobile에서 예약됨'
-        }
-      });
-    } catch (err) {
-      showToast(`원격 작업 큐 등록 실패: ${err.message}`, '⚠️');
-      return;
+  await withButtonLoading(submitBtn, '예약 중...', async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('enqueue_remote_task', {
+          data: {
+            remote_id: jobId,
+            task_type: _inferRemoteTaskType(typeLabel),
+            title: typeLabel,
+            due_date: new Date().toISOString().split('T')[0],
+            priority: timingVal === 'now' ? 'high' : 'normal',
+            is_mobile_task: 1,
+            scheduled_time: scheduledStr,
+            target_info: prompt,
+            action_payload: JSON.stringify({ prompt, mode: timingVal }),
+            exec_status: 'pending',
+            is_done: 0,
+            memo: 'EduFlow Mobile에서 예약됨'
+          }
+        });
+      } catch (err) {
+        showToast(`원격 작업 큐 등록 실패: ${err.message}`, '⚠️');
+        return;
+      }
     }
-  }
-  showToast('PC EduFlow 원격 작업 큐에 등록되었습니다.', '⚡');
+
+    mockData.remoteTasks.unshift({
+      id: jobId,
+      type: typeLabel,
+      timing: timingVal === 'now' ? '즉시 실행 요청됨' : '예약됨 (오늘 17:30)',
+      prompt,
+      status: timingVal === 'now' ? 'running' : 'pending',
+      log: timingVal === 'now' ? '집 PC EduFlow 백그라운드 워커가 작업을 수신했습니다...' : 'PC EduFlow 워커 대기 중'
+    });
+    document.getElementById('remoteTaskPrompt').value = '';
+    renderRemoteTasks();
+    showToast('PC EduFlow 원격 작업 큐에 등록되었습니다.', '⚡');
+  });
 }
 
 function renderRemoteTasks() {

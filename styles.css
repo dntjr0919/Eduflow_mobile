@@ -112,3 +112,35 @@
          .bg-success-600 { background-color: var(--color-success-600); }
          .text-success-500 { color: var(--color-success-500); }
          .text-success-600 { color: var(--color-success-600); }
+
+         /* Loading Spinner & Spin Animation */
+         @keyframes spin {
+              from {
+                    transform: rotate(0deg);
+              }
+              to {
+                    transform: rotate(360deg);
+              }
+         }
+
+         .animate-spin {
+              animation: spin 0.8s linear infinite;
+         }
+
+         .spinner {
+              display: inline-block;
+              width: 0.875rem;
+              height: 0.875rem;
+              border: 2px solid currentColor;
+              border-right-color: transparent;
+              border-radius: 9999px;
+              animation: spin 0.75s linear infinite;
+              vertical-align: middle;
+              flex-shrink: 0;
+         }
+
+         .spinner-lg {
+              width: 1.5rem;
+              height: 1.5rem;
+              border-width: 2.5px;
+         }

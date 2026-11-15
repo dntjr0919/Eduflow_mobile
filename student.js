@@ -90,7 +90,7 @@ function renderUrgentDocuments() {
           </p>
           <div class="flex gap-1.5">
             <input type="text" id="input-${doc.id}" placeholder="&quot;제출했습니다&quot;를 입력하세요" class="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
-            <button onclick="handleDocSubmit('${doc.id}')" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl whitespace-nowrap shadow-xs transition-all">제출 완료 확인</button>
+            <button onclick="handleDocSubmit('${doc.id}', this)" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl whitespace-nowrap shadow-xs transition-all">제출 완료 확인</button>
           </div>
           <p id="error-${doc.id}" class="hidden text-[10px] text-urgent-500 mt-1 font-medium">⚠️ 정확히 "제출했습니다" 문구를 입력해야 확인 처리됩니다.</p>
         </div>
@@ -99,7 +99,7 @@ function renderUrgentDocuments() {
   }).join('');
 }
 
-async function handleDocSubmit(docId) {
+async function handleDocSubmit(docId, btnEl) {
   const input = document.getElementById(`input-${docId}`);
   const error = document.getElementById(`error-${docId}`);
   if ((input.value || '').trim() !== '제출했습니다') {
@@ -110,14 +110,9 @@ async function handleDocSubmit(docId) {
   }
   error.classList.add('hidden');
   const doc = mockData.urgentDocuments.find(d => d.id === docId);
-  if (doc) {
-    doc.status = 'submitted';
-    const now = new Date();
-    doc.submittedAt = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')} 제출`;
-    const hist = mockData.attendanceHistory.find(h => h.type.includes(doc.title.split(' ')[0]));
-    if (hist) hist.docStatus = '학생확인완료';
-    renderAll();
+  if (!doc) return;
 
+  await withButtonLoading(btnEl, '확인 중...', async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
         await gasApi.post('mark_document_submitted', {
@@ -129,8 +124,15 @@ async function handleDocSubmit(docId) {
         return;
       }
     }
+
+    doc.status = 'submitted';
+    const now = new Date();
+    doc.submittedAt = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')} 제출`;
+    const hist = mockData.attendanceHistory.find(h => h.type.includes(doc.title.split(' ')[0]));
+    if (hist) hist.docStatus = '학생확인완료';
+    renderAll();
     showToast('서류 제출 확인이 등록되어 독촉 알림이 중지되었습니다.');
-  }
+  });
 }
 
 function renderTimetable() {
@@ -226,6 +228,7 @@ function selectAttType(type) {
 
 async function handleAttendanceSubmit(e) {
   e.preventDefault();
+  const submitBtn = e.submitter || (e.target && e.target.querySelector('button[type="submit"]'));
   const sDate = document.getElementById('attStartDate').value;
   const eDate = document.getElementById('attEndDate').value;
   const reason = document.getElementById('attReason').value.trim();
@@ -236,14 +239,6 @@ async function handleAttendanceSubmit(e) {
   const stuName = mockData.currentUser.studentName || '학생';
   const ruleCode = state.selectedAttType === '교외체험학습' ? 'FIELD_TRIP' : 'ABSENCE_REPORT';
   const docName = state.selectedAttType === '교외체험학습' ? '체험학습 신청서' : '출결신고서';
-
-  mockData.attendanceHistory.unshift({
-    id: attId,
-    period: periodStr,
-    type: state.selectedAttType,
-    reason: reason,
-    docStatus: '서류 미제출'
-  });
 
   const newDoc = {
     id: docId,
@@ -259,51 +254,59 @@ async function handleAttendanceSubmit(e) {
     status: 'pending',
     submittedAt: null
   };
-  mockData.urgentDocuments.unshift(newDoc);
 
-  document.getElementById('attReason').value = '';
-  renderAll();
-
-  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
-    try {
-      await gasApi.post('submit_attendance', {
-        data: {
-          remote_id: attId,
-          date: sDate,
-          student_id: stuId,
-          student_name: stuName,
-          grade: mockData.currentUser.grade || '1',
-          class_no: mockData.currentUser.classNo || '3',
-          attendance_type: state.selectedAttType,
-          reason,
-          submitted_by: stuName,
-          role: state.activeRole,
-          teacher_confirmed: 0,
-          memo: periodStr
+  await withButtonLoading(submitBtn, '등록 중...', async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('submit_attendance', {
+          data: {
+            remote_id: attId,
+            date: sDate,
+            student_id: stuId,
+            student_name: stuName,
+            grade: mockData.currentUser.grade || '1',
+            class_no: mockData.currentUser.classNo || '3',
+            attendance_type: state.selectedAttType,
+            reason,
+            submitted_by: stuName,
+            role: state.activeRole,
+            teacher_confirmed: 0,
+            memo: periodStr
+          }
+        });
+        const docRes = await gasApi.post('upsert_document_tracking', {
+          data: {
+            remote_id: docId,
+            doc_type: docName,
+            rule_code: ruleCode,
+            student_id: stuId,
+            student_name: stuName,
+            base_date: eDate || sDate,
+            status: '미제출',
+            memo: reason
+          }
+        });
+        if (docRes && docRes.due_date) {
+          newDoc.deadline = docRes.due_date;
         }
-      });
-      const docRes = await gasApi.post('upsert_document_tracking', {
-        data: {
-          remote_id: docId,
-          doc_type: docName,
-          rule_code: ruleCode,
-          student_id: stuId,
-          student_name: stuName,
-          base_date: eDate || sDate,
-          status: '미제출',
-          memo: reason
-        }
-      });
-      if (docRes && docRes.due_date) {
-        newDoc.deadline = docRes.due_date;
-        renderUrgentDocuments();
+      } catch (err) {
+        showToast(`출결 서버 전송 실패: ${err.message}`, '⚠️');
+        return;
       }
-    } catch (err) {
-      showToast(`출결 서버 전송 실패: ${err.message}`, '⚠️');
-      return;
     }
-  }
-  showToast('출결 사유가 등록되고 서류 알림이 생성되었습니다.');
+
+    mockData.attendanceHistory.unshift({
+      id: attId,
+      period: periodStr,
+      type: state.selectedAttType,
+      reason: reason,
+      docStatus: '서류 미제출'
+    });
+    mockData.urgentDocuments.unshift(newDoc);
+    document.getElementById('attReason').value = '';
+    renderAll();
+    showToast('출결 사유가 등록되고 서류 알림이 생성되었습니다.');
+  });
 }
 
 function renderAttendanceHistory() {
@@ -430,7 +433,7 @@ function clearSignaturePad() {
   document.getElementById('signaturePlaceholder').classList.remove('hidden');
 }
 
-async function submitCircularSignature() {
+async function submitCircularSignature(btnEl) {
   if (!state.hasDrawnSignature) {
     showToast('서명란에 터치 전자서명을 작성해 주세요.', '✍️');
     return;
@@ -439,34 +442,36 @@ async function submitCircularSignature() {
   const signatureBase64 = canvas ? canvas.toDataURL('image/png') : '';
   const cId = state.currentCircularId;
   const c = mockData.circulars.find(x => x.id === cId);
-  if (c && c.status === 'pending') {
-    c.status = 'submitted';
-    c.submittedCount = Math.min(c.totalCount, c.submittedCount + 1);
-  }
-  closeCircularModal();
-  renderCirculars();
-  if (typeof renderTeacherCirculars === 'function') renderTeacherCirculars();
 
-  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
-    try {
-      showToast('전자서명을 Google Drive에 저장 중...', '☁️');
-      await gasApi.post('submit_notice_reply', {
-        data: {
-          notice_id: cId,
-          student_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
-          student_name: mockData.currentUser.studentName || '학생',
-          parent_id: mockData.currentUser.userId || '',
-          parent_name: mockData.currentUser.parentName || '학부모',
-          consent: '동의',
-          signature_base64: signatureBase64
-        }
-      });
-    } catch (err) {
-      showToast(`전자서명 저장 실패: ${err.message}`, '⚠️');
-      return;
+  await withButtonLoading(btnEl, '제출 중...', async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('submit_notice_reply', {
+          data: {
+            notice_id: cId,
+            student_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
+            student_name: mockData.currentUser.studentName || '학생',
+            parent_id: mockData.currentUser.userId || '',
+            parent_name: mockData.currentUser.parentName || '학부모',
+            consent: '동의',
+            signature_base64: signatureBase64
+          }
+        });
+      } catch (err) {
+        showToast(`전자서명 저장 실패: ${err.message}`, '⚠️');
+        return;
+      }
     }
-  }
-  showToast('전자서명 및 회신이 제출되었습니다.');
+
+    if (c && c.status === 'pending') {
+      c.status = 'submitted';
+      c.submittedCount = Math.min(c.totalCount, c.submittedCount + 1);
+    }
+    closeCircularModal();
+    renderCirculars();
+    if (typeof renderTeacherCirculars === 'function') renderTeacherCirculars();
+    showToast('전자서명 및 회신이 제출되었습니다.');
+  });
 }
 
 function renderBudget() {
