@@ -53,7 +53,8 @@
 <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
 </span>
-<input class="w-full pl-10 pr-3.5 py-3 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all shadow-sm" id="loginPwInput" placeholder="비밀번호 입력" required="" type="password"/>
+<input class="w-full pl-10 pr-10 py-3 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all shadow-sm" id="loginPwInput" onfocus="remaskPasswordInput(this)" oninput="remaskPasswordInput(this)" placeholder="비밀번호 입력" required="" type="password"/>
+<button aria-label="비밀번호 보기" class="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 text-sm" onclick="togglePasswordVisibility('loginPwInput', this)" type="button">👁️</button>
 </div>
 </div>
 <div class="flex items-center justify-between text-xs text-slate-500 pt-1">
@@ -81,9 +82,9 @@
 <section class="hidden flex-1 flex-col h-full overflow-hidden relative" id="dashboardScreen">
 <header class="bg-white/95 backdrop-blur-md border-b border-slate-100 px-4 py-3 sticky top-0 z-20 flex items-center justify-between shrink-0">
 <div class="flex items-center gap-2.5">
-<div class="w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-600 to-indigo-400 text-white flex items-center justify-center text-xs font-bold shadow-sm">
+<button aria-label="계정 메뉴 열기" class="w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-600 to-indigo-400 text-white flex items-center justify-center text-xs font-bold shadow-sm cursor-pointer hover:ring-2 hover:ring-indigo-300 transition-all" id="userAvatarBtn" onclick="openAccountMenuModal()" title="계정 관리" type="button">
 <span id="userAvatarText">-</span>
-</div>
+</button>
 <div>
 <div class="flex items-center gap-1.5">
 <span class="text-[10px] px-1.5 py-0.5 rounded font-bold bg-indigo-100 text-indigo-700" id="userBadge">-</span>
@@ -93,10 +94,7 @@
 </div>
 </div>
 <div class="flex items-center gap-1">
-<button class="hidden px-2 py-1 text-[10px] font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200/70 rounded-lg transition-colors" id="teacherProfileHeaderBtn" onclick="openTeacherProfileModal()" title="교사 프로필 수정" type="button">프로필 수정</button>
-<button class="hidden px-2 py-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/70 rounded-lg transition-colors" id="customIdHeaderBtn" onclick="openCustomIdModal()" title="1회 한정 커스텀 ID 변경" type="button">ID 변경</button>
-<button class="px-2 py-1 text-[10px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 border border-slate-200/70 rounded-lg transition-colors" id="changePasswordHeaderBtn" onclick="openChangePasswordModal()" title="비밀번호 변경" type="button">비밀번호</button>
-<button class="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-slate-50 rounded-full transition-colors" id="headerRefreshBtn" onclick="refreshFromGas(true, this)" title="시트 데이터 새로고침" type="button">
+<button class="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-slate-50 rounded-full transition-colors" id="headerRefreshBtn" onclick="refreshFromGas(true, this)" title="데이터 새로고침" type="button">
 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
 </button>
 <button class="relative p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-full transition-colors" onclick="toggleNoticeModal()" title="알림함">
@@ -118,16 +116,13 @@
       <p class="text-[11px] font-semibold text-indigo-900 truncate">알림을 켜주세요 · 출결·서류 마감 실시간 수신</p>
     </div>
     <div class="flex items-center gap-1.5 shrink-0">
-      <button class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg shadow-xs transition-all" onclick="requestPwaNotificationPermission()" type="button">알림 허용하기</button>
-      <button aria-label="닫기" class="p-1 text-indigo-400 hover:text-indigo-700 rounded-md transition-colors" onclick="dismissPwaPushBanner()" type="button">
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
-      </button>
+      <button class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg shadow-xs transition-all" onclick="handlePushBannerAllowClick()" type="button">알림 허용하기</button>
     </div>
   </div>
   <!-- Denied Banner -->
-  <div class="hidden bg-red-50 border-b border-red-200 px-3.5 py-1.5 flex items-center justify-between gap-2 cursor-pointer hover:bg-red-100/70 transition-colors" id="pwaPushBannerDenied" onclick="openPwaPushGuide()">
-    <span class="text-[11px] font-bold text-red-700 flex items-center gap-1.5">🔔 알림 꺼짐 · 켜는 방법</span>
-    <span class="text-[10px] font-bold px-2 py-0.5 bg-white text-red-600 border border-red-200 rounded-md shadow-2xs">안내 보기</span>
+  <div class="hidden bg-red-50 border-b border-red-200 px-3.5 py-2 flex items-center justify-between gap-2" id="pwaPushBannerDenied">
+    <span class="text-[11px] font-bold text-red-700 flex items-center gap-1.5">🔔 알림이 차단되어 있습니다 · 켜는 방법 안내</span>
+    <button class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold rounded-lg shadow-xs shrink-0" onclick="openPwaPushGuide()" type="button">알림 허용하기</button>
   </div>
 </div>
 
@@ -996,15 +991,24 @@
 <form class="space-y-3 text-xs" onsubmit="submitChangePassword(event)">
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">현재 비밀번호</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="currentPasswordInput" placeholder="현재 비밀번호 입력" required="" type="password"/>
+<div class="relative">
+<input class="w-full pl-3 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="currentPasswordInput" onfocus="remaskPasswordInput(this)" oninput="remaskPasswordInput(this)" placeholder="현재 비밀번호 입력" required="" type="password"/>
+<button aria-label="비밀번호 보기" class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 text-xs" onclick="togglePasswordVisibility('currentPasswordInput', this)" type="button">👁️</button>
+</div>
 </div>
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">새 비밀번호</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="newPasswordInput" minlength="4" placeholder="새 비밀번호 (4자 이상)" required="" type="password"/>
+<div class="relative">
+<input class="w-full pl-3 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="newPasswordInput" minlength="4" onfocus="remaskPasswordInput(this)" oninput="remaskPasswordInput(this)" placeholder="4자 이상" required="" type="password"/>
+<button aria-label="비밀번호 보기" class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 text-xs" onclick="togglePasswordVisibility('newPasswordInput', this)" type="button">👁️</button>
+</div>
 </div>
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">새 비밀번호 확인</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="confirmNewPasswordInput" minlength="4" placeholder="새 비밀번호 다시 입력" required="" type="password"/>
+<div class="relative">
+<input class="w-full pl-3 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="confirmNewPasswordInput" minlength="4" onfocus="remaskPasswordInput(this)" oninput="remaskPasswordInput(this)" placeholder="4자 이상" required="" type="password"/>
+<button aria-label="비밀번호 보기" class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 text-xs" onclick="togglePasswordVisibility('confirmNewPasswordInput', this)" type="button">👁️</button>
+</div>
 </div>
 <button class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all mt-1" type="submit">비밀번호 변경하기</button>
 </form>
@@ -1048,61 +1052,82 @@
 <div class="grid grid-cols-2 gap-2">
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">학교명</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupSchoolName" placeholder="예: 천안오성고" required="" type="text"/>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupSchoolName" required="" type="text"/>
 </div>
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">이름</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupName" placeholder="실명 입력" required="" type="text"/>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupName" required="" type="text"/>
 </div>
 </div>
 <div class="grid grid-cols-3 gap-2">
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">학년</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupGrade" max="6" min="1" placeholder="1" required="" type="number"/>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupGrade" max="6" min="1" required="" type="number"/>
 </div>
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">반</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupClassNo" max="30" min="1" placeholder="5" required="" type="number"/>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupClassNo" max="30" min="1" required="" type="number"/>
 </div>
 <div id="signupStudentNoWrap">
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">번호</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupStudentNo" max="60" min="1" placeholder="1" type="number"/>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupStudentNo" max="60" min="1" type="number"/>
 </div>
 </div>
 <div class="hidden grid grid-cols-2 gap-2" id="signupParentExtra">
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">자녀 학번</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupChildStudentId" placeholder="예: 10501" type="text"/>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupChildStudentId" type="text"/>
 </div>
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">자녀 이름</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupChildName" placeholder="예: 홍길동" type="text"/>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupChildName" type="text"/>
 </div>
 </div>
 <div class="hidden grid grid-cols-3 gap-2" id="signupTeacherExtra">
 <div>
-<label class="block text-[10px] font-semibold text-slate-600 mb-1">교육청코드</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupNeisOffice" placeholder="N10" type="text"/>
+<label class="flex items-center gap-1 text-[10px] font-semibold text-slate-600 mb-1"><span>교육청코드</span><button class="w-3.5 h-3.5 rounded-full bg-slate-200 text-slate-600 text-[9px] font-bold inline-flex items-center justify-center hover:bg-slate-300" onclick="showNeisCodeHelp('office')" title="교육청코드 안내" type="button">i</button></label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupNeisOffice" type="text"/>
 </div>
 <div>
-<label class="block text-[10px] font-semibold text-slate-600 mb-1">학교코드</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupNeisSchool" placeholder="8140246" type="text"/>
+<label class="flex items-center gap-1 text-[10px] font-semibold text-slate-600 mb-1"><span>학교코드</span><button class="w-3.5 h-3.5 rounded-full bg-slate-200 text-slate-600 text-[9px] font-bold inline-flex items-center justify-center hover:bg-slate-300" onclick="showNeisCodeHelp('school')" title="학교코드 안내" type="button">i</button></label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupNeisSchool" type="text"/>
 </div>
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">담당과목</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupSubject" placeholder="화학" type="text"/>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupSubject" type="text"/>
 </div>
 </div>
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">희망 로그인 ID (5자리 숫자 불가, 영문소문자·숫자 4~20자)</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupDesiredId" maxlength="20" minlength="4" placeholder="예: hong10501" required="" type="text"/>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupDesiredId" maxlength="20" minlength="4" required="" type="text"/>
 </div>
 <div>
 <label class="block text-[10px] font-semibold text-slate-600 mb-1">비밀번호</label>
-<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupPassword" minlength="4" placeholder="4자 이상" required="" type="password"/>
+<div class="relative">
+<input class="w-full pl-3 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupPassword" minlength="4" onfocus="remaskPasswordInput(this)" oninput="remaskPasswordInput(this)" placeholder="4자 이상" required="" type="password"/>
+<button aria-label="비밀번호 보기" class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 text-xs" onclick="togglePasswordVisibility('signupPassword', this)" type="button">👁️</button>
+</div>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">비밀번호 확인</label>
+<div class="relative">
+<input class="w-full pl-3 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupPasswordConfirm" minlength="4" onfocus="remaskPasswordInput(this)" oninput="remaskPasswordInput(this)" placeholder="4자 이상" required="" type="password"/>
+<button aria-label="비밀번호 보기" class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 text-xs" onclick="togglePasswordVisibility('signupPasswordConfirm', this)" type="button">👁️</button>
+</div>
 </div>
 <button class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all mt-1" type="submit">가입 신청하기 (승인 후 로그인)</button>
 </form>
+</div>
+</div>
+
+<!-- Modal: Avatar Account Menu -->
+<div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="accountMenuModal" onclick="if (event.target === this) closeModal('accountMenuModal')">
+<div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3">
+<div class="flex items-center justify-between pb-2 border-b border-slate-100">
+<h4 class="font-bold text-slate-800 text-sm" id="accountMenuTitle">계정 관리</h4>
+<button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeModal('accountMenuModal')" type="button"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg></button>
+</div>
+<div class="space-y-2" id="accountMenuActions"></div>
 </div>
 </div>
 

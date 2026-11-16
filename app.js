@@ -1301,7 +1301,7 @@ function applyRoleUI() {
   const tName = cu.teacherName || '담임교사';
 
   if (state.activeRole === 'teacher') {
-    nameElem.innerText = `${gc ? gc + ' ' : ''}${tName} 교사`;
+    nameElem.innerText = tName;
     subElem.innerText = `${school}${gc ? ' ' + gc : ''} · 관리자 모드`;
     badgeElem.innerText = "교사";
     badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-purple-100 text-purple-700";
@@ -1319,17 +1319,17 @@ function applyRoleUI() {
     if (profileBtn) profileBtn.classList.add('hidden');
     if (customIdBtn) customIdBtn.classList.remove('hidden');
     if (state.activeRole === 'student') {
-      const stuDisplay = cu.maskedName || cu.studentName || cu.userId || '학생';
-      nameElem.innerText = `${gc ? gc + ' ' : ''}${stuDisplay} 학생`;
+      const stuDisplay = cu.studentName || cu.userId || '학생';
+      nameElem.innerText = stuDisplay;
       badgeElem.innerText = "학생";
       badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-indigo-100 text-indigo-700";
       avatarElem.innerText = (stuDisplay && stuDisplay[0]) || "학";
     } else {
       const pDisplay = cu.parentName || cu.userId || '학부모';
-      nameElem.innerText = `${gc ? gc + ' ' : ''}${pDisplay}`;
+      nameElem.innerText = pDisplay;
       badgeElem.innerText = "학부모";
       badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700";
-      avatarElem.innerText = "학";
+      avatarElem.innerText = (pDisplay && pDisplay[0]) || "학";
     }
     subElem.innerText = `${school}${gc ? ' ' + gc : ''} · 담임 ${tName} 선생님`;
 
@@ -1349,6 +1349,78 @@ function applyRoleUI() {
     if (typeof switchBottomTab === 'function') {
       switchBottomTab('home');
     }
+  }
+}
+
+function togglePasswordVisibility(inputId, btnEl) {
+  const inp = document.getElementById(inputId);
+  if (!inp) return;
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  if (btnEl) {
+    btnEl.dataset.showing = show ? '1' : '0';
+    btnEl.style.opacity = show ? '1' : '0.6';
+  }
+}
+
+function remaskPasswordInput(inputEl) {
+  if (!inputEl) return;
+  if (inputEl.type !== 'password') {
+    inputEl.type = 'password';
+  }
+}
+
+function showNeisCodeHelp(kind) {
+  if (kind === 'office') {
+    showToast('시도교육청 코드 예: N10(충남), B10(서울), J10(경기)', 'ℹ️');
+  } else {
+    showToast('나이스 학교표준코드 7자리 숫자 예: 8140246', 'ℹ️');
+  }
+}
+
+function openAccountMenuModal() {
+  const cu = mockData.currentUser || {};
+  const role = String(cu.role || state.activeRole || 'student').toLowerCase();
+  const titleEl = document.getElementById('accountMenuTitle');
+  const actionsEl = document.getElementById('accountMenuActions');
+  if (titleEl) {
+    const nm = role === 'teacher' ? (cu.teacherName || cu.userId) : (role === 'parent' ? (cu.parentName || cu.userId) : (cu.studentName || cu.userId));
+    titleEl.innerText = `${nm || '계정'} · 계정 관리`;
+  }
+  if (actionsEl) {
+    if (role === 'teacher') {
+      actionsEl.innerHTML = `
+        <button type="button" onclick="closeModal('accountMenuModal'); openTeacherProfileModal()" class="w-full py-3 px-4 bg-purple-50 hover:bg-purple-100 text-purple-800 font-bold rounded-xl text-xs text-left flex items-center justify-between">
+          <span>✏️ 프로필 수정 (학교·학급·NEIS)</span><span>→</span>
+        </button>
+        <button type="button" onclick="closeModal('accountMenuModal'); openChangePasswordModal()" class="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs text-left flex items-center justify-between">
+          <span>🔐 비밀번호 변경</span><span>→</span>
+        </button>
+      `;
+    } else {
+      const idBtnHtml = cu.customIdChanged
+        ? `<button type="button" disabled class="w-full py-3 px-4 bg-slate-100 text-slate-400 font-bold rounded-xl text-xs text-left cursor-not-allowed">
+            🪪 로그인 ID 변경 완료 (${cu.customId || cu.userId}) · 재변경 불가
+           </button>`
+        : `<button type="button" onclick="closeModal('accountMenuModal'); openCustomIdModal()" class="w-full py-3 px-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-bold rounded-xl text-xs text-left flex items-center justify-between">
+            <span>🪪 로그인 ID 변경 (최초 1회)</span><span>→</span>
+           </button>`;
+      actionsEl.innerHTML = `
+        ${idBtnHtml}
+        <button type="button" onclick="closeModal('accountMenuModal'); openChangePasswordModal()" class="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs text-left flex items-center justify-between">
+          <span>🔐 비밀번호 변경</span><span>→</span>
+        </button>
+      `;
+    }
+  }
+  openModal('accountMenuModal');
+}
+
+function handlePushBannerAllowClick() {
+  if ('Notification' in window && Notification.permission === 'denied') {
+    openPwaPushGuide();
+  } else if (typeof requestPwaNotificationPermission === 'function') {
+    requestPwaNotificationPermission();
   }
 }
 
@@ -1449,6 +1521,12 @@ async function submitSignupForm(e) {
   }
   if (role !== 'teacher' && !/^[a-z0-9_.-]{4,20}$/.test(desiredId)) {
     showToast('희망 ID는 영문 소문자, 숫자, _, ., - 조합 4~20자로 입력해 주세요.', '⚠️');
+    return;
+  }
+  const signupPw = document.getElementById('signupPassword')?.value || '';
+  const signupPwConfirm = document.getElementById('signupPasswordConfirm')?.value || '';
+  if (signupPw !== signupPwConfirm) {
+    showToast('비밀번호와 비밀번호 확인이 일치하지 않습니다.', '⚠️');
     return;
   }
   const submitBtn = (e && e.submitter) || (e && e.target && e.target.querySelector('button[type="submit"]'));
@@ -1710,13 +1788,8 @@ function checkAndEnforcePwaPushGate(options = {}) {
 
   if (perm === 'default') {
     if (bannerDenied) bannerDenied.classList.add('hidden');
-    if (state.pwaPushBannerDismissed) {
-      if (bannerDefault) bannerDefault.classList.add('hidden');
-      if (banner) banner.classList.add('hidden');
-    } else {
-      if (banner) banner.classList.remove('hidden');
-      if (bannerDefault) bannerDefault.classList.remove('hidden');
-    }
+    if (banner) banner.classList.remove('hidden');
+    if (bannerDefault) bannerDefault.classList.remove('hidden');
     return;
   }
 

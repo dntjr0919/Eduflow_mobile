@@ -336,6 +336,38 @@ async function _handleRegisterAccount(db, body) {
   }
 
   if (role === 'parent') {
+    const childSid = String(body.child_student_id || '').trim();
+    const childName = String(body.child_name || '').trim();
+    if (!childSid || !childName) {
+      return { status: 400, json: { ok: false, error: '자녀 학번과 자녀 이름을 모두 입력해 주세요.' } };
+    }
+    let matchedStudent = null;
+    const stuCol = db.collection('계정_학생');
+    const directCandidates = neisSchoolCode ? [`${neisSchoolCode}_${childSid}`, childSid] : [childSid];
+    for (const cand of directCandidates) {
+      const sDoc = await stuCol.doc(cand).get();
+      if (sDoc.exists) {
+        const sd = sDoc.data() || {};
+        if (_matchesTenant(sd, { schoolCode: neisSchoolCode, schoolName, gradeNum, classNum })) {
+          matchedStudent = sd;
+          break;
+        }
+      }
+    }
+    if (!matchedStudent) {
+      const qSnap = await stuCol.where('student_id', '==', childSid).get();
+      qSnap.forEach((d) => {
+        if (matchedStudent) return;
+        const sd = d.data() || {};
+        if (_matchesTenant(sd, { schoolCode: neisSchoolCode, schoolName, gradeNum, classNum })) {
+          matchedStudent = sd;
+        }
+      });
+    }
+    if (!matchedStudent || String(matchedStudent.name || '').trim() !== childName) {
+      return { status: 400, json: { ok: false, error: '등록된 학생 정보(학번·이름)가 일치하지 않습니다.' } };
+    }
+
     const docId = schoolPrefix ? `${schoolPrefix}_${desiredId}` : desiredId;
     await db.collection('계정_학부모').doc(docId).set({
       remote_id: docId,
@@ -344,12 +376,12 @@ async function _handleRegisterAccount(db, body) {
       custom_id: desiredId,
       custom_id_changed: true,
       name,
-      school_name: schoolName,
-      school_code: neisSchoolCode,
-      grade: gradeNum,
-      class_no: classNum,
-      student_id: String(body.child_student_id || '').trim(),
-      student_name: String(body.child_name || '').trim(),
+      school_name: schoolName || String(matchedStudent.school_name || ''),
+      school_code: neisSchoolCode || String(matchedStudent.school_code || ''),
+      grade: gradeNum ?? matchedStudent.grade ?? null,
+      class_no: classNum ?? matchedStudent.class_no ?? null,
+      student_id: childSid,
+      student_name: childName,
       password_hash: pwHash,
       status: 'pending',
       updated_at: now
