@@ -214,26 +214,35 @@
 <div class="grid grid-cols-2 gap-2">
 <div>
 <label class="block text-[10px] font-semibold text-slate-500 mb-1">시작일</label>
-<input class="w-full text-xs px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="attStartDate" required="" type="date"/>
+<input class="w-full text-xs px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="attStartDate" onchange="syncAttEndDateIfNeeded()" required="" type="date"/>
 </div>
 <div>
 <label class="block text-[10px] font-semibold text-slate-500 mb-1">종료일</label>
-<input class="w-full text-xs px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="attEndDate" required="" type="date"/>
+<input class="w-full text-xs px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed" id="attEndDate" required="" type="date"/>
 </div>
 </div>
 <div>
-<label class="block text-[10px] font-semibold text-slate-500 mb-1.5">출결 구분 선택</label>
-<div class="grid grid-cols-3 gap-1.5" id="attTypeGroup">
-<button class="att-type-btn py-1.5 px-1 rounded-lg text-xs font-semibold border transition-all text-center bg-indigo-600 text-white border-indigo-600 shadow-xs" data-type="질병결석" onclick="selectAttType('질병결석')" type="button">질병결석</button>
-<button class="att-type-btn py-1.5 px-1 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center" data-type="인정결석" onclick="selectAttType('인정결석')" type="button">인정결석</button>
-<button class="att-type-btn py-1.5 px-1 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center" data-type="기타결석" onclick="selectAttType('기타결석')" type="button">기타결석</button>
-<button class="att-type-btn py-1.5 px-1 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center" data-type="인정 지각/조퇴" onclick="selectAttType('인정 지각/조퇴')" type="button">인정 지각/조퇴</button>
-<button class="att-type-btn py-1.5 px-1 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center" data-type="생리 지각/조퇴" onclick="selectAttType('생리 지각/조퇴')" type="button">생리 지각/조퇴</button>
-<button class="att-type-btn py-1.5 px-1 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center" data-type="교외체험학습" onclick="selectAttType('교외체험학습')" type="button">교외체험학습</button>
+<label class="block text-[10px] font-semibold text-slate-500 mb-1.5">출결 종류 <span class="text-red-500">*</span></label>
+<div class="grid grid-cols-3 gap-1.5" id="attCategoryGroup">
+<button class="att-cat-btn py-2 px-1 rounded-xl text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center" data-cat="질병" onclick="selectAttCategory('질병')" type="button">질병</button>
+<button class="att-cat-btn py-2 px-1 rounded-xl text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center" data-cat="인정" onclick="selectAttCategory('인정')" type="button">인정</button>
+<button class="att-cat-btn py-2 px-1 rounded-xl text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center" data-cat="기타" onclick="selectAttCategory('기타')" type="button">기타</button>
 </div>
 </div>
-<div class="hidden bg-amber-50 border border-amber-200/80 rounded-xl p-2.5 text-[11px] text-amber-800 leading-relaxed" id="fieldStudyNotice">
-  ℹ️ 학교 규정상 시작 <span id="noticeRuleFieldPre">3</span>영업일 전 신청서, 종료 <span id="noticeRuleFieldPost">5</span>영업일 이내 보고서 제출 알림이 자동 등록됩니다.
+<div>
+<label class="block text-[10px] font-semibold text-slate-500 mb-1.5">출결 구분 <span class="text-red-500">*</span></label>
+<div class="grid grid-cols-3 gap-1.5" id="attSubTypeGroup">
+<button class="att-sub-btn py-2 px-1 rounded-xl text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center" data-sub="지각" onclick="selectAttSubType('지각')" type="button">지각</button>
+<button class="att-sub-btn py-2 px-1 rounded-xl text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center" data-sub="조퇴" onclick="selectAttSubType('조퇴')" type="button">조퇴</button>
+<button class="att-sub-btn py-2 px-1 rounded-xl text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center" data-sub="결석" onclick="selectAttSubType('결석')" type="button">결석</button>
+</div>
+</div>
+<div class="hidden bg-indigo-50/70 border border-indigo-200/80 rounded-xl p-2.5 space-y-1.5" id="attPeriodGroup">
+<div class="flex items-center justify-between">
+<label class="block text-[11px] font-bold text-indigo-900" for="attPeriodSelect" id="attPeriodLabel">교시 선택 (조회 ~ 마지막 교시)</label>
+<span class="text-[10px] font-medium text-indigo-600">하루 단위 등록</span>
+</div>
+<select class="w-full text-xs px-2.5 py-2 bg-white border border-indigo-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-800 font-medium" id="attPeriodSelect"></select>
 </div>
 <div>
 <label class="block text-[10px] font-semibold text-slate-500 mb-1">상세 사유</label>
@@ -245,6 +254,30 @@
 <span>담임선생님께 출결 보고하기</span>
 </button>
 </form>
+</div>
+
+<!-- 교외체험학습 신청 메뉴 -->
+<div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm space-y-3" id="fieldTripMenuCard">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+<div>
+<h3 class="text-xs font-bold text-slate-800">교외체험학습 신청</h3>
+<p class="text-[10px] text-slate-400">사전 신청 및 제출 가능일 안내</p>
+</div>
+</div>
+<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">나이스(NEIS) 접수</span>
+</div>
+<div class="bg-amber-50/90 border border-amber-200/80 rounded-xl p-3 text-[11px] text-amber-900 leading-relaxed space-y-1.5">
+<p class="font-bold text-amber-950">📌 신청 방법 안내</p>
+<p>교외체험학습 신청은 <strong>담임선생님께 구두로 말하거나 채팅방에 말씀하신 후</strong>, <strong>나이스(NEIS)</strong>에서 신청해 주세요.</p>
+</div>
+<div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3 space-y-1.5" id="fieldTripGuideBox"></div>
+<button class="w-full py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5" onclick="switchBottomTab('counseling')" type="button">
+<span>💬 담임선생님 1:1 채팅방에 말씀드리기</span>
+</button>
 </div>
 
 <div>
@@ -372,12 +405,15 @@
 </div>
 
 <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
-<div class="flex items-center justify-between mb-2.5">
-<div class="flex items-center gap-1.5">
-<span class="w-2 h-2 rounded-full bg-indigo-600"></span>
-<h3 class="text-xs font-bold text-slate-800 uppercase tracking-wide" id="teacherAttClassTitle">오늘 우리 반 출결 현황</h3>
+<div class="flex items-center justify-between mb-2.5 gap-2">
+<div class="flex items-center gap-1.5 min-w-0">
+<span class="w-2 h-2 rounded-full bg-indigo-600 shrink-0"></span>
+<h3 class="text-xs font-bold text-slate-800 uppercase tracking-wide truncate" id="teacherAttClassTitle">오늘 우리 반 출결 현황</h3>
 </div>
+<div class="flex items-center gap-1.5 shrink-0">
 <span class="text-[10px] text-slate-400 font-medium" id="teacherTotalStudentsBadge">재적 0명 기준</span>
+<button class="py-1 px-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-[11px] font-bold rounded-lg shadow-xs transition-all" onclick="openTeacherAttendanceCheck()" type="button">출석체크</button>
+</div>
 </div>
 <div class="grid grid-cols-4 gap-1.5 mb-3 text-center">
 <div class="bg-indigo-50/70 p-2 rounded-xl border border-indigo-100"><p class="text-[10px] text-slate-500 font-medium">출석</p><p class="text-sm font-bold text-indigo-700 mt-0.5" id="summaryPresentCount">0명</p></div>
@@ -1004,6 +1040,39 @@
         나중에 하기
       </button>
 </div>
+</div>
+</div>
+
+<!-- Teacher Full-Screen Attendance Check View -->
+<div class="hidden absolute inset-0 z-40 bg-slate-50 flex flex-col" id="teacherAttendanceCheckView">
+<div class="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between shrink-0">
+<div class="flex items-center gap-2.5 min-w-0">
+<button aria-label="뒤로가기" class="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors shrink-0" onclick="closeTeacherAttendanceCheck()" type="button">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M15 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</button>
+<div class="min-w-0">
+<h2 class="text-sm font-bold text-slate-900 truncate" id="attCheckClassLabel">오늘 우리 반 출석체크</h2>
+<p class="text-[10px] text-slate-500" id="attCheckDateLabel">2026-00-00</p>
+</div>
+</div>
+<button class="text-xs font-semibold text-slate-500 hover:text-slate-800 px-2 py-1 rounded-lg" onclick="closeTeacherAttendanceCheck()" type="button">닫기</button>
+</div>
+<div class="bg-white border-b border-slate-200/80 px-4 py-2 grid grid-cols-4 gap-1.5 text-center shrink-0" id="attCheckSummaryBar">
+<div class="bg-indigo-50/80 py-1.5 rounded-lg border border-indigo-100"><span class="text-[10px] text-slate-500 block">출석</span><span class="text-xs font-bold text-indigo-700" id="attCheckCntPresent">0명</span></div>
+<div class="bg-red-50/80 py-1.5 rounded-lg border border-red-100"><span class="text-[10px] text-red-600 block">결석</span><span class="text-xs font-bold text-red-600" id="attCheckCntAbsent">0명</span></div>
+<div class="bg-amber-50/80 py-1.5 rounded-lg border border-amber-100"><span class="text-[10px] text-amber-700 block">지각</span><span class="text-xs font-bold text-amber-800" id="attCheckCntLate">0명</span></div>
+<div class="bg-purple-50/80 py-1.5 rounded-lg border border-purple-100"><span class="text-[10px] text-purple-700 block">조퇴</span><span class="text-xs font-bold text-purple-700" id="attCheckCntEarly">0명</span></div>
+</div>
+<div class="bg-slate-100/80 px-4 py-2 text-[10px] text-slate-600 border-b border-slate-200/60 shrink-0">
+  ☑️ 체크 = <strong>결석</strong> (교시 선택 시 <strong>지각</strong>) &nbsp;|&nbsp; ☐ 미체크 = <strong>출석</strong> (교시 선택 시 <strong>조퇴</strong>)
+</div>
+<div class="flex-1 overflow-y-auto px-4 py-3 space-y-2 custom-scrollbar" id="attCheckStudentList"></div>
+<div class="bg-white border-t border-slate-200 px-4 py-3 flex items-center gap-2 shrink-0">
+<button class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors" onclick="closeTeacherAttendanceCheck()" type="button">뒤로</button>
+<button class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white text-xs font-bold rounded-xl shadow-md shadow-indigo-200 transition-all flex items-center justify-center gap-1.5" id="saveClassAttBtn" onclick="saveTeacherAttendanceCheck(this)" type="button">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+<span>출석체크 저장하기</span>
+</button>
 </div>
 </div>
 

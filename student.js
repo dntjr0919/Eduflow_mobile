@@ -164,13 +164,12 @@ function renderTimetable() {
       <div class="mt-2 pt-1 border-t border-amber-200/80"><span class="text-[9px] text-slate-400 line-through block">기존: ${t.original}</span></div>
     </div>
   ` : `
-    <div class="shrink-0 w-24 bg-slate-50 border border-slate-100 rounded-xl p-2.5 flex flex-col justify-between text-center">
+    <div class="shrink-0 w-24 bg-slate-50 border border-slate-100 rounded-xl p-2.5 flex flex-col justify-center text-center">
       <div>
         <span class="text-[10px] font-semibold text-slate-400">${t.period}교시</span>
         <p class="text-xs font-bold text-slate-800 mt-0.5">${t.subject}</p>
         <p class="text-[10px] text-slate-500 font-medium truncate">${t.teacher}</p>
       </div>
-      <div class="mt-2 pt-1 border-t border-slate-200/60"><span class="text-[9px] text-slate-400 font-mono">${t.time}</span></div>
     </div>
   `).join('');
 }
@@ -209,45 +208,132 @@ function renderMeals() {
 }
 
 // --- TAB 2: Attendance & Documents ---
-function selectAttType(type) {
-  state.selectedAttType = type;
-  document.querySelectorAll('.att-type-btn').forEach(btn => {
-    btn.className = btn.dataset.type === type
-      ? "att-type-btn py-1.5 px-1 rounded-lg text-xs font-semibold border transition-all text-center bg-indigo-600 text-white border-indigo-600 shadow-xs"
-      : "att-type-btn py-1.5 px-1 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center";
+function selectAttCategory(cat) {
+  state.selectedAttCategory = cat;
+  document.querySelectorAll('.att-cat-btn').forEach(btn => {
+    btn.className = btn.dataset.cat === cat
+      ? "att-cat-btn py-2 px-1 rounded-xl text-xs font-bold border transition-all text-center bg-indigo-600 text-white border-indigo-600 shadow-xs"
+      : "att-cat-btn py-2 px-1 rounded-xl text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center";
   });
-  const notice = document.getElementById('fieldStudyNotice');
-  if (type === '교외체험학습') {
-    document.getElementById('noticeRuleFieldPre').innerText = mockData.rules.fieldPreDays;
-    document.getElementById('noticeRuleFieldPost').innerText = mockData.rules.fieldPostDays;
-    notice.classList.remove('hidden');
-  } else {
-    notice.classList.add('hidden');
+}
+
+function selectAttSubType(sub) {
+  state.selectedAttSubType = sub;
+  document.querySelectorAll('.att-sub-btn').forEach(btn => {
+    btn.className = btn.dataset.sub === sub
+      ? "att-sub-btn py-2 px-1 rounded-xl text-xs font-bold border transition-all text-center bg-indigo-600 text-white border-indigo-600 shadow-xs"
+      : "att-sub-btn py-2 px-1 rounded-xl text-xs font-medium border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center";
+  });
+
+  const periodGroup = document.getElementById('attPeriodGroup');
+  const periodLabel = document.getElementById('attPeriodLabel');
+  const periodSelect = document.getElementById('attPeriodSelect');
+  const isTimeLimited = sub === '지각' || sub === '조퇴';
+
+  if (periodGroup && periodSelect) {
+    if (isTimeLimited) {
+      periodGroup.classList.remove('hidden');
+      if (periodLabel) {
+        periodLabel.innerText = sub === '지각'
+          ? '지각 교시 선택 (어디까지 결과인지)'
+          : '조퇴 교시 선택 (어디서부터 결과인지)';
+      }
+      const prevVal = periodSelect.value;
+      const options = getPeriodOptionsList();
+      periodSelect.innerHTML = `<option value="">교시를 선택해 주세요</option>` +
+        options.map(opt => `<option value="${opt}">${opt}</option>`).join('');
+      if (prevVal && options.includes(prevVal)) {
+        periodSelect.value = prevVal;
+      }
+    } else {
+      periodGroup.classList.add('hidden');
+      periodSelect.value = '';
+    }
   }
+  syncAttEndDateIfNeeded();
+}
+
+function syncAttEndDateIfNeeded() {
+  const startEl = document.getElementById('attStartDate');
+  const endEl = document.getElementById('attEndDate');
+  if (!startEl || !endEl) return;
+
+  const isTimeLimited = state.selectedAttSubType === '지각' || state.selectedAttSubType === '조퇴';
+  if (isTimeLimited) {
+    if (!startEl.value) {
+      startEl.value = getLocalTodayStr();
+    }
+    endEl.value = startEl.value;
+    endEl.disabled = true;
+  } else {
+    endEl.disabled = false;
+  }
+}
+
+function renderFieldTripGuide() {
+  const box = document.getElementById('fieldTripGuideBox');
+  if (!box) return;
+  const preDays = Math.max(1, parseInt(mockData.rules.fieldPreDays || 3, 10) || 3);
+  const postDays = Math.max(1, parseInt(mockData.rules.fieldPostDays || 5, 10) || 5);
+  const todayStr = getLocalTodayStr();
+  const earliestDate = addBusinessDays(todayStr, preDays);
+
+  box.innerHTML = `
+    <div class="flex items-center justify-between text-[11px]">
+      <span class="text-slate-500 font-medium">오늘 날짜</span>
+      <span class="font-bold text-slate-700">${todayStr} (${formatKoreanDateWithDay(todayStr)})</span>
+    </div>
+    <div class="flex items-center justify-between text-[11px]">
+      <span class="text-slate-500 font-medium">신청서 제출 기한</span>
+      <span class="font-bold text-indigo-700">체험학습 시작 ${preDays}영업일 전까지</span>
+    </div>
+    <div class="pt-1.5 mt-1 border-t border-slate-200/80 flex items-center justify-between text-[11px]">
+      <span class="text-slate-600 font-semibold">오늘 신청 가능 시작일</span>
+      <span class="font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-lg">${earliestDate} (${formatKoreanDateWithDay(earliestDate)}) ~</span>
+    </div>
+    <p class="text-[10px] text-slate-400 pt-0.5">※ 결과보고서는 체험학습 종료 후 ${postDays}영업일 이내에 제출합니다. (주말·공휴일 제외)</p>
+  `;
 }
 
 async function handleAttendanceSubmit(e) {
   e.preventDefault();
+  if (!state.selectedAttCategory || !state.selectedAttSubType) {
+    showToast('출결 종류(질병·인정·기타)와 출결 구분(지각·조퇴·결석)을 모두 선택해 주세요.', '⚠️');
+    return;
+  }
+
+  const isTimeLimited = state.selectedAttSubType === '지각' || state.selectedAttSubType === '조퇴';
+  const periodSelect = document.getElementById('attPeriodSelect');
+  const periodInfo = isTimeLimited && periodSelect ? periodSelect.value : '';
+  if (isTimeLimited && !periodInfo) {
+    showToast(`${state.selectedAttSubType} 교시를 선택해 주세요.`, '⚠️');
+    if (periodSelect) periodSelect.focus();
+    return;
+  }
+
   const submitBtn = e.submitter || (e.target && e.target.querySelector('button[type="submit"]'));
   const sDate = document.getElementById('attStartDate').value;
-  const eDate = document.getElementById('attEndDate').value;
+  const eDate = isTimeLimited ? sDate : document.getElementById('attEndDate').value;
   const reason = document.getElementById('attReason').value.trim();
-  const periodStr = sDate === eDate ? sDate : `${sDate} ~ ${eDate}`;
+  const combinedType = `${state.selectedAttCategory}${state.selectedAttSubType}`;
+  const periodStr = isTimeLimited
+    ? `${sDate} (${periodInfo})`
+    : (sDate === eDate ? sDate : `${sDate} ~ ${eDate}`);
   const attId = 'ATT-' + Date.now();
   const docId = 'DOC-' + Date.now();
   const stuId = String(mockData.currentUser.studentId || mockData.currentUser.userId || '');
   const stuName = mockData.currentUser.studentName || '학생';
-  const ruleCode = state.selectedAttType === '교외체험학습' ? 'FIELD_TRIP' : 'ABSENCE_REPORT';
-  const docName = state.selectedAttType === '교외체험학습' ? '체험학습 신청서' : '출결신고서';
+  const ruleCode = 'ABSENCE_REPORT';
+  const docName = '출결신고서';
 
   const newDoc = {
     id: docId,
     studentId: stuId,
     studentName: stuName,
-    type: state.selectedAttType === '교외체험학습' ? 'planning' : 'urgency',
-    dDayText: state.selectedAttType === '교외체험학습' ? `사전 D-${mockData.rules.fieldPreDays}` : `기한 +${mockData.rules.sickDays}일`,
-    dDayColor: state.selectedAttType === '교외체험학습' ? 'alert' : 'urgent',
-    title: `${state.selectedAttType} (${periodStr})`,
+    type: 'urgency',
+    dDayText: `기한 +${mockData.rules.sickDays}일`,
+    dDayColor: 'urgent',
+    title: `${combinedType} (${periodStr})`,
     docName,
     description: reason,
     deadline: eDate,
@@ -266,7 +352,10 @@ async function handleAttendanceSubmit(e) {
             student_name: stuName,
             grade: mockData.currentUser.grade || '1',
             class_no: mockData.currentUser.classNo || '3',
-            attendance_type: state.selectedAttType,
+            attendance_type: combinedType,
+            att_category: state.selectedAttCategory,
+            att_sub_type: state.selectedAttSubType,
+            period_info: periodInfo,
             reason,
             submitted_by: stuName,
             role: state.activeRole,
@@ -298,18 +387,24 @@ async function handleAttendanceSubmit(e) {
     mockData.attendanceHistory.unshift({
       id: attId,
       period: periodStr,
-      type: state.selectedAttType,
+      type: combinedType,
+      attCategory: state.selectedAttCategory,
+      attSubType: state.selectedAttSubType,
+      periodInfo,
       reason: reason,
       docStatus: '서류 미제출'
     });
     mockData.urgentDocuments.unshift(newDoc);
     document.getElementById('attReason').value = '';
+    selectAttCategory('');
+    selectAttSubType('');
     renderAll();
     showToast('출결 사유가 등록되고 서류 알림이 생성되었습니다.');
   });
 }
 
 function renderAttendanceHistory() {
+  renderFieldTripGuide();
   const list = document.getElementById('attendanceHistoryList');
   document.getElementById('attHistoryCount').innerText = `총 ${mockData.attendanceHistory.length}건`;
   if (mockData.attendanceHistory.length === 0) {
@@ -320,10 +415,13 @@ function renderAttendanceHistory() {
     let badgeStyle = 'bg-red-100 text-red-700';
     if (item.docStatus === '학생확인완료') badgeStyle = 'bg-blue-100 text-blue-700';
     if (item.docStatus === '교사 최종완료') badgeStyle = 'bg-emerald-100 text-emerald-700';
+    const periodLabel = (item.periodInfo && !String(item.period || '').includes(item.periodInfo))
+      ? `${item.period} · ${item.periodInfo}`
+      : item.period;
     return `
       <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-1.5">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-800">${item.type} <span class="text-[11px] font-normal text-slate-400">(${item.period})</span></span>
+          <span class="text-xs font-bold text-slate-800">${item.type} <span class="text-[11px] font-normal text-slate-400">(${periodLabel})</span></span>
           <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeStyle}">${item.docStatus}</span>
         </div>
         <p class="text-[11px] text-slate-600">${item.reason}</p>

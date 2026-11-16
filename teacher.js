@@ -94,7 +94,8 @@ function renderTeacherHome() {
   let absentCnt = 0;
   let lateCnt = 0;
   let fieldCnt = 0;
-  mockData.teacherTodayAttendance.forEach(item => {
+  const activeAttList = mockData.teacherTodayAttendance.filter(item => (item.type || '').trim() !== '출석');
+  activeAttList.forEach(item => {
     const t = item.type || '';
     if (t.includes('체험학습')) fieldCnt++;
     else if (t.includes('지각') || t.includes('조퇴')) lateCnt++;
@@ -111,24 +112,27 @@ function renderTeacherHome() {
   if (elField) elField.innerText = `${fieldCnt}명`;
 
   const list = document.getElementById('teacherLiveAttList');
-  if (mockData.teacherTodayAttendance.length === 0) {
+  if (activeAttList.length === 0) {
     list.innerHTML = `<div class="p-4 bg-slate-50 rounded-xl border border-slate-200/70 text-center text-xs text-slate-400">오늘 접수된 출결 변동 내역이 없습니다.</div>`;
   } else {
-    list.innerHTML = mockData.teacherTodayAttendance.map(item => `
+    list.innerHTML = activeAttList.map(item => {
+      const typeLabel = item.periodInfo ? `${item.type}(${item.periodInfo})` : item.type;
+      return `
       <div class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200/70">
         <div>
           <div class="flex items-center gap-1.5">
             <span class="text-xs font-bold text-slate-800">${item.studentId} ${item.name}</span>
-            <span class="text-[10px] px-1.5 py-0.2 rounded font-bold bg-red-100 text-red-700">${item.type}</span>
+            <span class="text-[10px] px-1.5 py-0.2 rounded font-bold bg-red-100 text-red-700">${typeLabel}</span>
           </div>
-          <p class="text-[10px] text-slate-500 mt-0.5">${item.reason}</p>
+          <p class="text-[10px] text-slate-500 mt-0.5">${item.reason || '사유 미입력'}</p>
         </div>
         ${item.confirmed
           ? `<span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">확인완료</span>`
           : `<button onclick="confirmTeacherAtt('${item.id}', this)" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-lg shadow-xs">교사 확인</button>`
         }
       </div>
-    `).join('');
+    `;
+    }).join('');
   }
 
   const dayChar = typeof _getKoreanTodayDayChar === 'function' ? _getKoreanTodayDayChar() : '';
@@ -347,6 +351,273 @@ async function confirmTeacherAtt(id, btnEl) {
   });
 }
 
+// --- TEACHER ATTENDANCE CHECK (FULL-SCREEN) ---
+let _attCheckRows = [];
+
+function _deriveAttCheckStatus(row) {
+  if (row.checked) {
+    if (row.period) {
+      return {
+        type: '지각',
+        subType: '지각',
+        label: `지각 (${row.period}까지 결과)`,
+        badgeClass: 'bg-amber-100 text-amber-800 border-amber-200'
+      };
+    }
+    return {
+      type: '결석',
+      subType: '결석',
+      label: '결석',
+      badgeClass: 'bg-red-100 text-red-700 border-red-200'
+    };
+  }
+  if (row.period) {
+    return {
+      type: '조퇴',
+      subType: '조퇴',
+      label: `조퇴 (${row.period}부터 결과)`,
+      badgeClass: 'bg-purple-100 text-purple-700 border-purple-200'
+    };
+  }
+  return {
+    type: '출석',
+    subType: '출석',
+    label: '출석',
+    badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200'
+  };
+}
+
+function openTeacherAttendanceCheck() {
+  const view = document.getElementById('teacherAttendanceCheckView');
+  if (!view) return;
+
+  const cu = mockData.currentUser;
+  const todayStr = getLocalTodayStr();
+  const classLabel = cu.gradeClass ? `${cu.gradeClass} 출석체크` : '오늘 우리 반 출석체크';
+  const titleEl = document.getElementById('attCheckClassLabel');
+  const dateEl = document.getElementById('attCheckDateLabel');
+  if (titleEl) titleEl.innerText = classLabel;
+  if (dateEl) dateEl.innerText = `${todayStr} (${formatKoreanDateWithDay(todayStr)})`;
+
+  const cuGrade = String(cu.grade || '').trim();
+  const cuClass = String(cu.classNo || '').trim();
+  const classStudents = (mockData.students || [])
+    .filter(s => {
+      if (!cuGrade || !cuClass) return true;
+      return String(s.grade || '').trim() === cuGrade && String(s.class_no || '').trim() === cuClass;
+    })
+    .slice()
+    .sort((a, b) => {
+      const noA = parseInt(a.student_no || '999', 10);
+      const noB = parseInt(b.student_no || '999', 10);
+      if (noA !== noB) return noA - noB;
+      return String(a.student_id || '').localeCompare(String(b.student_id || ''));
+    });
+
+  const periodOptions = getPeriodOptionsList();
+  _attCheckRows = classStudents.map(stu => {
+    const sid = String(stu.student_id || '').trim();
+    const existing = mockData.teacherTodayAttendance.find(a => String(a.studentId || '').trim() === sid);
+    let checked = false;
+    let period = '';
+
+    if (existing) {
+      const t = String(existing.type || '');
+      const pInfo = String(existing.periodInfo || '').trim();
+      const matchedOpt = periodOptions.find(opt => pInfo === opt || pInfo.includes(opt));
+      if (t.includes('지각')) {
+        checked = true;
+        period = matchedOpt || '';
+      } else if (t.includes('조퇴')) {
+        checked = false;
+        period = matchedOpt || '';
+      } else if (t !== '출석') {
+        checked = true;
+        period = '';
+      }
+    }
+
+    return {
+      studentId: sid,
+      studentNo: stu.student_no || '',
+      name: stu.name || '',
+      grade: stu.grade || cuGrade,
+      classNo: stu.class_no || cuClass,
+      checked,
+      period,
+      existingId: existing ? existing.id : '',
+      existingReason: existing ? (existing.reason || '') : '',
+      existingType: existing ? (existing.type || '') : ''
+    };
+  });
+
+  renderAttCheckStudentList();
+  view.classList.remove('hidden');
+}
+
+function closeTeacherAttendanceCheck() {
+  const view = document.getElementById('teacherAttendanceCheckView');
+  if (view) view.classList.add('hidden');
+}
+
+function updateAttCheckSummary() {
+  let present = 0;
+  let absent = 0;
+  let late = 0;
+  let early = 0;
+  _attCheckRows.forEach(row => {
+    const st = _deriveAttCheckStatus(row);
+    if (st.type === '결석') absent++;
+    else if (st.type === '지각') late++;
+    else if (st.type === '조퇴') early++;
+    else present++;
+  });
+  const elP = document.getElementById('attCheckCntPresent');
+  const elA = document.getElementById('attCheckCntAbsent');
+  const elL = document.getElementById('attCheckCntLate');
+  const elE = document.getElementById('attCheckCntEarly');
+  if (elP) elP.innerText = `${present}명`;
+  if (elA) elA.innerText = `${absent}명`;
+  if (elL) elL.innerText = `${late}명`;
+  if (elE) elE.innerText = `${early}명`;
+}
+
+function renderAttCheckStudentList() {
+  const list = document.getElementById('attCheckStudentList');
+  if (!list) return;
+  updateAttCheckSummary();
+
+  if (_attCheckRows.length === 0) {
+    list.innerHTML = `<div class="bg-white rounded-2xl p-6 border border-slate-200/80 text-center text-xs text-slate-400">우리 반 학생 명단이 없습니다.<br/>프로필에서 담임 학년·반 설정을 확인해 주세요.</div>`;
+    return;
+  }
+
+  const periodOptions = getPeriodOptionsList();
+  list.innerHTML = _attCheckRows.map((row, idx) => {
+    const st = _deriveAttCheckStatus(row);
+    const defaultOptLabel = row.checked ? '전체(결석)' : '해당 없음(출석)';
+    const promptLabel = row.checked ? '어디까지 결과인지' : '어디서부터 결과인지';
+    const cardBorder = row.checked
+      ? 'border-red-200 bg-red-50/30'
+      : (row.period ? 'border-purple-200 bg-purple-50/30' : 'border-slate-200/80 bg-white');
+
+    return `
+      <div class="rounded-2xl p-3 border shadow-xs transition-colors ${cardBorder}" id="attCheckRow-${idx}">
+        <div class="flex items-center justify-between gap-2">
+          <label class="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0 py-0.5">
+            <input type="checkbox" ${row.checked ? 'checked' : ''} onchange="onAttCheckToggle(${idx}, this.checked)" class="w-5 h-5 rounded-md border-slate-300 text-red-600 focus:ring-red-500 shrink-0 cursor-pointer" />
+            <div class="min-w-0">
+              <span class="text-xs font-bold text-slate-900 truncate block">${row.studentNo ? row.studentNo + '번 ' : ''}${row.name}</span>
+              <span class="text-[10px] text-slate-400">${row.studentId}</span>
+            </div>
+          </label>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${st.badgeClass}">${st.label}</span>
+        </div>
+        <div class="mt-2 pt-2 border-t border-slate-200/60 flex items-center justify-between gap-2">
+          <span class="text-[11px] font-semibold text-slate-600 shrink-0">${promptLabel}</span>
+          <select onchange="onAttCheckPeriodChange(${idx}, this.value)" class="text-xs px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-800 font-medium min-w-[130px]">
+            <option value="" ${!row.period ? 'selected' : ''}>${defaultOptLabel}</option>
+            ${periodOptions.map(opt => `<option value="${opt}" ${row.period === opt ? 'selected' : ''}>${opt}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function onAttCheckToggle(idx, isChecked) {
+  if (!_attCheckRows[idx]) return;
+  _attCheckRows[idx].checked = Boolean(isChecked);
+  _attCheckRows[idx].period = '';
+  renderAttCheckStudentList();
+}
+
+function onAttCheckPeriodChange(idx, periodVal) {
+  if (!_attCheckRows[idx]) return;
+  _attCheckRows[idx].period = periodVal || '';
+  renderAttCheckStudentList();
+}
+
+async function saveTeacherAttendanceCheck(btnEl) {
+  if (_attCheckRows.length === 0) {
+    closeTeacherAttendanceCheck();
+    return;
+  }
+
+  const todayStr = getLocalTodayStr();
+  const cu = mockData.currentUser;
+  const teacherName = cu.teacherName || '담임교사';
+
+  const records = _attCheckRows.map(row => {
+    const st = _deriveAttCheckStatus(row);
+    const periodInfo = row.period
+      ? (row.checked ? `${row.period}까지 결과` : `${row.period}부터 결과`)
+      : '';
+    const finalType = (row.existingType && st.type === '결석' && row.existingType.includes('결석'))
+      ? row.existingType
+      : st.type;
+    const reason = st.type === '출석'
+      ? ''
+      : (row.existingReason || (periodInfo ? `교사 출석체크 (${periodInfo})` : `교사 출석체크 (${finalType})`));
+
+    return {
+      remote_id: row.existingId || `ATT_CHK_${todayStr}_${row.studentId}`,
+      student_id: row.studentId,
+      student_name: row.name,
+      student_no: row.studentNo,
+      grade: row.grade,
+      class_no: row.classNo,
+      attendance_type: finalType,
+      att_category: '',
+      att_sub_type: st.subType,
+      period_info: periodInfo,
+      reason,
+      submitted_by: teacherName,
+      memo: periodInfo || finalType
+    };
+  });
+
+  await withButtonLoading(btnEl, '저장 중...', async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('save_class_attendance', {
+          data: {
+            date: todayStr,
+            grade: cu.grade || '',
+            class_no: cu.classNo || '',
+            submitted_by: teacherName,
+            records
+          }
+        });
+      } catch (err) {
+        showToast(`출석체크 저장 실패: ${err.message}`, '⚠️');
+        return;
+      }
+    }
+
+    const checkedIds = new Set(records.map(r => r.student_id));
+    const remainingOthers = mockData.teacherTodayAttendance.filter(a => !checkedIds.has(String(a.studentId || '')));
+    const newTodayItems = records
+      .filter(r => r.attendance_type !== '출석')
+      .map(r => ({
+        id: r.remote_id,
+        studentId: String(r.student_id),
+        name: r.student_name,
+        type: r.attendance_type,
+        attCategory: r.att_category,
+        attSubType: r.att_sub_type,
+        periodInfo: r.period_info,
+        reason: r.reason,
+        confirmed: true
+      }));
+
+    mockData.teacherTodayAttendance = [...newTodayItems, ...remainingOthers];
+    renderAll();
+    closeTeacherAttendanceCheck();
+    showToast(`출석체크 저장 완료 (${newTodayItems.length}명 변동 반영)`);
+  });
+}
+
 // --- TEACHER TAB 2: NEIS Document Inspection & Rules ---
 function switchTeacherDocFilter(filter) {
   state.teacherDocFilter = filter;
@@ -504,6 +775,17 @@ async function saveRulesSettings(e) {
             doc_name: '교외체험학습 결과보고서',
             category: '체험학습',
             due_business_days: nextFieldPostDays,
+            target_roles: 'student,parent',
+            is_active: 1
+          }
+        });
+        await gasApi.post('upsert_doc_rule', {
+          data: {
+            remote_id: 'rule_fieldtrip_pre',
+            rule_code: 'FIELD_TRIP_PRE',
+            doc_name: '교외체험학습 사전 신청서',
+            category: '체험학습',
+            due_business_days: nextFieldPreDays,
             target_roles: 'student,parent',
             is_active: 1
           }

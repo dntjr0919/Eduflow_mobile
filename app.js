@@ -126,7 +126,9 @@ let mockData = {
 const state = {
   activeRole: 'student',
   activeMealTab: 'lunch',
-  selectedAttType: '질병결석',
+  selectedAttType: '',
+  selectedAttCategory: '',
+  selectedAttSubType: '',
   currentCircularId: null,
   currentUnsubmittedCircularId: null,
   teacherDocFilter: 'pending',
@@ -134,6 +136,101 @@ const state = {
   isSignBoxPinned: true,
   hasDrawnSignature: false
 };
+
+const KR_HOLIDAYS = [
+  '2025-01-01', '2025-01-28', '2025-01-29', '2025-01-30',
+  '2025-03-01', '2025-03-03', '2025-05-05', '2025-05-06',
+  '2025-06-06', '2025-08-15', '2025-10-03', '2025-10-05',
+  '2025-10-06', '2025-10-07', '2025-10-08', '2025-10-09',
+  '2025-12-25',
+  '2026-01-01', '2026-02-16', '2026-02-17', '2026-02-18',
+  '2026-03-01', '2026-03-02', '2026-05-05', '2026-05-24',
+  '2026-05-25', '2026-06-06', '2026-08-15', '2026-08-17',
+  '2026-09-24', '2026-09-25', '2026-09-26', '2026-10-03',
+  '2026-10-05', '2026-10-09', '2026-12-25',
+  '2027-01-01', '2027-02-06', '2027-02-07', '2027-02-08',
+  '2027-02-09', '2027-03-01', '2027-05-05', '2027-05-13',
+  '2027-06-06', '2027-08-15', '2027-08-16', '2027-09-14',
+  '2027-09-15', '2027-09-16', '2027-10-03', '2027-10-04',
+  '2027-10-09', '2027-10-11', '2027-12-25'
+];
+
+function getLocalTodayStr() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function isNonBusinessDay(dateObj) {
+  const day = dateObj.getDay();
+  if (day === 0 || day === 6) return true;
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return KR_HOLIDAYS.includes(`${y}-${m}-${d}`);
+}
+
+/**
+ * 기준일(yyyy-MM-dd)로부터 N 영업일(주말·공휴일 제외) 이후 날짜 계산
+ * apps_script_template.gs _addBusinessDays 와 동일 로직
+ */
+function addBusinessDays(baseDateStr, businessDays) {
+  const parts = String(baseDateStr || '').trim().split('-');
+  let d;
+  if (parts.length === 3) {
+    d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0);
+  } else {
+    const now = new Date();
+    d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+  }
+  const daysToAdd = parseInt(businessDays, 10);
+  if (isNaN(daysToAdd) || daysToAdd <= 0) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  let added = 0;
+  let guard = 0;
+  while (added < daysToAdd && guard < 365) {
+    d.setDate(d.getDate() + 1);
+    if (!isNonBusinessDay(d)) {
+      added++;
+    }
+    guard++;
+  }
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatKoreanDateWithDay(ymd) {
+  const parts = String(ymd || '').split('-');
+  if (parts.length !== 3) return ymd || '';
+  const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+  const days = ['일', '월', '화', '수', '목', '금', '토'];
+  return `${parseInt(parts[1], 10)}월 ${parseInt(parts[2], 10)}일(${days[d.getDay()]})`;
+}
+
+/**
+ * 오늘 시간표 또는 기본 최대 교시 수 반환 (최소 1, 시간표 없으면 기본 7교시)
+ */
+function getClassMaxPeriod() {
+  const source = (state.activeRole === 'teacher' && Array.isArray(mockData.homeroomSchedule) && mockData.homeroomSchedule.length > 0)
+    ? mockData.homeroomSchedule
+    : (Array.isArray(mockData.timetable) && mockData.timetable.length > 0 ? mockData.timetable : []);
+  const nums = source.map(item => parseInt(item.period, 10)).filter(n => !isNaN(n) && n > 0);
+  if (nums.length > 0) {
+    return Math.max(...nums);
+  }
+  return 7;
+}
+
+function getPeriodOptionsList(maxPeriod) {
+  const maxP = Math.max(1, parseInt(maxPeriod || getClassMaxPeriod(), 10) || 7);
+  const list = ['조회'];
+  for (let i = 1; i <= maxP; i++) {
+    list.push(`${i}교시`);
+  }
+  return list;
+}
 
 // Common Toast Notification
 function showToast(msg, icon = '✅') {
@@ -700,8 +797,10 @@ function hydrateMockDataFromBundle(bundle) {
   if (Array.isArray(bundle.doc_rules)) {
     const abs = bundle.doc_rules.find(r => r.rule_code === 'ABSENCE_REPORT');
     const fld = bundle.doc_rules.find(r => r.rule_code === 'FIELD_TRIP');
+    const fldPre = bundle.doc_rules.find(r => r.rule_code === 'FIELD_TRIP_PRE');
     if (abs && abs.due_business_days) mockData.rules.sickDays = parseInt(abs.due_business_days, 10) || 5;
     if (fld && fld.due_business_days) mockData.rules.fieldPostDays = parseInt(fld.due_business_days, 10) || 5;
+    if (fldPre && fldPre.due_business_days) mockData.rules.fieldPreDays = parseInt(fldPre.due_business_days, 10) || 3;
   }
 
   // 4. 서류 추적 (urgentDocuments)
@@ -730,23 +829,33 @@ function hydrateMockDataFromBundle(bundle) {
 
   // 5. 일일 출결 (학생 이력 + 교사용 오늘 출결)
   if (Array.isArray(bundle.attendance)) {
-    mockData.attendanceHistory = bundle.attendance.map(a => ({
-      id: a.remote_id,
-      period: a.date || '',
-      type: a.attendance_type || '출결',
-      reason: a.reason || '',
-      docStatus: String(a.teacher_confirmed) === '1' ? '교사 최종완료' : '접수됨'
-    }));
-    const todayStr = new Date().toISOString().split('T')[0];
+    mockData.attendanceHistory = bundle.attendance
+      .filter(a => (a.attendance_type || '').trim() !== '출석')
+      .map(a => ({
+        id: a.remote_id,
+        period: a.date || '',
+        type: a.attendance_type || '출결',
+        attCategory: a.att_category || '',
+        attSubType: a.att_sub_type || '',
+        periodInfo: a.period_info || '',
+        reason: a.reason || '',
+        docStatus: String(a.teacher_confirmed) === '1' ? '교사 최종완료' : '접수됨'
+      }));
+    const todayStr = getLocalTodayStr();
     const todayAtt = bundle.attendance.filter(a => !a.date || a.date === todayStr);
-    mockData.teacherTodayAttendance = todayAtt.map(a => ({
-      id: a.remote_id,
-      studentId: String(a.student_id || ''),
-      name: a.student_name || '',
-      type: a.attendance_type || '출결',
-      reason: a.reason || '',
-      confirmed: String(a.teacher_confirmed) === '1'
-    }));
+    mockData.teacherTodayAttendance = todayAtt
+      .filter(a => (a.attendance_type || '').trim() !== '출석')
+      .map(a => ({
+        id: a.remote_id,
+        studentId: String(a.student_id || ''),
+        name: a.student_name || '',
+        type: a.attendance_type || '출결',
+        attCategory: a.att_category || '',
+        attSubType: a.att_sub_type || '',
+        periodInfo: a.period_info || '',
+        reason: a.reason || '',
+        confirmed: String(a.teacher_confirmed) === '1'
+      }));
   }
 
   // 6. 시간표 (오늘 요일 필터 + 변동 병합)
