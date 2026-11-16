@@ -227,7 +227,40 @@ function renderTeacherHome() {
   }
 
   const dayChar = typeof _getKoreanTodayDayChar === 'function' ? _getKoreanTodayDayChar() : '';
-  const tName = mockData.currentUser.teacherName || '담임';
+  const targetDate = typeof _getLocalTodayStr === 'function' ? _getLocalTodayStr() : '';
+  const cu = mockData.currentUser || {};
+  const tName = cu.teacherName || '담임';
+
+  if (
+    typeof mergeTimetableForDay === 'function' &&
+    ((Array.isArray(mockData.rawTimetableBase) && mockData.rawTimetableBase.length > 0) ||
+      (Array.isArray(mockData.rawTimetableChanges) && mockData.rawTimetableChanges.length > 0))
+  ) {
+    mockData.teacherSchedule = mergeTimetableForDay(
+      mockData.rawTimetableBase || [],
+      mockData.rawTimetableChanges || [],
+      {
+        mode: 'teacher',
+        teacherName: cu.teacherName || '',
+        dayChar,
+        targetDate
+      }
+    );
+    if (cu.grade && cu.classNo) {
+      mockData.homeroomSchedule = mergeTimetableForDay(
+        mockData.rawTimetableBase || [],
+        mockData.rawTimetableChanges || [],
+        {
+          mode: 'class',
+          grade: cu.grade,
+          classNo: cu.classNo,
+          dayChar,
+          targetDate
+        }
+      );
+    }
+  }
+
   const schedTitle = document.getElementById('teacherScheduleTitle');
   if (schedTitle) schedTitle.innerText = `${tName} 선생님 오늘 수업 (${dayChar}요일)`;
 
@@ -248,7 +281,10 @@ function renderTeacherHome() {
   } else {
     sched.innerHTML = mockData.teacherSchedule.map(s => `
       <div class="p-2 rounded-xl border text-center ${s.changed ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200/70'}">
-        <span class="text-[10px] font-semibold ${s.changed ? 'text-amber-700' : 'text-slate-400'}">${s.period}</span>
+        <div class="flex items-center justify-center gap-1">
+          <span class="text-[10px] font-semibold ${s.changed ? 'text-amber-700' : 'text-slate-400'}">${s.period}</span>
+          ${s.changed ? `<span class="text-[9px] font-bold px-1 py-0.2 rounded bg-amber-500 text-white">변경</span>` : ''}
+        </div>
         <p class="text-xs font-bold text-slate-800 mt-0.5">${s.target}</p>
         <p class="text-[10px] ${s.changed ? 'text-amber-800 font-bold' : 'text-slate-500'}">${s.subject}</p>
       </div>
@@ -256,7 +292,6 @@ function renderTeacherHome() {
   }
 
   // 담임 학급 당일 시간표 렌더링
-  const cu = mockData.currentUser;
   const hrTitle = document.getElementById('teacherHomeroomScheduleTitle');
   const hrChgBadge = document.getElementById('teacherHomeroomChangeBadge');
   const hrList = document.getElementById('teacherHomeroomScheduleList');
@@ -414,7 +449,18 @@ async function saveTeacherProfile(e) {
     mockData.currentUser.consultationHours = payload.consultation_hours;
     mockData.currentUser.neisOfficeCode = payload.neis_office_code;
     mockData.currentUser.neisSchoolCode = payload.neis_school_code;
-    if (typeof buildHomeroomSchedule === 'function') {
+    if (typeof mergeTimetableForDay === 'function') {
+      mockData.homeroomSchedule = mergeTimetableForDay(
+        mockData.rawTimetableBase || [],
+        mockData.rawTimetableChanges || [],
+        { mode: 'class', grade: payload.grade, classNo: payload.class_no }
+      );
+      mockData.teacherSchedule = mergeTimetableForDay(
+        mockData.rawTimetableBase || [],
+        mockData.rawTimetableChanges || [],
+        { mode: 'teacher', teacherName: payload.name }
+      );
+    } else if (typeof buildHomeroomSchedule === 'function') {
       mockData.homeroomSchedule = buildHomeroomSchedule(
         mockData.rawTimetableBase || [],
         mockData.rawTimetableChanges || [],

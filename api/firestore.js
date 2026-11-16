@@ -104,12 +104,29 @@ function _parsePayload(req) {
   return raw;
 }
 
-function _matchesTenant(doc, { schoolCode, schoolName, gradeNum, classNum }) {
+function _matchesTenant(doc, { schoolCode, comciganSchoolCode, schoolName, gradeNum, classNum }) {
   if (!doc || typeof doc !== 'object') return false;
   const docSchoolCode = String(doc.school_code || doc.neis_school_code || '').trim();
+  const docComciganCode = String(doc.comcigan_school_code || '').trim();
   const docSchoolName = String(doc.school_name || '').trim();
-  if (schoolCode && docSchoolCode && docSchoolCode !== schoolCode) return false;
-  if (schoolName && docSchoolName && docSchoolName !== schoolName) return false;
+
+  const hasTenantSchool = Boolean(schoolCode || comciganSchoolCode || schoolName);
+  const hasDocSchool = Boolean(docSchoolCode || docComciganCode || docSchoolName);
+  if (hasTenantSchool && hasDocSchool) {
+    let schoolMatched = false;
+    if (schoolCode && docSchoolCode && docSchoolCode === schoolCode) {
+      schoolMatched = true;
+    } else if (comciganSchoolCode && docComciganCode && docComciganCode === comciganSchoolCode) {
+      schoolMatched = true;
+    } else if (comciganSchoolCode && docSchoolCode && docSchoolCode === comciganSchoolCode) {
+      schoolMatched = true;
+    } else if (schoolCode && docComciganCode && docComciganCode === schoolCode) {
+      schoolMatched = true;
+    } else if (schoolName && docSchoolName && docSchoolName === schoolName) {
+      schoolMatched = true;
+    }
+    if (!schoolMatched) return false;
+  }
 
   const rawG = doc.grade !== undefined && doc.grade !== '' ? doc.grade : doc.target_grade;
   const rawC = doc.class_no !== undefined && doc.class_no !== '' ? doc.class_no : doc.target_class;
@@ -516,6 +533,13 @@ async function _handleGetMobileBundle(db, params) {
   ]);
 
   const effectiveTeacherName = normTeacherParam || (role === 'teacher' && teachersRaw[0] ? _normalizeTeacherName(teachersRaw[0].name || teachersRaw[0].teacher_id || '') : '');
+  const comciganSchoolCode = String(
+    params.comcigan_school_code ||
+    (teachersRaw[0] && teachersRaw[0].comcigan_school_code) ||
+    ''
+  ).trim();
+  const ttTenant = { schoolCode, comciganSchoolCode, schoolName, gradeNum, classNum };
+  const ttTeacherTenant = { schoolCode, comciganSchoolCode, schoolName, gradeNum: null, classNum: null };
   const teacherCandidates = _teacherNameCandidates(effectiveTeacherName);
   let timetableBaseRows = timetableBaseClassRows;
   let timetableChangesRows = timetableChangesClassRows;
@@ -543,10 +567,10 @@ async function _handleGetMobileBundle(db, params) {
         _normalizeTeacherName(d.changed_teacher) === effectiveTeacherName ||
         _normalizeTeacherName(d.original_teacher) === effectiveTeacherName;
       if (isTeacherOwned) {
-        return _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null });
+        return _matchesTenant(d, ttTeacherTenant);
       }
     }
-    return _matchesTenant(d, tenant);
+    return _matchesTenant(d, ttTenant);
   };
 
   const teachersSnap = teachersRaw.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
@@ -1038,6 +1062,8 @@ module.exports = async function handler(req, res) {
         if (params.consultation_hours !== undefined) data.consultation_hours = String(params.consultation_hours);
         if (params.neis_office_code !== undefined) data.neis_office_code = String(params.neis_office_code);
         if (params.neis_school_code !== undefined) data.neis_school_code = String(params.neis_school_code);
+        if (params.school_code !== undefined) data.school_code = String(params.school_code);
+        if (params.comcigan_school_code !== undefined) data.comcigan_school_code = String(params.comcigan_school_code);
       }
       await db.collection('계정_교사').doc(tid).set(data, { merge: true });
       return res.status(200).json({ ok: true, remote_id: tid });
@@ -1090,9 +1116,442 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(resSync);
     }
 
+    // =========================================================================
+    // 데스크톱 앱 하이브리드 백엔드(Vercel API 모드) 전용 인증 기반 액션
+    // =========================================================================
+    if (action === 'health_check') {
+      return res.status(200).json({ ok: true, backend: 'vercel_api', server_time: _nowStr() });
+    }
+
+    const desktopActions = new Set([
+      'get_teacher_profile',
+      'check_timetable_exists',
+      'sync_timetables_batch',
+      'sync_meals_batch',
+      'provision_homeroom_accounts',
+      'fetch_homeroom_students',
+      'fetch_homeroom_attendance',
+      'publish_mobile_notice',
+      'fetch_notice_replies',
+      'send_class_notification',
+      'fetch_sent_notifications',
+      'fetch_chat_history',
+    ]);
+
+    if (desktopActions.has(action)) {
+      const auth = await _verifyActiveTeacherAuth(db, params);
+      if (!auth.ok) {
+        return res.status(auth.status || 401).json({ ok: false, error: auth.error });
+      }
+      const resDesktop = await _handleDesktopApiAction(db, action, params, auth);
+      return res.status(resDesktop.status || 200).json(resDesktop.json);
+    }
+
     return res.status(400).json({ ok: false, error: `지원하지 않는 action입니다: ${action}` });
   } catch (err) {
     const errPayload = buildFirestoreErrorPayload(err, `API:${action}`);
     return res.status(errPayload.code === 'FIRESTORE_INDEX_REQUIRED' ? 400 : 500).json(errPayload);
   }
+};
+
+async function _verifyActiveTeacherAuth(db, params) {
+  const teacherId = String(params.auth_teacher_id || params.teacher_id || params.requester_id || '').trim();
+  const rawPw = String(params.auth_password || params.password || '');
+  const pwHash = String(params.auth_password_hash || params.password_hash || '');
+  if (!teacherId) {
+    return { ok: false, status: 401, error: '교사 인증 ID(auth_teacher_id)가 필요합니다.' };
+  }
+  const { userDoc } = await _findAccountDoc(db, 'teacher', teacherId);
+  if (!userDoc) {
+    return { ok: false, status: 401, error: '등록되지 않은 교사 계정입니다.' };
+  }
+  const accStatus = String(userDoc.status || 'active').trim().toLowerCase();
+  if (accStatus !== '' && accStatus !== 'active') {
+    return { ok: false, status: 403, error: '활성화(active)된 교사 계정만 사용할 수 있습니다.' };
+  }
+  if (!_verifyPassword(userDoc.password_hash, rawPw, pwHash)) {
+    return { ok: false, status: 401, error: '교사 인증 비밀번호가 일치하지 않습니다.' };
+  }
+  const safeTeacher = { ...userDoc };
+  delete safeTeacher.password_hash;
+  return {
+    ok: true,
+    teacherDoc: safeTeacher,
+    teacherId: String(userDoc.teacher_id || userDoc.remote_id || teacherId).trim(),
+    schoolCode: String(userDoc.school_code || userDoc.neis_school_code || '').trim(),
+    comciganSchoolCode: String(userDoc.comcigan_school_code || '').trim(),
+    schoolName: String(userDoc.school_name || '').trim(),
+    gradeNum: _toIntOrNull(userDoc.grade),
+    classNum: _toIntOrNull(userDoc.class_no),
+    isAdmin: userDoc.is_admin === true || String(userDoc.teacher_id || '') === SUPER_ADMIN_ID,
+  };
+}
+
+function _resolveDesktopDocId(colName, row, idx) {
+  const rawId = String((row && row.remote_id) || '').trim();
+  if (rawId) return rawId.replace(/\//g, '_');
+  const payload = JSON.stringify(row || {});
+  const digest = crypto.createHash('sha1').update(`${colName}:${idx}:${payload}`).digest('hex').slice(0, 16);
+  return `auto_${digest}`;
+}
+
+async function _batchUpsertDocs(db, collectionName, rows, defaults = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) return 0;
+  const CHUNK = 400;
+  let written = 0;
+  for (let i = 0; i < list.length; i += CHUNK) {
+    const slice = list.slice(i, i + CHUNK);
+    const batch = db.batch();
+    slice.forEach((rawRow, offset) => {
+      if (!rawRow || typeof rawRow !== 'object') return;
+      const docId = _resolveDesktopDocId(collectionName, rawRow, i + offset);
+      const docData = { ...rawRow, remote_id: docId, updated_at: rawRow.updated_at || _nowStr() };
+      if (defaults.schoolCode && !docData.school_code) docData.school_code = defaults.schoolCode;
+      if (defaults.comciganSchoolCode && !docData.comcigan_school_code) docData.comcigan_school_code = defaults.comciganSchoolCode;
+      if (defaults.schoolName && !docData.school_name) docData.school_name = defaults.schoolName;
+      if (docData.grade !== undefined && docData.grade !== '') docData.grade = _toIntOrNull(docData.grade);
+      if (docData.class_no !== undefined && docData.class_no !== '') docData.class_no = _toIntOrNull(docData.class_no);
+      if (docData.period !== undefined && docData.period !== '') docData.period = _toIntOrNull(docData.period);
+      batch.set(db.collection(collectionName).doc(docId), docData, { merge: true });
+      written += 1;
+    });
+    await batch.commit();
+  }
+  return written;
+}
+
+function _extractBirth6Digits(student) {
+  if (!student || typeof student !== 'object') return '';
+  let extra = student.extra_data;
+  if (typeof extra === 'string') {
+    try { extra = JSON.parse(extra); } catch (_) { extra = {}; }
+  }
+  const entries = [];
+  if (extra && typeof extra === 'object') {
+    entries.push(...Object.entries(extra));
+  }
+  for (const k of ['birth_date', 'rrn', '주민번호', '주민등록번호', '생년월일', '생일']) {
+    if (student[k] !== undefined) entries.push([k, student[k]]);
+  }
+  for (const [key, val] of entries) {
+    const kn = String(key || '').replace(/\s+/g, '').toLowerCase();
+    if (kn.includes('주민') || kn.includes('생년월일') || kn.includes('생일') || kn.includes('birth') || kn.includes('rrn')) {
+      const digits = String(val || '').replace(/\D/g, '');
+      if (digits.length >= 13) return digits.slice(0, 6);
+      if (digits.length === 8 && (digits.startsWith('19') || digits.startsWith('20'))) return digits.slice(2, 8);
+      if (digits.length >= 6) return digits.slice(0, 6);
+    }
+  }
+  return '';
+}
+
+async function _handleDesktopApiAction(db, action, params, auth) {
+  const scopeDefaults = {
+    schoolCode: auth.schoolCode,
+    comciganSchoolCode: auth.comciganSchoolCode,
+    schoolName: auth.schoolName,
+  };
+  const tenant = {
+    schoolCode: auth.schoolCode,
+    comciganSchoolCode: auth.comciganSchoolCode,
+    schoolName: auth.schoolName,
+    gradeNum: auth.gradeNum,
+    classNum: auth.classNum,
+  };
+
+  if (action === 'get_teacher_profile') {
+    const tid = String(params.teacher_id || auth.teacherId).trim();
+    const { userDoc } = await _findAccountDoc(db, 'teacher', tid);
+    if (!userDoc) return { status: 200, json: { ok: true, profile: null } };
+    const safe = { ...userDoc };
+    delete safe.password_hash;
+    return { status: 200, json: { ok: true, profile: safe } };
+  }
+
+  if (action === 'check_timetable_exists') {
+    const sc = String(params.school_code || auth.schoolCode || '').trim();
+    const cc = String(params.comcigan_school_code || auth.comciganSchoolCode || '').trim();
+    const sn = String(params.school_name || auth.schoolName || '').trim();
+    const colRef = db.collection('시간표_기본');
+    for (const [field, val] of [['school_code', sc], ['comcigan_school_code', cc], ['school_name', sn]]) {
+      if (val) {
+        const snap = await colRef.where(field, '==', val).limit(1).get();
+        if (!snap.empty) return { status: 200, json: { ok: true, exists: true } };
+      }
+    }
+    if (!sc && !cc && !sn) {
+      const snap = await colRef.limit(1).get();
+      return { status: 200, json: { ok: true, exists: !snap.empty } };
+    }
+    return { status: 200, json: { ok: true, exists: false } };
+  }
+
+  if (action === 'sync_timetables_batch') {
+    const baseRows = Array.isArray(params.base_rows) ? params.base_rows : [];
+    const changeRows = Array.isArray(params.change_rows) ? params.change_rows : [];
+    const deleteBaseIds = Array.isArray(params.delete_base_ids) ? params.delete_base_ids : [];
+    const deleteChangeIds = Array.isArray(params.delete_change_ids) ? params.delete_change_ids : [];
+    const baseWritten = await _batchUpsertDocs(db, '시간표_기본', baseRows, scopeDefaults);
+    const changeWritten = await _batchUpsertDocs(db, '시간표_변동', changeRows, scopeDefaults);
+    let baseDeleted = 0;
+    let changeDeleted = 0;
+    for (const [colName, idList, isBase] of [['시간표_기본', deleteBaseIds, true], ['시간표_변동', deleteChangeIds, false]]) {
+      const cleanIds = idList.map((x) => String(x || '').trim()).filter(Boolean);
+      for (let i = 0; i < cleanIds.length; i += 400) {
+        const batch = db.batch();
+        cleanIds.slice(i, i + 400).forEach((rid) => {
+          batch.delete(db.collection(colName).doc(rid));
+          if (isBase) baseDeleted += 1;
+          else changeDeleted += 1;
+        });
+        await batch.commit();
+      }
+    }
+    return {
+      status: 200,
+      json: { ok: true, base_written: baseWritten, change_written: changeWritten, base_deleted: baseDeleted, change_deleted: changeDeleted },
+    };
+  }
+
+  if (action === 'sync_meals_batch') {
+    const mealRows = Array.isArray(params.meal_rows) ? params.meal_rows : [];
+    const mealWritten = await _batchUpsertDocs(db, '급식_식단표', mealRows, scopeDefaults);
+    return { status: 200, json: { ok: true, meal_written: mealWritten } };
+  }
+
+  if (action === 'provision_homeroom_accounts') {
+    const students = Array.isArray(params.students) ? params.students : [];
+    const sc = auth.schoolCode || String(params.school_code || '').trim();
+    const sn = auth.schoolName || String(params.school_name || '').trim();
+    const now = _nowStr();
+
+    const [stuSnap, parSnap] = await Promise.all([
+      db.collection('계정_학생').get(),
+      db.collection('계정_학부모').get(),
+    ]);
+    const existingStu = new Set();
+    stuSnap.forEach((d) => {
+      existingStu.add(d.id);
+      const data = d.data() || {};
+      if (data.student_id) existingStu.add(String(data.student_id));
+    });
+    const existingPar = new Set();
+    parSnap.forEach((d) => {
+      existingPar.add(d.id);
+      const data = d.data() || {};
+      if (data.parent_id) existingPar.add(String(data.parent_id));
+    });
+
+    const pending = [];
+    let studentsCreated = 0;
+    let studentsSkipped = 0;
+    let parentsCreated = 0;
+    let parentsSkipped = 0;
+
+    for (const s of students) {
+      const sid = String((s && s.student_id) || '').trim();
+      if (!sid) continue;
+      const gVal = auth.gradeNum !== null ? auth.gradeNum : _toIntOrNull(s.grade);
+      const cVal = auth.classNum !== null ? auth.classNum : _toIntOrNull(s.class_no);
+      const numVal = _toIntOrNull(s.number !== undefined ? s.number : s.student_no);
+      const name = String(s.name || '').trim();
+      const initPw = _extractBirth6Digits(s) || sid;
+      const pwHash = _sha256Hex(initPw);
+
+      const stuDocId = sc ? `${sc}_${sid}` : sid;
+      const parLoginId = `p${sid}`;
+      const parDocId = sc ? `${sc}_${parLoginId}` : parLoginId;
+
+      if (existingStu.has(stuDocId) || (!sc && existingStu.has(sid))) {
+        studentsSkipped += 1;
+      } else {
+        pending.push([
+          db.collection('계정_학생').doc(stuDocId),
+          {
+            remote_id: stuDocId,
+            student_id: sid,
+            login_id: sid,
+            name,
+            grade: gVal,
+            class_no: cVal,
+            student_no: numVal,
+            school_code: sc,
+            school_name: sn,
+            password_hash: pwHash,
+            custom_id: '',
+            custom_id_changed: false,
+            status: 'active',
+            updated_at: now,
+          },
+        ]);
+        existingStu.add(stuDocId);
+        studentsCreated += 1;
+      }
+
+      if (existingPar.has(parDocId) || (!sc && existingPar.has(parLoginId))) {
+        parentsSkipped += 1;
+      } else {
+        pending.push([
+          db.collection('계정_학부모').doc(parDocId),
+          {
+            remote_id: parDocId,
+            parent_id: parLoginId,
+            login_id: parLoginId,
+            name: name ? `${name} 학부모` : '학부모',
+            student_id: sid,
+            student_name: name,
+            grade: gVal,
+            class_no: cVal,
+            student_no: numVal,
+            school_code: sc,
+            school_name: sn,
+            password_hash: pwHash,
+            custom_id: '',
+            custom_id_changed: false,
+            status: 'active',
+            updated_at: now,
+          },
+        ]);
+        existingPar.add(parDocId);
+        parentsCreated += 1;
+      }
+    }
+
+    for (let i = 0; i < pending.length; i += 400) {
+      const batch = db.batch();
+      pending.slice(i, i + 400).forEach(([ref, data]) => batch.set(ref, data, { merge: true }));
+      await batch.commit();
+    }
+
+    return {
+      status: 200,
+      json: {
+        ok: true,
+        students_created: studentsCreated,
+        students_skipped: studentsSkipped,
+        parents_created: parentsCreated,
+        parents_skipped: parentsSkipped,
+      },
+    };
+  }
+
+  if (action === 'fetch_homeroom_students') {
+    const g = auth.gradeNum !== null ? auth.gradeNum : _toIntOrNull(params.grade);
+    const c = auth.classNum !== null ? auth.classNum : _toIntOrNull(params.class_no);
+    const rows = (g !== null && c !== null)
+      ? await _queryClassScoped(db, '계정_학생', g, c)
+      : _snapToRows(await db.collection('계정_학생').limit(200).get());
+    const filtered = rows
+      .filter((d) => {
+        const st = String(d.status || 'active').trim().toLowerCase();
+        if (st === 'pending' || st === 'rejected' || st === 'inactive' || st === 'disabled') return false;
+        return _matchesTenant(d, { ...tenant, gradeNum: g, classNum: c });
+      })
+      .map((d) => {
+        const safe = { ...d };
+        delete safe.password_hash;
+        return safe;
+      })
+      .sort((a, b) => Number(a.student_no || 9999) - Number(b.student_no || 9999));
+    return { status: 200, json: { ok: true, students: filtered } };
+  }
+
+  if (action === 'fetch_homeroom_attendance') {
+    const g = auth.gradeNum !== null ? auth.gradeNum : _toIntOrNull(params.grade);
+    const c = auth.classNum !== null ? auth.classNum : _toIntOrNull(params.class_no);
+    const rows = (g !== null && c !== null)
+      ? await _queryClassScoped(db, '일일_출결', g, c)
+      : _snapToRows(await db.collection('일일_출결').limit(200).get());
+    const filtered = rows
+      .filter((d) => _matchesTenant(d, { ...tenant, gradeNum: g, classNum: c }))
+      .sort((a, b) => String(b.date || b.updated_at || '').localeCompare(String(a.date || a.updated_at || '')));
+    return { status: 200, json: { ok: true, attendance: filtered } };
+  }
+
+  if (action === 'publish_mobile_notice') {
+    const rid = String(params.remote_id || `noti_doc_${Date.now()}`).trim();
+    const payload = {
+      remote_id: rid,
+      title: String(params.title || '').trim(),
+      category: String(params.category || '가정통신문').trim(),
+      content: String(params.content || '').trim(),
+      reply_fields: Array.isArray(params.reply_fields) ? params.reply_fields : [],
+      target_grade: auth.gradeNum !== null ? auth.gradeNum : _toIntOrNull(params.target_grade),
+      target_class: auth.classNum !== null ? auth.classNum : _toIntOrNull(params.target_class),
+      school_code: auth.schoolCode || String(params.school_code || '').trim(),
+      school_name: auth.schoolName || String(params.school_name || '').trim(),
+      due_date: String(params.due_date || '').trim(),
+      author_name: String(params.author_name || auth.teacherDoc.name || '담임교사').trim(),
+      is_published: true,
+      updated_at: _nowStr(),
+    };
+    await db.collection('가정통신문_목록').doc(rid).set(payload, { merge: true });
+    return { status: 200, json: { ok: true, remote_id: rid } };
+  }
+
+  if (action === 'fetch_notice_replies') {
+    const nid = String(params.notice_id || '').trim();
+    if (!nid) return { status: 200, json: { ok: true, replies: [] } };
+    const snap = await db.collection('가정통신문_회신').where('notice_id', '==', nid).get();
+    return { status: 200, json: { ok: true, replies: _snapToRows(snap) } };
+  }
+
+  if (action === 'send_class_notification') {
+    const rid = String(params.remote_id || `noti_${Date.now()}`).trim();
+    const payload = {
+      remote_id: rid,
+      title: String(params.title || '').trim(),
+      message: String(params.message || '').trim(),
+      channel: String(params.channel || 'desktop_broadcast').trim(),
+      target_role: String(params.target_role || 'all').trim().toLowerCase(),
+      sender: String(params.sender || auth.teacherDoc.name || '담임교사').trim(),
+      grade: auth.gradeNum !== null ? auth.gradeNum : _toIntOrNull(params.grade),
+      class_no: auth.classNum !== null ? auth.classNum : _toIntOrNull(params.class_no),
+      school_code: auth.schoolCode || String(params.school_code || '').trim(),
+      school_name: auth.schoolName || String(params.school_name || '').trim(),
+      student_id: String(params.student_id || '').trim(),
+      is_read: false,
+      created_at: params.created_at || _nowStr(),
+      updated_at: _nowStr(),
+    };
+    await db.collection('Notifications').doc(rid).set(payload, { merge: true });
+    return { status: 200, json: { ok: true, remote_id: rid } };
+  }
+
+  if (action === 'fetch_sent_notifications') {
+    const lim = Math.min(200, Math.max(1, Number(params.limit || 50)));
+    const snap = await db.collection('Notifications').limit(lim).get();
+    const filtered = _snapToRows(snap)
+      .filter((d) => _matchesTenant(d, tenant))
+      .sort((a, b) => String(b.created_at || b.updated_at || '').localeCompare(String(a.created_at || a.updated_at || '')));
+    return { status: 200, json: { ok: true, notifications: filtered } };
+  }
+
+  if (action === 'fetch_chat_history') {
+    const sid = String(params.student_id || '').trim();
+    let rows = [];
+    if (sid) {
+      const snap = await db.collection('1:1_상담채팅').where('room_id', '==', `ROOM-${sid}`).get();
+      rows = _snapToRows(snap);
+    } else if (auth.gradeNum !== null && auth.classNum !== null) {
+      rows = await _queryClassScoped(db, '1:1_상담채팅', auth.gradeNum, auth.classNum);
+    } else {
+      rows = _snapToRows(await db.collection('1:1_상담채팅').limit(100).get());
+    }
+    const filtered = rows
+      .filter((d) => _matchesTenant(d, tenant))
+      .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+    return { status: 200, json: { ok: true, messages: filtered } };
+  }
+
+  return { status: 400, json: { ok: false, error: `지원하지 않는 데스크톱 action입니다: ${action}` } };
+}
+
+module.exports._testHelpers = {
+  _handleGetMobileBundle,
+  _matchesTenant,
+  _normalizeTeacherName,
+  _verifyActiveTeacherAuth,
+  _handleDesktopApiAction,
 };
