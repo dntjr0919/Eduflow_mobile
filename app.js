@@ -780,6 +780,7 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null) {
         role: state.activeRole,
         user_id: cu.userId || '',
         student_id: cu.studentId || '',
+        teacher_name: cu.teacherName || '',
         grade: cu.grade || '',
         class_no: cu.classNo || '',
         school_code: cu.neisSchoolCode || '',
@@ -813,73 +814,163 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null) {
   });
 }
 
-function _getKoreanTodayDayChar() {
-  return ['일', '월', '화', '수', '목', '금', '토'][new Date().getDay()];
+function _getLocalTodayStr(dateObj) {
+  const d = dateObj || new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function _getKoreanTodayDayChar(dateObj) {
+  const d = dateObj || new Date();
+  return ['일', '월', '화', '수', '목', '금', '토'][d.getDay()];
+}
+
+function _normalizeTeacherName(name) {
+  return String(name || '').trim().replace(/\s+/g, ' ').replace(/(?:선생님|T)$/i, '').trim();
+}
+
+function mergeTimetableForDay(timetableBase, timetableChanges, options = {}) {
+  const mode = options.mode === 'teacher' ? 'teacher' : 'class';
+  const g = String(options.grade || '').trim();
+  const cNo = String(options.classNo || '').trim();
+  const tName = _normalizeTeacherName(options.teacherName || '');
+  const targetDate = String(options.targetDate || _getLocalTodayStr()).trim();
+  const dayChar = String(options.dayChar || _getKoreanTodayDayChar()).trim();
+
+  const baseArr = Array.isArray(timetableBase) ? timetableBase : [];
+  const changesArr = Array.isArray(timetableChanges) ? timetableChanges : [];
+
+  const todayBase = baseArr.filter(tb => {
+    if (!tb || typeof tb !== 'object') return false;
+    const d = String(tb.day_of_week || '').trim();
+    return !d || d.startsWith(dayChar);
+  });
+
+  const todayChanges = changesArr.filter(c => {
+    if (!c || typeof c !== 'object') return false;
+    const cDate = String(c.date || c.target_date || '').trim();
+    return !cDate || cDate === targetDate;
+  });
+
+  if (mode === 'class') {
+    const classBase = (g && cNo)
+      ? todayBase.filter(tb => {
+          const eType = String(tb.entry_type || '').trim();
+          const typeOk = !eType || eType === 'class';
+          return typeOk && String(tb.grade || '').trim() === g && String(tb.class_no || '').trim() === cNo;
+        })
+      : todayBase.filter(tb => !tb.entry_type || String(tb.entry_type).trim() === 'class');
+
+    const classChanges = (g && cNo)
+      ? todayChanges.filter(c => String(c.grade || '').trim() === g && String(c.class_no || '').trim() === cNo)
+      : todayChanges;
+
+    const periodMap = new Map();
+    classBase.forEach(tb => {
+      const pNum = Number(tb.period || 0);
+      const pKey = pNum > 0 ? pNum : String(tb.period || '').trim();
+      if (!pKey) return;
+      periodMap.set(pKey, {
+        period: pNum || tb.period,
+        subject: tb.subject || '',
+        teacher: _normalizeTeacherName(tb.teacher_name || tb.teacher || ''),
+        isChanged: false,
+        original: '',
+        originalSubject: '',
+        changedReason: '',
+        time: `${8 + (pNum || 1)}:50`
+      });
+    });
+
+    classChanges.forEach(c => {
+      const pNum = Number(c.period || 0);
+      const pKey = pNum > 0 ? pNum : String(c.period || '').trim();
+      if (!pKey) return;
+      const prev = periodMap.get(pKey);
+      periodMap.set(pKey, {
+        period: pNum || c.period,
+        subject: c.changed_subject || (prev ? prev.subject : ''),
+        teacher: _normalizeTeacherName(c.changed_teacher || (prev ? prev.teacher : '') || c.original_teacher || ''),
+        isChanged: true,
+        original: c.original_subject || (prev ? prev.subject : ''),
+        originalSubject: c.original_subject || (prev ? prev.subject : ''),
+        changedReason: c.reason || c.changed_reason || c.memo || '',
+        time: `${8 + (pNum || 1)}:50`
+      });
+    });
+
+    return Array.from(periodMap.values()).sort((a, b) => Number(a.period || 0) - Number(b.period || 0));
+  }
+
+  // mode === 'teacher'
+  if (!tName) return [];
+  const explicitTeacherRows = todayBase.filter(
+    tb => String(tb.entry_type || '').trim() === 'teacher' && _normalizeTeacherName(tb.teacher_name || tb.teacher) === tName
+  );
+  const teacherBase = explicitTeacherRows.length > 0
+    ? explicitTeacherRows
+    : todayBase.filter(tb => _normalizeTeacherName(tb.teacher_name || tb.teacher) === tName);
+
+  const periodMap = new Map();
+  teacherBase.forEach(tb => {
+    const pNum = Number(tb.period || 0);
+    const pKey = pNum > 0 ? pNum : String(tb.period || '').trim();
+    if (!pKey) return;
+    const tbGrade = String(tb.grade || '').trim();
+    const tbClass = String(tb.class_no || '').trim();
+    const targetStr = (tbGrade && tbClass) ? `${tbGrade}학년 ${tbClass}반` : '';
+    periodMap.set(pKey, {
+      _periodNum: pNum || 0,
+      _grade: tbGrade,
+      _classNo: tbClass,
+      period: `${pNum || tb.period}교시`,
+      target: targetStr,
+      subject: tb.subject || '',
+      changed: false
+    });
+  });
+
+  todayChanges.forEach(c => {
+    const pNum = Number(c.period || 0);
+    const pKey = pNum > 0 ? pNum : String(c.period || '').trim();
+    if (!pKey) return;
+    const cChgTeacher = _normalizeTeacherName(c.changed_teacher || '');
+    const cOrigTeacher = _normalizeTeacherName(c.original_teacher || '');
+    const cGrade = String(c.grade || '').trim();
+    const cClass = String(c.class_no || '').trim();
+    const prev = periodMap.get(pKey);
+    const matchesTeacher = cChgTeacher === tName || cOrigTeacher === tName;
+    const matchesPrevClass = prev && cGrade && cClass && prev._grade === cGrade && prev._classNo === cClass;
+    if (!matchesTeacher && !matchesPrevClass) return;
+
+    const targetStr = (cGrade && cClass)
+      ? `${cGrade}학년 ${cClass}반`
+      : (prev ? prev.target : '');
+    periodMap.set(pKey, {
+      _periodNum: pNum || (prev ? prev._periodNum : 0),
+      _grade: cGrade || (prev ? prev._grade : ''),
+      _classNo: cClass || (prev ? prev._classNo : ''),
+      period: `${pNum || c.period}교시`,
+      target: targetStr,
+      subject: c.changed_subject || (prev ? prev.subject : ''),
+      changed: true
+    });
+  });
+
+  return Array.from(periodMap.values())
+    .sort((a, b) => Number(a._periodNum || 0) - Number(b._periodNum || 0))
+    .map(({ _periodNum, _grade, _classNo, ...item }) => item);
 }
 
 function buildHomeroomSchedule(timetableBase, timetableChanges, grade, classNo) {
   const g = String(grade || '').trim();
   const cNo = String(classNo || '').trim();
   if (!g || !cNo || (!Array.isArray(timetableBase) && !Array.isArray(timetableChanges))) return [];
-
-  const todayStr = new Date().toISOString().split('T')[0];
-  const dayChar = _getKoreanTodayDayChar();
-  const baseArr = Array.isArray(timetableBase) ? timetableBase : [];
-  const changes = Array.isArray(timetableChanges) ? timetableChanges : [];
-
-  const classTodayBase = baseArr
-    .filter(tb => {
-      const eType = String(tb.entry_type || '').trim();
-      const typeOk = !eType || eType === 'class';
-      const d = String(tb.day_of_week || '').trim();
-      const dayMatch = !d || d.startsWith(dayChar);
-      return typeOk &&
-        dayMatch &&
-        String(tb.grade || '').trim() === g &&
-        String(tb.class_no || '').trim() === cNo;
-    })
-    .sort((a, b) => Number(a.period || 0) - Number(b.period || 0));
-
-  const coveredPeriods = new Set();
-  const merged = classTodayBase.map(tb => {
-    const pNum = Number(tb.period || 0);
-    const pKey = String(pNum || String(tb.period || '').trim());
-    if (pKey) coveredPeriods.add(pKey);
-    const chg = changes.find(c =>
-      String(c.period || '').trim() === String(tb.period || '').trim() &&
-      String(c.grade || '').trim() === g &&
-      String(c.class_no || '').trim() === cNo &&
-      (!c.date || String(c.date).trim() === todayStr)
-    );
-    return {
-      period: pNum || tb.period,
-      subject: chg ? (chg.changed_subject || tb.subject || '') : (tb.subject || ''),
-      teacher: chg ? (chg.changed_teacher || tb.teacher_name || '') : (tb.teacher_name || ''),
-      isChanged: Boolean(chg),
-      originalSubject: chg ? (chg.original_subject || tb.subject || '') : '',
-      changedReason: chg ? (chg.reason || chg.changed_reason || chg.memo || '') : ''
-    };
+  return mergeTimetableForDay(timetableBase, timetableChanges, {
+    mode: 'class',
+    grade: g,
+    classNo: cNo
   });
-
-  changes.forEach(c => {
-    const cDate = String(c.date || c.target_date || '').trim();
-    if (cDate !== todayStr) return;
-    if (String(c.grade || '').trim() !== g || String(c.class_no || '').trim() !== cNo) return;
-    const pNum = Number(c.period || 0);
-    const pKey = String(pNum || String(c.period || '').trim());
-    if (!pKey || coveredPeriods.has(pKey)) return;
-    coveredPeriods.add(pKey);
-    merged.push({
-      period: pNum || c.period,
-      subject: c.changed_subject || '',
-      teacher: c.changed_teacher || c.original_teacher || '',
-      isChanged: true,
-      originalSubject: c.original_subject || '',
-      changedReason: c.reason || c.changed_reason || c.memo || ''
-    });
-  });
-
-  return merged.sort((a, b) => Number(a.period || 0) - Number(b.period || 0));
 }
 
 function hydrateMockDataFromBundle(bundle) {
@@ -999,9 +1090,9 @@ function hydrateMockDataFromBundle(bundle) {
       }));
   }
 
-  // 6. 시간표 (오늘 요일 필터 + 변동 병합)
+  // 6. 시간표 (오늘 요일 필터 + period 기준 Union 병합)
   if (Array.isArray(bundle.timetable_base) || Array.isArray(bundle.timetable_changes)) {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = _getLocalTodayStr();
     const dayChar = _getKoreanTodayDayChar();
     const rawBase = Array.isArray(bundle.timetable_base) ? bundle.timetable_base : [];
     const changes = Array.isArray(bundle.timetable_changes) ? bundle.timetable_changes : [];
@@ -1012,142 +1103,23 @@ function hydrateMockDataFromBundle(bundle) {
     const stuTitleEl = document.getElementById('studentTimetableTitle');
     if (stuTitleEl) stuTitleEl.innerText = `오늘의 시간표 (${dayChar}요일)`;
 
-    const todayBase = rawBase
-      .filter(tb => {
-        const d = String(tb.day_of_week || '').trim();
-        return !d || d.startsWith(dayChar);
-      })
-      .sort((a, b) => Number(a.period || 0) - Number(b.period || 0));
-
     const cuGrade = String(cu.grade || '').trim();
     const cuClass = String(cu.classNo || '').trim();
-    const classBase = (cuGrade && cuClass)
-      ? todayBase.filter(tb => {
-          const eType = String(tb.entry_type || '').trim();
-          const typeOk = !eType || eType === 'class';
-          return typeOk && String(tb.grade || '').trim() === cuGrade && String(tb.class_no || '').trim() === cuClass;
-        })
-      : todayBase.filter(tb => !tb.entry_type || String(tb.entry_type).trim() === 'class');
-
-    const coveredClassPeriods = new Set();
-    const classItems = classBase.map(tb => {
-      const pNum = Number(tb.period || 0);
-      const pKey = String(pNum || String(tb.period || '').trim());
-      if (pKey) coveredClassPeriods.add(pKey);
-      const tbGrade = String(tb.grade || '').trim();
-      const tbClass = String(tb.class_no || '').trim();
-      const chg = changes.find(c =>
-        String(c.period || '').trim() === String(tb.period || '').trim() &&
-        String(c.grade || '').trim() === tbGrade &&
-        String(c.class_no || '').trim() === tbClass &&
-        (!c.date || String(c.date).trim() === todayStr)
-      );
-      if (chg) {
-        return {
-          period: pNum || tb.period,
-          subject: chg.changed_subject || tb.subject,
-          teacher: chg.changed_teacher || tb.teacher_name || '',
-          isChanged: true,
-          original: chg.original_subject || tb.subject,
-          time: `${8 + (pNum || 1)}:50`
-        };
-      }
-      return {
-        period: pNum || tb.period,
-        subject: tb.subject || '',
-        teacher: tb.teacher_name || '',
-        isChanged: false,
-        time: `${8 + (pNum || 1)}:50`
-      };
+    mockData.timetable = mergeTimetableForDay(rawBase, changes, {
+      mode: 'class',
+      grade: cuGrade,
+      classNo: cuClass,
+      dayChar,
+      targetDate: todayStr
     });
 
-    if (cuGrade && cuClass) {
-      changes.forEach(c => {
-        const cDate = String(c.date || c.target_date || '').trim();
-        if (cDate !== todayStr) return;
-        if (String(c.grade || '').trim() !== cuGrade || String(c.class_no || '').trim() !== cuClass) return;
-        const pNum = Number(c.period || 0);
-        const pKey = String(pNum || String(c.period || '').trim());
-        if (!pKey || coveredClassPeriods.has(pKey)) return;
-        coveredClassPeriods.add(pKey);
-        classItems.push({
-          period: pNum || c.period,
-          subject: c.changed_subject || '',
-          teacher: c.changed_teacher || c.original_teacher || '',
-          isChanged: true,
-          original: c.original_subject || '',
-          time: `${8 + (pNum || 1)}:50`
-        });
-      });
-    }
-    mockData.timetable = classItems.sort((a, b) => Number(a.period || 0) - Number(b.period || 0));
-
-    // 교사 본인 시간표 구성 (entry_type === 'teacher' 우선, 구데이터 폴백 지원)
-    const tName = String(cu.teacherName || '').trim();
-    const explicitTeacherRows = tName
-      ? todayBase.filter(tb => String(tb.entry_type || '').trim() === 'teacher' && String(tb.teacher_name || '').trim() === tName)
-      : [];
-    const teacherBase = explicitTeacherRows.length > 0
-      ? explicitTeacherRows
-      : (tName ? todayBase.filter(tb => String(tb.teacher_name || '').trim() === tName) : []);
-
-    const coveredTeacherPeriods = new Set();
-    const teacherItems = teacherBase.map(tb => {
-      const pNum = Number(tb.period || 0);
-      const pKey = String(pNum || String(tb.period || '').trim());
-      if (pKey) coveredTeacherPeriods.add(pKey);
-      const tbGrade = String(tb.grade || '').trim();
-      const tbClass = String(tb.class_no || '').trim();
-      const chg = changes.find(c => {
-        if (String(c.period || '').trim() !== String(tb.period || '').trim()) return false;
-        if (c.date && String(c.date).trim() !== todayStr) return false;
-        const cGrade = String(c.grade || '').trim();
-        const cClass = String(c.class_no || '').trim();
-        if (cGrade && cClass) {
-          return cGrade === tbGrade && cClass === tbClass;
-        }
-        const cChgTeacher = String(c.changed_teacher || '').trim();
-        const cOrigTeacher = String(c.original_teacher || '').trim();
-        return Boolean(tName) && (cChgTeacher === tName || cOrigTeacher === tName);
-      });
-      const targetStr = (tbGrade && tbClass) ? `${tbGrade}학년 ${tbClass}반` : '';
-      return {
-        _periodNum: pNum,
-        period: `${tb.period}교시`,
-        target: targetStr,
-        subject: chg ? (chg.changed_subject || tb.subject) : (tb.subject || ''),
-        changed: Boolean(chg)
-      };
+    // 교사 본인 시간표 구성 (entry_type === 'teacher' 우선, '유우석' vs '유우석T' 정규화, 변동 Union 병합)
+    mockData.teacherSchedule = mergeTimetableForDay(rawBase, changes, {
+      mode: 'teacher',
+      teacherName: cu.teacherName || '',
+      dayChar,
+      targetDate: todayStr
     });
-
-    if (tName) {
-      changes.forEach(c => {
-        const cDate = String(c.date || c.target_date || '').trim();
-        if (cDate !== todayStr) return;
-        const cChgTeacher = String(c.changed_teacher || '').trim();
-        const cOrigTeacher = String(c.original_teacher || '').trim();
-        if (cChgTeacher !== tName && cOrigTeacher !== tName) return;
-
-        const pNum = Number(c.period || 0);
-        const pKey = String(pNum || String(c.period || '').trim());
-        if (!pKey || coveredTeacherPeriods.has(pKey)) return;
-        coveredTeacherPeriods.add(pKey);
-
-        const cGrade = String(c.grade || '').trim();
-        const cClass = String(c.class_no || '').trim();
-        const targetStr = (cGrade && cClass) ? `${cGrade}학년 ${cClass}반` : '';
-        teacherItems.push({
-          _periodNum: pNum,
-          period: `${c.period}교시`,
-          target: targetStr,
-          subject: c.changed_subject || '',
-          changed: true
-        });
-      });
-    }
-    mockData.teacherSchedule = teacherItems
-      .sort((a, b) => Number(a._periodNum || 0) - Number(b._periodNum || 0))
-      .map(({ _periodNum, ...item }) => item);
 
     // 담임 학급 당일 시간표 구성 (교사 로그인 시 grade + class_no 기준)
     if (cu.role === 'teacher' || state.activeRole === 'teacher') {
@@ -2127,20 +2099,32 @@ function initServiceWorkerAndAutoSync() {
 }
 
 // Initialize Dates, Canvas & Service Worker on Load
-window.addEventListener('DOMContentLoaded', () => {
-  initServiceWorkerAndAutoSync();
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', () => {
+    initServiceWorkerAndAutoSync();
 
-  const today = new Date().toISOString().split('T')[0];
-  const attStart = document.getElementById('attStartDate');
-  const attEnd = document.getElementById('attEndDate');
-  const counselDate = document.getElementById('counselDate');
-  if (attStart) attStart.value = today;
-  if (attEnd) attEnd.value = today;
-  if (counselDate) counselDate.value = today;
-  if (typeof initSignaturePad === 'function') {
-    initSignaturePad();
-  }
+    const today = _getLocalTodayStr();
+    const attStart = document.getElementById('attStartDate');
+    const attEnd = document.getElementById('attEndDate');
+    const counselDate = document.getElementById('counselDate');
+    if (attStart) attStart.value = today;
+    if (attEnd) attEnd.value = today;
+    if (counselDate) counselDate.value = today;
+    if (typeof initSignaturePad === 'function') {
+      initSignaturePad();
+    }
 
-  checkAndEnforcePwaPushGate();
-  void tryAutoLogin();
-});
+    checkAndEnforcePwaPushGate();
+    void tryAutoLogin();
+  });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    mergeTimetableForDay,
+    _normalizeTeacherName,
+    buildHomeroomSchedule,
+    _getLocalTodayStr,
+    _getKoreanTodayDayChar,
+  };
+}

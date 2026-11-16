@@ -49,6 +49,29 @@ function _snapToRows(snap) {
   return rows;
 }
 
+function _normalizeTeacherName(name) {
+  return String(name || '').trim().replace(/\s+/g, ' ').replace(/(?:선생님|T)$/i, '').trim();
+}
+
+function _teacherNameCandidates(name) {
+  const norm = _normalizeTeacherName(name);
+  if (!norm) return [];
+  return Array.from(new Set([norm, `${norm}T`]));
+}
+
+function _mergeRowsById(...rowLists) {
+  const map = new Map();
+  for (const list of rowLists) {
+    if (!Array.isArray(list)) continue;
+    for (const row of list) {
+      if (!row || typeof row !== 'object') continue;
+      const rid = String(row.remote_id || `${row.entry_type || ''}_${row.grade || ''}_${row.class_no || ''}_${row.day_of_week || row.date || ''}_${row.period || ''}_${row.teacher_name || ''}`);
+      if (!map.has(rid)) map.set(rid, row);
+    }
+  }
+  return Array.from(map.values());
+}
+
 async function _queryClassScoped(db, collectionName, gradeNum, classNum) {
   let ref = db.collection(collectionName);
   if (gradeNum !== null && classNum !== null) {
@@ -424,11 +447,14 @@ async function _handleGetMobileBundle(db, params) {
 
   const hasClassFilter = gradeNum !== null && classNum !== null;
   const tenant = { schoolCode, schoolName, gradeNum, classNum };
+  const rawTeacherParam = String(params.teacher_name || '').trim();
+  const normTeacherParam = _normalizeTeacherName(rawTeacherParam);
 
   // 읽기 비용 최적화 & 멀티 테넌트 격리:
   // 1) 시간표_기본/변동 등은 전체 컬렉션 get() 금지 -> 반드시 grade, class_no 조건절로 본인 반만 조회
-  // 2) 학교(school_code / school_name) 및 학급(grade, class_no) 기준으로 타 학교/타 반 데이터 격리
-  // 3) 시간표_기본, 급식_식단표, 설정_서류규정은 클라이언트 localStorage 일일 캐시 히트 시(skip_static=1) 조회 생략
+  // 2) 교사 로그인 시 teacher_name 조건으로 교사 개인 시간표(타 학급 수업 포함) 추가 조회 후 병합
+  // 3) 학교(school_code / school_name) 및 학급(grade, class_no) 기준으로 타 학교/타 반 데이터 격리
+  // 4) 시간표_기본, 급식_식단표, 설정_서류규정은 클라이언트 localStorage 일일 캐시 히트 시(skip_static=1) 조회 생략
   const [
     teachersRaw,
     studentsRows,
@@ -436,8 +462,8 @@ async function _handleGetMobileBundle(db, params) {
     docTrackingRows,
     noticesRaw,
     noticeRepliesRaw,
-    timetableBaseRows,
-    timetableChangesRows,
+    timetableBaseClassRows,
+    timetableChangesClassRows,
     mealsRaw,
     docRulesRows,
     chatRows,
@@ -489,6 +515,40 @@ async function _handleGetMobileBundle(db, params) {
     db.collection('Notifications').where('is_read', '==', false).limit(50).get().then(_snapToRows)
   ]);
 
+  const effectiveTeacherName = normTeacherParam || (role === 'teacher' && teachersRaw[0] ? _normalizeTeacherName(teachersRaw[0].name || teachersRaw[0].teacher_id || '') : '');
+  const teacherCandidates = _teacherNameCandidates(effectiveTeacherName);
+  let timetableBaseRows = timetableBaseClassRows;
+  let timetableChangesRows = timetableChangesClassRows;
+
+  if (role === 'teacher' && teacherCandidates.length > 0) {
+    const [tBaseExtra, tChgChanged, tChgOrig] = await Promise.all([
+      !skipStatic
+        ? db.collection('시간표_기본').where('teacher_name', 'in', teacherCandidates).get().then(_snapToRows).catch(() => [])
+        : Promise.resolve(undefined),
+      db.collection('시간표_변동').where('changed_teacher', 'in', teacherCandidates).get().then(_snapToRows).catch(() => []),
+      db.collection('시간표_변동').where('original_teacher', 'in', teacherCandidates).get().then(_snapToRows).catch(() => []),
+    ]);
+    if (tBaseExtra !== undefined) {
+      timetableBaseRows = _mergeRowsById(timetableBaseClassRows || [], tBaseExtra);
+    }
+    timetableChangesRows = _mergeRowsById(timetableChangesClassRows || [], tChgChanged, tChgOrig);
+  }
+
+  const _matchesTimetableRow = (d) => {
+    if (!d || typeof d !== 'object') return false;
+    if (role === 'teacher' && effectiveTeacherName) {
+      const isTeacherOwned =
+        String(d.entry_type || '').trim() === 'teacher' ||
+        _normalizeTeacherName(d.teacher_name) === effectiveTeacherName ||
+        _normalizeTeacherName(d.changed_teacher) === effectiveTeacherName ||
+        _normalizeTeacherName(d.original_teacher) === effectiveTeacherName;
+      if (isTeacherOwned) {
+        return _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null });
+      }
+    }
+    return _matchesTenant(d, tenant);
+  };
+
   const teachersSnap = teachersRaw.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
   const filteredStudents = studentsRows.filter((d) => _matchesTenant(d, tenant));
   const studentIdSet = new Set(filteredStudents.map((s) => String(s.student_id || s.remote_id || '')).filter(Boolean));
@@ -509,12 +569,12 @@ async function _handleGetMobileBundle(db, params) {
       if (studentIdSet.size > 0 && r.student_id && !studentIdSet.has(String(r.student_id))) return false;
       return true;
     }),
-    timetable_changes: timetableChangesRows.filter((d) => _matchesTenant(d, tenant)),
+    timetable_changes: timetableChangesRows.filter(_matchesTimetableRow),
     chat_messages: chatRows.filter((d) => _matchesTenant(d, tenant)),
     notifications: notificationsRaw.filter((d) => _matchesTenant(d, tenant))
   };
 
-  if (timetableBaseRows !== undefined) bundle.timetable_base = timetableBaseRows.filter((d) => _matchesTenant(d, tenant));
+  if (timetableBaseRows !== undefined) bundle.timetable_base = timetableBaseRows.filter(_matchesTimetableRow);
   if (mealsRaw !== undefined) bundle.meals = mealsRaw.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
   if (docRulesRows !== undefined) bundle.doc_rules = docRulesRows;
 
