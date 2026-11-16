@@ -17,9 +17,44 @@
       ]
     },
     {
+      "collectionGroup": "계정_교사",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "grade", "order": "ASCENDING" },
+        { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "계정_교사",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "grade", "order": "ASCENDING" },
+        { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "계정_학생",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "grade", "order": "ASCENDING" },
+        { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "계정_학생",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "grade", "order": "ASCENDING" },
+        { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "계정_학부모",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "grade", "order": "ASCENDING" },
         { "fieldPath": "class_no", "order": "ASCENDING" }
       ]
@@ -30,6 +65,23 @@
       "fields": [
         { "fieldPath": "grade", "order": "ASCENDING" },
         { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "서류_추적",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "grade", "order": "ASCENDING" },
+        { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "가정통신문_목록",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "school_code", "order": "ASCENDING" },
+        { "fieldPath": "target_grade", "order": "ASCENDING" },
+        { "fieldPath": "target_class", "order": "ASCENDING" }
       ]
     },
     {

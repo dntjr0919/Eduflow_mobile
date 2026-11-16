@@ -636,7 +636,7 @@ async function handleLogin(e) {
 
   let authResult = { ok: false };
   await withButtonLoading(submitBtn, '로그인 중...', async () => {
-    if (gasApi.isConfigured()) showLoading('Google Sheets 계정 인증 중...');
+    if (gasApi.isConfigured()) showLoading('EduFlow 서버 인증 중...');
     try {
       authResult = await _performLoginAuth(state.activeRole, userId, password);
       if (!authResult.ok) {
@@ -759,7 +759,9 @@ function _applyAuthenticatedUser(user) {
     phone: user.phone || '',
     consultationHours: user.consultation_hours || '',
     neisOfficeCode: user.neis_office_code || '',
-    neisSchoolCode: user.neis_school_code || ''
+    neisSchoolCode: user.neis_school_code || '',
+    customId: user.custom_id || '',
+    customIdChanged: Boolean(user.custom_id_changed)
   };
 }
 
@@ -776,9 +778,12 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null) {
       const dailyCache = _loadDailyStaticCache(cu.grade, cu.classNo);
       const bundleParams = {
         role: state.activeRole,
+        user_id: cu.userId || '',
         student_id: cu.studentId || '',
         grade: cu.grade || '',
-        class_no: cu.classNo || ''
+        class_no: cu.classNo || '',
+        school_code: cu.neisSchoolCode || '',
+        school_name: cu.schoolName || ''
       };
       if (dailyCache) {
         bundleParams.skip_static = '1';
@@ -1285,6 +1290,7 @@ function applyRoleUI() {
   const badgeElem = document.getElementById('userBadge');
   const avatarElem = document.getElementById('userAvatarText');
   const profileBtn = document.getElementById('teacherProfileHeaderBtn');
+  const customIdBtn = document.getElementById('customIdHeaderBtn');
 
   const studentNav = document.getElementById('studentBottomNav');
   const teacherNav = document.getElementById('teacherBottomNav');
@@ -1301,6 +1307,7 @@ function applyRoleUI() {
     badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-purple-100 text-purple-700";
     avatarElem.innerText = (tName && tName[0]) || "교";
     if (profileBtn) profileBtn.classList.remove('hidden');
+    if (customIdBtn) customIdBtn.classList.add('hidden');
 
     studentNav.classList.add('hidden');
     teacherNav.classList.remove('hidden');
@@ -1310,6 +1317,7 @@ function applyRoleUI() {
     }
   } else {
     if (profileBtn) profileBtn.classList.add('hidden');
+    if (customIdBtn) customIdBtn.classList.remove('hidden');
     if (state.activeRole === 'student') {
       const stuDisplay = cu.maskedName || cu.studentName || cu.userId || '학생';
       nameElem.innerText = `${gc ? gc + ' ' : ''}${stuDisplay} 학생`;
@@ -1342,6 +1350,192 @@ function applyRoleUI() {
       switchBottomTab('home');
     }
   }
+}
+
+function openCustomIdModal() {
+  const cu = mockData.currentUser || {};
+  const input = document.getElementById('customIdInput');
+  const btn = document.getElementById('customIdSubmitBtn');
+  const msg = document.getElementById('customIdStatusMsg');
+  if (cu.customIdChanged) {
+    if (input) {
+      input.value = cu.customId || cu.userId || '';
+      input.disabled = true;
+    }
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+    if (msg) {
+      msg.innerText = `이미 최초 1회 커스텀 ID 변경을 완료했습니다. (현재 ID: ${cu.customId || cu.userId})`;
+    }
+  } else {
+    if (input) {
+      input.value = '';
+      input.disabled = false;
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('opacity-50', 'cursor-not-allowed');
+    }
+    if (msg) {
+      msg.innerText = '초기 ID 대신 기억하기 쉬운 나만의 로그인 ID를 최초 1회에 한해 설정할 수 있습니다. (5자리 숫자 불가, 영문 소문자·숫자 4~20자)';
+    }
+  }
+  openModal('customIdModal');
+}
+
+async function submitCustomIdChange(e) {
+  if (e) e.preventDefault();
+  const cu = mockData.currentUser || {};
+  if (cu.customIdChanged) {
+    showToast('ID 변경은 최초 1회만 가능합니다.', '⚠️');
+    return;
+  }
+  const newCustomId = (document.getElementById('customIdInput')?.value || '').trim();
+  if (/^\d{5}$/.test(newCustomId)) {
+    showToast('5자리 숫자(학번 형식)는 커스텀 ID로 사용할 수 없습니다.', '⚠️');
+    return;
+  }
+  if (!/^[a-z0-9_.-]{4,20}$/.test(newCustomId)) {
+    showToast('영문 소문자, 숫자, _, ., - 조합 4~20자로 입력해 주세요.', '⚠️');
+    return;
+  }
+  const submitBtn = (e && e.submitter) || document.getElementById('customIdSubmitBtn');
+  await withButtonLoading(submitBtn, '변경 중...', async () => {
+    try {
+      await gasApi.post('change_custom_id', {
+        role: cu.role || state.activeRole || 'student',
+        user_id: cu.userId || cu.studentId || '',
+        new_custom_id: newCustomId
+      });
+      cu.customId = newCustomId;
+      cu.customIdChanged = true;
+      cu.userId = newCustomId;
+      const saved = _loadAutoLoginAuth();
+      if (saved) {
+        _saveAutoLoginAuth({ ...saved, userId: newCustomId });
+      }
+      closeModal('customIdModal');
+      showToast(`커스텀 ID(${newCustomId})가 확정되었습니다.`, '🪪');
+    } catch (err) {
+      showToast(`ID 변경 실패: ${err && err.message ? err.message : '오류'}`, '⚠️');
+    }
+  });
+}
+
+function openSignupModal() {
+  onSignupRoleChange();
+  openModal('signupModal');
+}
+
+function onSignupRoleChange() {
+  const role = (document.getElementById('signupRole')?.value || 'student').toLowerCase();
+  const pExtra = document.getElementById('signupParentExtra');
+  const tExtra = document.getElementById('signupTeacherExtra');
+  const stuNoWrap = document.getElementById('signupStudentNoWrap');
+  if (pExtra) pExtra.classList.toggle('hidden', role !== 'parent');
+  if (tExtra) tExtra.classList.toggle('hidden', role !== 'teacher');
+  if (stuNoWrap) stuNoWrap.classList.toggle('hidden', role !== 'student');
+}
+
+async function submitSignupForm(e) {
+  if (e) e.preventDefault();
+  const role = (document.getElementById('signupRole')?.value || 'student').toLowerCase();
+  const desiredId = (document.getElementById('signupDesiredId')?.value || '').trim();
+  if (/^\d{5}$/.test(desiredId)) {
+    showToast('5자리 숫자(학번 형식)는 ID로 사용할 수 없습니다.', '⚠️');
+    return;
+  }
+  if (role !== 'teacher' && !/^[a-z0-9_.-]{4,20}$/.test(desiredId)) {
+    showToast('희망 ID는 영문 소문자, 숫자, _, ., - 조합 4~20자로 입력해 주세요.', '⚠️');
+    return;
+  }
+  const submitBtn = (e && e.submitter) || (e && e.target && e.target.querySelector('button[type="submit"]'));
+  await withButtonLoading(submitBtn, '신청 중...', async () => {
+    try {
+      const res = await gasApi.post('register_account', {
+        role,
+        school_name: (document.getElementById('signupSchoolName')?.value || '').trim(),
+        name: (document.getElementById('signupName')?.value || '').trim(),
+        grade: (document.getElementById('signupGrade')?.value || '').trim(),
+        class_no: (document.getElementById('signupClassNo')?.value || '').trim(),
+        student_no: (document.getElementById('signupStudentNo')?.value || '').trim(),
+        child_student_id: (document.getElementById('signupChildStudentId')?.value || '').trim(),
+        child_name: (document.getElementById('signupChildName')?.value || '').trim(),
+        neis_office_code: (document.getElementById('signupNeisOffice')?.value || '').trim(),
+        neis_school_code: (document.getElementById('signupNeisSchool')?.value || '').trim(),
+        subject: (document.getElementById('signupSubject')?.value || '').trim(),
+        desired_id: desiredId,
+        password: document.getElementById('signupPassword')?.value || ''
+      });
+      closeModal('signupModal');
+      showToast(res.message || '가입 신청이 완료되었습니다. 승인 후 로그인해 주세요.', '✨');
+    } catch (err) {
+      showToast(`가입 신청 실패: ${err && err.message ? err.message : '오류'}`, '⚠️');
+    }
+  });
+}
+
+function openChangePasswordModal() {
+  const c1 = document.getElementById('currentPasswordInput');
+  const c2 = document.getElementById('newPasswordInput');
+  const c3 = document.getElementById('confirmNewPasswordInput');
+  if (c1) c1.value = '';
+  if (c2) c2.value = '';
+  if (c3) c3.value = '';
+  openModal('changePasswordModal');
+}
+
+async function submitChangePassword(e) {
+  if (e) e.preventDefault();
+  const currentPassword = (document.getElementById('currentPasswordInput')?.value || '');
+  const newPassword = (document.getElementById('newPasswordInput')?.value || '');
+  const confirmPassword = (document.getElementById('confirmNewPasswordInput')?.value || '');
+
+  if (!currentPassword || !newPassword) {
+    showToast('현재 비밀번호와 새 비밀번호를 모두 입력해 주세요.', '⚠️');
+    return;
+  }
+  if (newPassword.length < 4) {
+    showToast('새 비밀번호는 4자 이상이어야 합니다.', '⚠️');
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    showToast('새 비밀번호와 확인 비밀번호가 일치하지 않습니다.', '⚠️');
+    return;
+  }
+
+  const submitBtn = (e && e.submitter) || (e && e.target && e.target.querySelector('button[type="submit"]'));
+  await withButtonLoading(submitBtn, '변경 중...', async () => {
+    try {
+      const cu = mockData.currentUser || {};
+      const curHash = await gasApi.sha256Hex(currentPassword);
+      await gasApi.post('change_password', {
+        role: cu.role || state.activeRole || 'student',
+        user_id: cu.userId || cu.studentId || '',
+        current_password: currentPassword,
+        current_password_hash: curHash,
+        new_password: newPassword
+      });
+
+      // 자동 로그인 정보가 저장된 경우 새 비밀번호 해시로 동기화
+      const saved = _loadAutoLoginAuth();
+      if (saved && saved.userId === (cu.userId || cu.studentId || '')) {
+        const newHash = await gasApi.sha256Hex(newPassword);
+        _saveAutoLoginAuth({
+          ...saved,
+          password: newPassword,
+          passwordHash: newHash
+        });
+      }
+
+      closeModal('changePasswordModal');
+      showToast('비밀번호가 안전하게 변경되었습니다.', '🔐');
+    } catch (err) {
+      showToast(`비밀번호 변경 실패: ${err && err.message ? err.message : '오류'}`, '⚠️');
+    }
+  });
 }
 
 function logout() {

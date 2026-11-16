@@ -72,7 +72,98 @@ async function _dispatchWebPush(payload) {
   }
 }
 
+async function loadPendingRegistrationsBadge() {
+  if (!gasApi.isConfigured()) return [];
+  try {
+    const cu = mockData.currentUser || {};
+    const res = await gasApi.get('get_pending_registrations', {
+      requester_id: cu.userId || '',
+      teacher_id: cu.userId || '',
+      grade: cu.grade || '',
+      class_no: cu.classNo || '',
+      school_code: cu.neisSchoolCode || '',
+      school_name: cu.schoolName || ''
+    });
+    const items = Array.isArray(res.items) ? res.items : [];
+    const badge = document.getElementById('teacherPendingRegBadge');
+    if (badge) badge.innerText = String(items.length);
+    return items;
+  } catch (_) {
+    return [];
+  }
+}
+
+async function openPendingRegistrationsModal() {
+  const listEl = document.getElementById('pendingRegistrationsList');
+  if (listEl) listEl.innerHTML = '<p class="text-xs text-slate-400 text-center py-6">불러오는 중...</p>';
+  openModal('pendingRegistrationsModal');
+  const items = await loadPendingRegistrationsBadge();
+  if (!listEl) return;
+  if (items.length === 0) {
+    listEl.innerHTML = '<p class="text-xs text-slate-400 text-center py-8">현재 승인 대기 중인 가입 신청이 없습니다.</p>';
+    return;
+  }
+  listEl.innerHTML = items.map((it) => {
+    if (it.role === 'teacher') {
+      const codeInfo = [it.neis_office_code, it.neis_school_code].filter(Boolean).join('/');
+      return `
+        <div class="p-3 rounded-2xl border border-purple-200 bg-purple-50/70 flex items-center justify-between gap-2">
+          <div>
+            <div class="flex items-center gap-1.5 mb-0.5">
+              <span class="px-1.5 py-0.5 rounded bg-purple-600 text-white text-[9px] font-bold">교사 가입 신청</span>
+              <p class="text-xs font-bold text-slate-800">${it.name || ''} <span class="text-slate-500 font-normal">(${it.teacher_id || it.login_id || it.remote_id})</span></p>
+            </div>
+            <p class="text-[10px] text-slate-600">${it.school_name || '학교 미입력'}${codeInfo ? ` (${codeInfo})` : ''} · ${it.grade || '-'}학년 ${it.class_no || '-'}반 · ${it.subject || '과목 미입력'}</p>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button type="button" onclick="reviewRegistrationItem('teacher', '${it.remote_id}', 'approve', this)" class="px-2.5 py-1.5 bg-purple-600 text-white rounded-lg text-[10px] font-bold">승인</button>
+            <button type="button" onclick="reviewRegistrationItem('teacher', '${it.remote_id}', 'reject', this)" class="px-2.5 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold">반려</button>
+          </div>
+        </div>
+      `;
+    }
+    const roleLbl = it.role === 'parent' ? '학부모' : '학생';
+    const subInfo = it.role === 'parent'
+      ? `자녀: ${it.student_name || ''} (${it.student_id || ''})`
+      : `${it.grade || ''}학년 ${it.class_no || ''}반 ${it.student_no || ''}번`;
+    return `
+      <div class="p-3 rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
+        <div>
+          <p class="text-xs font-bold text-slate-800">[${roleLbl}] ${it.name || ''} <span class="text-slate-400 font-normal">(${it.login_id || it.remote_id})</span></p>
+          <p class="text-[10px] text-slate-500">${it.school_name || ''} · ${subInfo}</p>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <button type="button" onclick="reviewRegistrationItem('${it.role}', '${it.remote_id}', 'approve', this)" class="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-bold">승인</button>
+          <button type="button" onclick="reviewRegistrationItem('${it.role}', '${it.remote_id}', 'reject', this)" class="px-2.5 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold">반려</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function reviewRegistrationItem(targetRole, remoteId, decision, btnEl) {
+  await withButtonLoading(btnEl, '처리 중...', async () => {
+    try {
+      const cu = mockData.currentUser || {};
+      await gasApi.post('review_registration', {
+        requester_id: cu.userId || '',
+        teacher_id: cu.userId || '',
+        target_role: targetRole,
+        remote_id: remoteId,
+        decision
+      });
+      showToast(decision === 'approve' ? '가입 신청을 승인했습니다.' : '가입 신청을 반려했습니다.', decision === 'approve' ? '✅' : 'ℹ️');
+      await openPendingRegistrationsModal();
+    } catch (err) {
+      showToast(`처리 실패: ${err && err.message ? err.message : '오류'}`, '⚠️');
+    }
+  });
+}
+
 function renderTeacherHome() {
+  if (typeof loadPendingRegistrationsBadge === 'function') {
+    void loadPendingRegistrationsBadge();
+  }
   const toggleEl = document.getElementById('counselingToggleSwitch');
   const cBadge = document.getElementById('teacherCounselStatusBadge');
   if (toggleEl) toggleEl.checked = Boolean(mockData.isCounselingOpen);
@@ -254,7 +345,12 @@ async function syncNeisMealsNow(btnEl) {
   await withButtonLoading(btnEl, '동기화 중...', async () => {
     showLoading('나이스(NEIS) 급식 식단표 동기화 중...');
     try {
-      const res = await gasApi.post('sync_neis_meals', {});
+      const res = await gasApi.post('sync_neis_meals', {
+        teacher_id: mockData.currentUser.userId || '',
+        office_code: mockData.currentUser.neisOfficeCode || '',
+        school_code: mockData.currentUser.neisSchoolCode || ''
+      });
+      try { localStorage.removeItem('eduflow_daily_static_cache_v1'); } catch (_) {}
       await refreshFromGas(false);
       renderTeacherHome();
       showToast(`나이스 급식 동기화 완료 (${res.count || 0}건 반영)`, '✅');
@@ -327,8 +423,10 @@ async function saveTeacherProfile(e) {
       );
     }
 
+    try { localStorage.removeItem('eduflow_daily_static_cache_v1'); } catch (_) {}
     closeModal('teacherProfileModal');
     applyRoleUI();
+    await refreshFromGas(false);
     renderTeacherHome();
     showToast('교사 프로필이 저장되었습니다.', '✅');
   });
@@ -887,6 +985,8 @@ async function publishNewCircular() {
           content: '참가 희망 여부를 전자 서명 후 회신 바랍니다.',
           target_grade: mockData.currentUser.grade || '1',
           target_class: mockData.currentUser.classNo || '3',
+          school_code: mockData.currentUser.neisSchoolCode || '',
+          school_name: mockData.currentUser.schoolName || '',
           due_date: dueDate,
           requires_reply: 1,
           author_name: mockData.currentUser.teacherName || '담임교사',

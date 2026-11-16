@@ -5,6 +5,20 @@
  */
 const crypto = require('crypto');
 const { getFirestore, buildFirestoreErrorPayload } = require('./_firebaseAdmin');
+const { uploadBase64ToDrive } = require('./_googleDrive');
+
+const SUPER_ADMIN_ID = '유우석';
+
+async function _isSuperAdmin(db, requesterId) {
+  const rid = String(requesterId || '').trim();
+  if (!rid) return false;
+  if (rid === SUPER_ADMIN_ID) return true;
+  try {
+    const doc = await db.collection('계정_교사').doc(rid).get();
+    if (doc.exists && doc.data() && doc.data().is_admin === true) return true;
+  } catch (_) {}
+  return false;
+}
 
 function _nowStr() {
   const d = new Date();
@@ -49,15 +63,38 @@ async function _queryClassScoped(db, collectionName, gradeNum, classNum) {
 }
 
 function _parsePayload(req) {
-  if (req.method === 'GET') return req.query || {};
-  if (typeof req.body === 'string') {
+  let raw = {};
+  if (req.method === 'GET') {
+    raw = req.query || {};
+  } else if (typeof req.body === 'string') {
     try {
-      return req.body ? JSON.parse(req.body) : {};
+      raw = req.body ? JSON.parse(req.body) : {};
     } catch (_) {
-      return {};
+      raw = {};
     }
+  } else if (req.body && typeof req.body === 'object') {
+    raw = { ...req.body };
   }
-  return req.body && typeof req.body === 'object' ? { ...req.body } : {};
+  if (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) {
+    return { ...raw, ...raw.data };
+  }
+  return raw;
+}
+
+function _matchesTenant(doc, { schoolCode, schoolName, gradeNum, classNum }) {
+  if (!doc || typeof doc !== 'object') return false;
+  const docSchoolCode = String(doc.school_code || doc.neis_school_code || '').trim();
+  const docSchoolName = String(doc.school_name || '').trim();
+  if (schoolCode && docSchoolCode && docSchoolCode !== schoolCode) return false;
+  if (schoolName && docSchoolName && docSchoolName !== schoolName) return false;
+
+  const rawG = doc.grade !== undefined && doc.grade !== '' ? doc.grade : doc.target_grade;
+  const rawC = doc.class_no !== undefined && doc.class_no !== '' ? doc.class_no : doc.target_class;
+  const docG = _toIntOrNull(rawG);
+  const docC = _toIntOrNull(rawC);
+  if (gradeNum !== null && docG !== null && docG !== gradeNum) return false;
+  if (classNum !== null && docC !== null && docC !== classNum) return false;
+  return true;
 }
 
 function _isSha256Hex(val) {
@@ -93,12 +130,32 @@ async function _findAccountDoc(db, role, userId) {
   if (directSnap.exists) {
     return { colRef, docId: directSnap.id, userDoc: { remote_id: directSnap.id, ...directSnap.data() } };
   }
-  const qSnap = await colRef.where(target.idField, '==', userId).limit(1).get();
-  if (!qSnap.empty) {
-    const d = qSnap.docs[0];
-    return { colRef, docId: d.id, userDoc: { remote_id: d.id, ...d.data() } };
+  for (const field of [target.idField, 'login_id', 'custom_id']) {
+    const qSnap = await colRef.where(field, '==', userId).limit(1).get();
+    if (!qSnap.empty) {
+      const d = qSnap.docs[0];
+      return { colRef, docId: d.id, userDoc: { remote_id: d.id, ...d.data() } };
+    }
   }
   return { colRef, docId: null, userDoc: null };
+}
+
+async function _isDuplicateIdAcrossAllCollections(db, candidateId) {
+  const checks = [
+    { col: '계정_교사', fields: ['teacher_id', 'login_id', 'custom_id'] },
+    { col: '계정_학생', fields: ['student_id', 'login_id', 'custom_id'] },
+    { col: '계정_학부모', fields: ['parent_id', 'login_id', 'custom_id'] }
+  ];
+  for (const item of checks) {
+    const colRef = db.collection(item.col);
+    const d = await colRef.doc(candidateId).get();
+    if (d.exists) return true;
+    for (const f of item.fields) {
+      const q = await colRef.where(f, '==', candidateId).limit(1).get();
+      if (!q.empty) return true;
+    }
+  }
+  return false;
 }
 
 async function _handleLogin(db, body) {
@@ -115,6 +172,18 @@ async function _handleLogin(db, body) {
 
   if (!userDoc) {
     return { status: 401, json: { ok: false, error: '등록되지 않은 계정입니다.' } };
+  }
+
+  const accStatus = String(userDoc.status || 'active').trim().toLowerCase();
+  if (accStatus === 'pending') {
+    return { status: 403, json: { ok: false, error: '담임 교사(또는 관리자) 승인 대기 중인 계정입니다.' } };
+  }
+  if (accStatus === 'rejected') {
+    return { status: 403, json: { ok: false, error: '가입 신청이 반려된 계정입니다.' } };
+  }
+
+  if (userDoc.custom_id_changed === true && userDoc.custom_id && userId !== String(userDoc.custom_id)) {
+    return { status: 401, json: { ok: false, error: '커스텀 ID로 변경된 계정입니다. 변경한 ID로 로그인해 주세요.' } };
   }
 
   if (!_verifyPassword(userDoc.password_hash, password, passwordHash)) {
@@ -172,35 +241,181 @@ async function _handleChangePassword(db, body) {
   return { status: 200, json: { ok: true, message: '비밀번호가 안전하게 변경되었습니다.' } };
 }
 
+async function _handleChangeCustomId(db, body) {
+  const role = String(body.role || 'student').trim().toLowerCase();
+  const userId = String(body.user_id || '').trim();
+  const newCustomId = String(body.new_custom_id || '').trim();
+
+  if (role !== 'student' && role !== 'parent') {
+    return { status: 400, json: { ok: false, error: '학생 또는 학부모 계정만 커스텀 ID를 변경할 수 있습니다.' } };
+  }
+  if (!userId || !newCustomId) {
+    return { status: 400, json: { ok: false, error: '현재 ID와 새 커스텀 ID를 모두 입력해 주세요.' } };
+  }
+  if (/^\d{5}$/.test(newCustomId)) {
+    return { status: 400, json: { ok: false, error: '5자리 숫자(학번 형식)는 커스텀 ID로 사용할 수 없습니다.' } };
+  }
+  if (!/^[a-z0-9_.-]{4,20}$/.test(newCustomId)) {
+    return { status: 400, json: { ok: false, error: '커스텀 ID는 영문 소문자, 숫자, _, ., - 조합 4~20자여야 합니다.' } };
+  }
+
+  const { colRef, docId, userDoc } = await _findAccountDoc(db, role, userId);
+  if (!userDoc || !docId) {
+    return { status: 404, json: { ok: false, error: '계정을 찾을 수 없습니다.' } };
+  }
+  if (userDoc.custom_id_changed === true) {
+    return { status: 400, json: { ok: false, error: '커스텀 ID 변경은 최초 1회만 가능합니다.' } };
+  }
+
+  const isDup = await _isDuplicateIdAcrossAllCollections(db, newCustomId);
+  if (isDup) {
+    return { status: 409, json: { ok: false, error: '이미 사용 중인 ID입니다. 다른 ID를 입력해 주세요.' } };
+  }
+
+  await colRef.doc(docId).set(
+    {
+      custom_id: newCustomId,
+      login_id: newCustomId,
+      custom_id_changed: true,
+      updated_at: _nowStr()
+    },
+    { merge: true }
+  );
+
+  return { status: 200, json: { ok: true, custom_id: newCustomId, message: '커스텀 ID가 변경되었습니다. 다음부터 새 ID로 로그인해 주세요.' } };
+}
+
+async function _handleRegisterAccount(db, body) {
+  const role = String(body.role || 'student').trim().toLowerCase();
+  const desiredId = String(body.desired_id || '').trim();
+  const password = String(body.password || '');
+  const name = String(body.name || '').trim();
+  const schoolName = String(body.school_name || '').trim();
+  const neisOfficeCode = String(body.neis_office_code || '').trim();
+  const neisSchoolCode = String(body.neis_school_code || '').trim();
+  const gradeNum = _toIntOrNull(body.grade);
+  const classNum = _toIntOrNull(body.class_no);
+  const studentNoNum = _toIntOrNull(body.student_no);
+
+  if (!desiredId || !password || !name) {
+    return { status: 400, json: { ok: false, error: '이름, 희망 ID, 비밀번호를 모두 입력해 주세요.' } };
+  }
+  if (/^\d{5}$/.test(desiredId)) {
+    return { status: 400, json: { ok: false, error: '5자리 숫자(학번 형식)는 ID로 사용할 수 없습니다.' } };
+  }
+  if (role !== 'teacher' && !/^[a-z0-9_.-]{4,20}$/.test(desiredId)) {
+    return { status: 400, json: { ok: false, error: '희망 ID는 영문 소문자, 숫자, _, ., - 조합 4~20자여야 합니다.' } };
+  }
+
+  const isDup = await _isDuplicateIdAcrossAllCollections(db, desiredId);
+  if (isDup) {
+    return { status: 409, json: { ok: false, error: '이미 사용 중인 ID입니다. 다른 ID를 입력해 주세요.' } };
+  }
+
+  const pwHash = _sha256Hex(password);
+  const now = _nowStr();
+  const schoolPrefix = neisSchoolCode || schoolName;
+
+  if (role === 'teacher') {
+    await db.collection('계정_교사').doc(desiredId).set({
+      remote_id: desiredId,
+      teacher_id: desiredId,
+      login_id: desiredId,
+      name,
+      school_name: schoolName,
+      neis_office_code: neisOfficeCode,
+      neis_school_code: neisSchoolCode,
+      grade: gradeNum,
+      class_no: classNum,
+      subject: String(body.subject || '').trim(),
+      password_hash: pwHash,
+      status: 'pending',
+      updated_at: now
+    }, { merge: true });
+    return { status: 200, json: { ok: true, status: 'pending', message: '교사 가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다.' } };
+  }
+
+  if (role === 'parent') {
+    const docId = schoolPrefix ? `${schoolPrefix}_${desiredId}` : desiredId;
+    await db.collection('계정_학부모').doc(docId).set({
+      remote_id: docId,
+      parent_id: desiredId,
+      login_id: desiredId,
+      custom_id: desiredId,
+      custom_id_changed: true,
+      name,
+      school_name: schoolName,
+      school_code: neisSchoolCode,
+      grade: gradeNum,
+      class_no: classNum,
+      student_id: String(body.child_student_id || '').trim(),
+      student_name: String(body.child_name || '').trim(),
+      password_hash: pwHash,
+      status: 'pending',
+      updated_at: now
+    }, { merge: true });
+    return { status: 200, json: { ok: true, status: 'pending', message: '학부모 가입 신청이 접수되었습니다. 담임 교사 승인 후 로그인할 수 있습니다.' } };
+  }
+
+  const docId = schoolPrefix ? `${schoolPrefix}_${desiredId}` : desiredId;
+  const computedSid = (gradeNum && classNum && studentNoNum)
+    ? `${gradeNum}${String(classNum).padStart(2, '0')}${String(studentNoNum).padStart(2, '0')}`
+    : desiredId;
+  await db.collection('계정_학생').doc(docId).set({
+    remote_id: docId,
+    student_id: computedSid,
+    login_id: desiredId,
+    custom_id: desiredId,
+    custom_id_changed: true,
+    name,
+    school_name: schoolName,
+    school_code: neisSchoolCode,
+    grade: gradeNum,
+    class_no: classNum,
+    student_no: studentNoNum,
+    password_hash: pwHash,
+    status: 'pending',
+    updated_at: now
+  }, { merge: true });
+  return { status: 200, json: { ok: true, status: 'pending', message: '학생 가입 신청이 접수되었습니다. 담임 교사 승인 후 로그인할 수 있습니다.' } };
+}
+
 async function _handleGetMobileBundle(db, params) {
   const role = String(params.role || 'student').trim().toLowerCase();
   const studentId = String(params.student_id || '').trim();
+  const userId = String(params.user_id || '').trim();
   const gradeNum = _toIntOrNull(params.grade);
   const classNum = _toIntOrNull(params.class_no);
+  const schoolCode = String(params.school_code || params.neis_school_code || '').trim();
+  const schoolName = String(params.school_name || '').trim();
   const skipStatic = String(params.skip_static || '') === '1';
 
   const hasClassFilter = gradeNum !== null && classNum !== null;
+  const tenant = { schoolCode, schoolName, gradeNum, classNum };
 
-  // 읽기 비용 최적화:
+  // 읽기 비용 최적화 & 멀티 테넌트 격리:
   // 1) 시간표_기본/변동 등은 전체 컬렉션 get() 금지 -> 반드시 grade, class_no 조건절로 본인 반만 조회
-  // 2) 시간표_기본, 급식_식단표, 설정_서류규정은 클라이언트 localStorage 일일 캐시 히트 시(skip_static=1) 조회 생략
+  // 2) 학교(school_code / school_name) 및 학급(grade, class_no) 기준으로 타 학교/타 반 데이터 격리
+  // 3) 시간표_기본, 급식_식단표, 설정_서류규정은 클라이언트 localStorage 일일 캐시 히트 시(skip_static=1) 조회 생략
   const [
-    teachersSnap,
+    teachersRaw,
     studentsRows,
     attendanceRows,
-    docTrackingSnap,
-    noticesSnap,
-    noticeRepliesSnap,
+    docTrackingRows,
+    noticesRaw,
+    noticeRepliesRaw,
     timetableBaseRows,
     timetableChangesRows,
-    mealsRows,
+    mealsRaw,
     docRulesRows,
     chatRows,
-    notificationsSnap
+    notificationsRaw
   ] = await Promise.all([
-    hasClassFilter
-      ? _queryClassScoped(db, '계정_교사', gradeNum, classNum)
-      : db.collection('계정_교사').limit(20).get().then(_snapToRows),
+    role === 'teacher' && userId
+      ? db.collection('계정_교사').doc(userId).get().then((d) => (d.exists ? [{ remote_id: d.id, ...d.data() }] : []))
+      : (hasClassFilter
+          ? _queryClassScoped(db, '계정_교사', gradeNum, classNum)
+          : db.collection('계정_교사').limit(20).get().then(_snapToRows)),
     hasClassFilter
       ? _queryClassScoped(db, '계정_학생', gradeNum, classNum)
       : (studentId
@@ -227,7 +442,9 @@ async function _handleGetMobileBundle(db, params) {
       ? _queryClassScoped(db, '시간표_변동', gradeNum, classNum)
       : Promise.resolve([]),
     !skipStatic
-      ? db.collection('급식_식단표').limit(60).get().then(_snapToRows)
+      ? (schoolCode
+          ? db.collection('급식_식단표').where('school_code', '==', schoolCode).limit(60).get().then(_snapToRows)
+          : db.collection('급식_식단표').limit(60).get().then(_snapToRows))
       : Promise.resolve(undefined),
     !skipStatic
       ? db.collection('설정_서류규정').limit(50).get().then(_snapToRows)
@@ -240,32 +457,51 @@ async function _handleGetMobileBundle(db, params) {
     db.collection('Notifications').where('is_read', '==', false).limit(50).get().then(_snapToRows)
   ]);
 
+  const teachersSnap = teachersRaw.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
+  const filteredStudents = studentsRows.filter((d) => _matchesTenant(d, tenant));
+  const studentIdSet = new Set(filteredStudents.map((s) => String(s.student_id || s.remote_id || '')).filter(Boolean));
+  const filteredNotices = noticesRaw.filter((d) => _matchesTenant(d, tenant));
+  const noticeIdSet = new Set(filteredNotices.map((n) => String(n.remote_id || '')).filter(Boolean));
+
   const bundle = {
     ok: true,
     backend: 'firestore',
     server_time: _nowStr(),
     teachers: teachersSnap,
-    students: studentsRows,
-    attendance: attendanceRows,
-    doc_tracking: docTrackingSnap,
-    notices: noticesSnap,
-    notice_replies: noticeRepliesSnap,
-    timetable_changes: timetableChangesRows,
-    chat_messages: chatRows,
-    notifications: notificationsSnap
+    students: filteredStudents,
+    attendance: attendanceRows.filter((d) => _matchesTenant(d, tenant)),
+    doc_tracking: docTrackingRows.filter((d) => _matchesTenant(d, tenant)),
+    notices: filteredNotices,
+    notice_replies: noticeRepliesRaw.filter((r) => {
+      if (noticeIdSet.size > 0 && r.notice_id && !noticeIdSet.has(String(r.notice_id))) return false;
+      if (studentIdSet.size > 0 && r.student_id && !studentIdSet.has(String(r.student_id))) return false;
+      return true;
+    }),
+    timetable_changes: timetableChangesRows.filter((d) => _matchesTenant(d, tenant)),
+    chat_messages: chatRows.filter((d) => _matchesTenant(d, tenant)),
+    notifications: notificationsRaw.filter((d) => _matchesTenant(d, tenant))
   };
 
-  if (timetableBaseRows !== undefined) bundle.timetable_base = timetableBaseRows;
-  if (mealsRows !== undefined) bundle.meals = mealsRows;
+  if (timetableBaseRows !== undefined) bundle.timetable_base = timetableBaseRows.filter((d) => _matchesTenant(d, tenant));
+  if (mealsRaw !== undefined) bundle.meals = mealsRaw.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
   if (docRulesRows !== undefined) bundle.doc_rules = docRulesRows;
 
   return { status: 200, json: bundle };
 }
 
 async function _syncNeisMeals(db, body) {
-  let officeCode = String(body.office_code || '').trim();
-  let schoolCode = String(body.school_code || '').trim();
+  let officeCode = String(body.office_code || body.neis_office_code || '').trim();
+  let schoolCode = String(body.school_code || body.neis_school_code || '').trim();
+  const teacherId = String(body.teacher_id || body.user_id || '').trim();
 
+  if ((!officeCode || !schoolCode) && teacherId) {
+    const tDoc = await db.collection('계정_교사').doc(teacherId).get();
+    if (tDoc.exists) {
+      const t = tDoc.data() || {};
+      officeCode = officeCode || String(t.neis_office_code || '').trim();
+      schoolCode = schoolCode || String(t.neis_school_code || '').trim();
+    }
+  }
   if (!officeCode || !schoolCode) {
     const tSnap = await db.collection('계정_교사').limit(1).get();
     if (!tSnap.empty) {
@@ -275,7 +511,7 @@ async function _syncNeisMeals(db, body) {
     }
   }
   if (!officeCode || !schoolCode) {
-    return { ok: false, error: 'NEIS 교육청 코드 또는 학교 코드가 설정되지 않았습니다.' };
+    return { ok: false, error: 'NEIS 교육청 코드 또는 학교 코드가 설정되지 않았습니다. 교사 프로필에서 먼저 입력해 주세요.' };
   }
 
   const now = new Date();
@@ -317,7 +553,7 @@ async function _syncNeisMeals(db, body) {
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/\s*\([0-9.]+\)/g, '')
       .trim();
-    const rid = `meal_${ymd}_${mealType}`;
+    const rid = `meal_${schoolCode}_${ymd}_${mealType}`;
     batch.set(
       db.collection('급식_식단표').doc(rid),
       {
@@ -328,6 +564,8 @@ async function _syncNeisMeals(db, body) {
         menu_text: menuText,
         calories: String(item.CAL_INFO || '').trim(),
         allergy_info: '나이스(NEIS) 식단 연동됨',
+        office_code: officeCode,
+        school_code: schoolCode,
         updated_at: _nowStr()
       },
       { merge: true }
@@ -335,7 +573,7 @@ async function _syncNeisMeals(db, body) {
     count += 1;
   }
   if (count > 0) await batch.commit();
-  return { ok: true, count };
+  return { ok: true, count, office_code: officeCode, school_code: schoolCode };
 }
 
 module.exports = async function handler(req, res) {
@@ -360,6 +598,70 @@ module.exports = async function handler(req, res) {
     if (action === 'change_password') {
       const result = await _handleChangePassword(db, params);
       return res.status(result.status).json(result.json);
+    }
+
+    if (action === 'change_custom_id') {
+      const result = await _handleChangeCustomId(db, params);
+      return res.status(result.status).json(result.json);
+    }
+
+    if (action === 'register_account') {
+      const result = await _handleRegisterAccount(db, params);
+      return res.status(result.status).json(result.json);
+    }
+
+    if (action === 'get_pending_registrations') {
+      const requesterId = String(params.requester_id || params.teacher_id || params.user_id || '').trim();
+      const isAdmin = await _isSuperAdmin(db, requesterId);
+      const gradeNum = _toIntOrNull(params.grade);
+      const classNum = _toIntOrNull(params.class_no);
+      const schoolCode = String(params.school_code || '').trim();
+      const schoolName = String(params.school_name || '').trim();
+
+      const queries = [
+        db.collection('계정_학생').where('status', '==', 'pending').get(),
+        db.collection('계정_학부모').where('status', '==', 'pending').get()
+      ];
+      if (isAdmin) {
+        queries.push(db.collection('계정_교사').where('status', '==', 'pending').get());
+      }
+
+      const snaps = await Promise.all(queries);
+      const items = [];
+      snaps[0].forEach((d) => items.push({ remote_id: d.id, role: 'student', ...d.data() }));
+      snaps[1].forEach((d) => items.push({ remote_id: d.id, role: 'parent', ...d.data() }));
+
+      const filtered = items.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum, classNum }));
+      if (isAdmin && snaps[2]) {
+        snaps[2].forEach((d) => filtered.push({ remote_id: d.id, role: 'teacher', ...d.data() }));
+      }
+      filtered.forEach((d) => { delete d.password_hash; });
+      return res.status(200).json({ ok: true, is_super_admin: isAdmin, items: filtered });
+    }
+
+    if (action === 'review_registration') {
+      const requesterId = String(params.requester_id || params.teacher_id || params.user_id || '').trim();
+      const targetRole = String(params.target_role || 'student').trim().toLowerCase();
+      const rid = String(params.remote_id || '').trim();
+      const decision = String(params.decision || 'approve').trim().toLowerCase();
+
+      if (targetRole === 'teacher') {
+        const isAdmin = await _isSuperAdmin(db, requesterId);
+        if (!isAdmin) {
+          return res.status(403).json({
+            ok: false,
+            error: '신규 교사 가입 승인·반려는 최고 관리자(유우석)만 처리할 수 있습니다.'
+          });
+        }
+      }
+
+      const colName = targetRole === 'parent' ? '계정_학부모' : (targetRole === 'teacher' ? '계정_교사' : '계정_학생');
+      if (!rid) return res.status(400).json({ ok: false, error: 'remote_id가 필요합니다.' });
+      await db.collection(colName).doc(rid).set(
+        { status: decision === 'approve' ? 'active' : 'rejected', updated_at: _nowStr() },
+        { merge: true }
+      );
+      return res.status(200).json({ ok: true, status: decision === 'approve' ? 'active' : 'rejected' });
     }
 
     if (action === 'get_mobile_bundle') {
@@ -501,44 +803,91 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, remote_id: rid });
     }
 
+    if (action === 'upload_file') {
+      const driveRes = await uploadBase64ToDrive({
+        base64Data: params.file_base64 || params.attachment_base64 || params.base64,
+        fileName: String(params.file_name || `eduflow_${Date.now()}.bin`),
+        mimeType: String(params.mime_type || 'application/octet-stream'),
+        folderName: String(params.folder_name || 'EduFlow_Uploads')
+      });
+      return res.status(driveRes.ok ? 200 : 502).json(driveRes);
+    }
+
     if (action === 'upsert_notice') {
       const rid = String(params.remote_id || `noti_doc_${Date.now()}`);
+      let attachmentUrl = String(params.attachment_url || '');
+      if (!attachmentUrl && params.attachment_base64) {
+        const driveRes = await uploadBase64ToDrive({
+          base64Data: params.attachment_base64,
+          fileName: String(params.attachment_name || `notice_${rid}.pdf`),
+          mimeType: String(params.attachment_mime || 'application/pdf'),
+          folderName: 'EduFlow_Notices'
+        });
+        if (driveRes.ok) attachmentUrl = driveRes.downloadUrl;
+      }
       await db.collection('가정통신문_목록').doc(rid).set(
         {
           remote_id: rid,
           title: String(params.title || ''),
           category: String(params.category || '가정통신문'),
           content: String(params.content || ''),
+          target_grade: _toIntOrNull(params.target_grade ?? params.grade),
+          target_class: _toIntOrNull(params.target_class ?? params.class_no),
+          school_code: String(params.school_code || ''),
+          school_name: String(params.school_name || ''),
           due_date: String(params.due_date || ''),
           author_name: String(params.author_name || '담임교사'),
-          attachment_url: String(params.attachment_url || ''),
+          attachment_url: attachmentUrl,
           is_published: params.is_published === undefined ? true : _toBool(params.is_published),
           updated_at: _nowStr()
         },
         { merge: true }
       );
-      return res.status(200).json({ ok: true, remote_id: rid });
+      return res.status(200).json({ ok: true, remote_id: rid, attachment_url: attachmentUrl });
     }
 
     if (action === 'submit_notice_reply') {
       const noticeId = String(params.notice_id || '').trim();
       const studentId = String(params.student_id || '').trim();
       const rid = String(params.remote_id || `reply_${noticeId}_${studentId}`);
+      let sigDriveUrl = String(params.signature_drive_url || params.signature_url || '');
+      let driveError = '';
+      if (params.signature_base64) {
+        const driveRes = await uploadBase64ToDrive({
+          base64Data: params.signature_base64,
+          fileName: `sig_${noticeId}_${studentId}.png`,
+          mimeType: 'image/png',
+          folderName: 'EduFlow_Signatures'
+        });
+        if (driveRes.ok) {
+          sigDriveUrl = driveRes.downloadUrl;
+        } else {
+          driveError = driveRes.error || '';
+        }
+      }
       await db.collection('가정통신문_회신').doc(rid).set(
         {
           remote_id: rid,
           notice_id: noticeId,
           student_id: studentId,
           student_name: String(params.student_name || ''),
-          reply_choice: String(params.reply_choice || '동의'),
-          signature_url: String(params.signature_url || ''),
+          parent_id: String(params.parent_id || ''),
+          parent_name: String(params.parent_name || ''),
+          reply_choice: String(params.reply_choice || params.consent || '동의'),
+          signature_drive_url: sigDriveUrl,
+          signature_url: sigDriveUrl,
           memo: String(params.memo || ''),
           submitted_at: _nowStr(),
           updated_at: _nowStr()
         },
         { merge: true }
       );
-      return res.status(200).json({ ok: true, remote_id: rid });
+      return res.status(200).json({
+        ok: true,
+        remote_id: rid,
+        signature_drive_url: sigDriveUrl,
+        drive_warning: driveError || undefined
+      });
     }
 
     if (action === 'send_chat_message') {

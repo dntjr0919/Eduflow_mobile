@@ -68,6 +68,9 @@
 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M14 5l7 7m0 0l-7 7m7-7H3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
 </button>
 </form>
+<button class="w-full mt-3 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-semibold rounded-xl text-xs shadow-xs transition-all" onclick="openSignupModal()" type="button">
+✨ 신규 회원가입 (학생 · 학부모 · 교사)
+</button>
 </div>
 <div class="text-center text-[11px] text-slate-400 py-2">
 <span>© 2025 EduFlow Mobile · 나이스(NEIS) 연동 규정 준수</span>
@@ -86,11 +89,13 @@
 <span class="text-[10px] px-1.5 py-0.5 rounded font-bold bg-indigo-100 text-indigo-700" id="userBadge">-</span>
 <h2 class="text-sm font-bold text-slate-800 leading-tight" id="userNameDisplay">불러오는 중...</h2>
 </div>
-<p class="text-[11px] text-slate-400" id="userSubDisplay">Google Sheets 연동 대기 중</p>
+<p class="text-[11px] text-slate-400" id="userSubDisplay">EduFlow 서버 연동 대기 중</p>
 </div>
 </div>
 <div class="flex items-center gap-1">
 <button class="hidden px-2 py-1 text-[10px] font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200/70 rounded-lg transition-colors" id="teacherProfileHeaderBtn" onclick="openTeacherProfileModal()" title="교사 프로필 수정" type="button">프로필 수정</button>
+<button class="hidden px-2 py-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/70 rounded-lg transition-colors" id="customIdHeaderBtn" onclick="openCustomIdModal()" title="1회 한정 커스텀 ID 변경" type="button">ID 변경</button>
+<button class="px-2 py-1 text-[10px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 border border-slate-200/70 rounded-lg transition-colors" id="changePasswordHeaderBtn" onclick="openChangePasswordModal()" title="비밀번호 변경" type="button">비밀번호</button>
 <button class="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-slate-50 rounded-full transition-colors" id="headerRefreshBtn" onclick="refreshFromGas(true, this)" title="시트 데이터 새로고침" type="button">
 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
 </button>
@@ -384,6 +389,10 @@
 <span>🍽️ 급식 동기화</span>
 </button>
 </div>
+<button class="w-full py-2.5 px-3 bg-amber-50 hover:bg-amber-100 border border-amber-200/90 rounded-xl text-xs font-bold text-amber-800 flex items-center justify-between transition-all" id="teacherPendingRegBtn" onclick="openPendingRegistrationsModal()" type="button">
+<span>📝 신규 가입 승인 대기 목록</span>
+<span class="px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold" id="teacherPendingRegBadge">0</span>
+</button>
 
 <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
 <div class="flex items-center justify-between">
@@ -974,6 +983,137 @@
 </div>
 <button class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all mt-1" type="submit">프로필 저장하기</button>
 </form>
+</div>
+</div>
+
+<!-- Modal: Change Password (All Roles) -->
+<div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="changePasswordModal">
+<div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3.5 max-h-[90%] flex flex-col overflow-y-auto custom-scrollbar">
+<div class="flex items-center justify-between pb-2 border-b border-slate-100">
+<h4 class="font-bold text-slate-800 text-sm flex items-center gap-1.5"><span>🔐 비밀번호 변경</span></h4>
+<button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeModal('changePasswordModal')" type="button"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg></button>
+</div>
+<form class="space-y-3 text-xs" onsubmit="submitChangePassword(event)">
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">현재 비밀번호</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="currentPasswordInput" placeholder="현재 비밀번호 입력" required="" type="password"/>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">새 비밀번호</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="newPasswordInput" minlength="4" placeholder="새 비밀번호 (4자 이상)" required="" type="password"/>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">새 비밀번호 확인</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="confirmNewPasswordInput" minlength="4" placeholder="새 비밀번호 다시 입력" required="" type="password"/>
+</div>
+<button class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all mt-1" type="submit">비밀번호 변경하기</button>
+</form>
+</div>
+</div>
+
+<!-- Modal: 1-Time Custom ID Change (Student & Parent) -->
+<div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="customIdModal">
+<div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3.5 max-h-[90%] flex flex-col overflow-y-auto custom-scrollbar">
+<div class="flex items-center justify-between pb-2 border-b border-slate-100">
+<h4 class="font-bold text-slate-800 text-sm flex items-center gap-1.5"><span>🪪 커스텀 ID 변경 (최초 1회)</span></h4>
+<button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeModal('customIdModal')" type="button"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg></button>
+</div>
+<p class="text-[11px] text-slate-500 leading-relaxed" id="customIdStatusMsg">초기 ID 대신 기억하기 쉬운 나만의 로그인 ID를 최초 1회에 한해 설정할 수 있습니다. (5자리 숫자 불가, 영문 소문자·숫자 4~20자)</p>
+<form class="space-y-3 text-xs" onsubmit="submitCustomIdChange(event)">
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">새 커스텀 ID</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="customIdInput" maxlength="20" minlength="4" placeholder="예: minjun2026" required="" type="text"/>
+</div>
+<button class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all mt-1" id="customIdSubmitBtn" type="submit">커스텀 ID 확정하기 (1회 한정)</button>
+</form>
+</div>
+</div>
+
+<!-- Modal: New Account Registration -->
+<div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="signupModal">
+<div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3 max-h-[92%] flex flex-col overflow-y-auto custom-scrollbar">
+<div class="flex items-center justify-between pb-2 border-b border-slate-100">
+<h4 class="font-bold text-slate-800 text-sm flex items-center gap-1.5"><span>✨ 신규 회원가입 신청</span></h4>
+<button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeModal('signupModal')" type="button"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg></button>
+</div>
+<form class="space-y-2.5 text-xs" onsubmit="submitSignupForm(event)">
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">가입 역할</label>
+<select class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupRole" onchange="onSignupRoleChange()">
+<option value="student">학생</option>
+<option value="parent">학부모</option>
+<option value="teacher">교사</option>
+</select>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">학교명</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupSchoolName" placeholder="예: 천안오성고" required="" type="text"/>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">이름</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupName" placeholder="실명 입력" required="" type="text"/>
+</div>
+</div>
+<div class="grid grid-cols-3 gap-2">
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">학년</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupGrade" max="6" min="1" placeholder="1" required="" type="number"/>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">반</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupClassNo" max="30" min="1" placeholder="5" required="" type="number"/>
+</div>
+<div id="signupStudentNoWrap">
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">번호</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupStudentNo" max="60" min="1" placeholder="1" type="number"/>
+</div>
+</div>
+<div class="hidden grid grid-cols-2 gap-2" id="signupParentExtra">
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">자녀 학번</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupChildStudentId" placeholder="예: 10501" type="text"/>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">자녀 이름</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupChildName" placeholder="예: 홍길동" type="text"/>
+</div>
+</div>
+<div class="hidden grid grid-cols-3 gap-2" id="signupTeacherExtra">
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">교육청코드</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupNeisOffice" placeholder="N10" type="text"/>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">학교코드</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupNeisSchool" placeholder="8140246" type="text"/>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">담당과목</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupSubject" placeholder="화학" type="text"/>
+</div>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">희망 로그인 ID (5자리 숫자 불가, 영문소문자·숫자 4~20자)</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupDesiredId" maxlength="20" minlength="4" placeholder="예: hong10501" required="" type="text"/>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1">비밀번호</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" id="signupPassword" minlength="4" placeholder="4자 이상" required="" type="password"/>
+</div>
+<button class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all mt-1" type="submit">가입 신청하기 (승인 후 로그인)</button>
+</form>
+</div>
+</div>
+
+<!-- Modal: Teacher Pending Registrations Approval -->
+<div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="pendingRegistrationsModal">
+<div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3 max-h-[85%] flex flex-col">
+<div class="flex items-center justify-between pb-2 border-b border-slate-100">
+<h4 class="font-bold text-slate-800 text-sm">📝 가입 승인 대기 목록</h4>
+<button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeModal('pendingRegistrationsModal')" type="button"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg></button>
+</div>
+<div class="flex-1 overflow-y-auto space-y-2 custom-scrollbar" id="pendingRegistrationsList"></div>
 </div>
 </div>
 
