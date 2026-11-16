@@ -327,7 +327,6 @@ function renderTeacherHome() {
               <div class="flex items-center gap-1.5 flex-wrap">
                 <span class="text-xs font-bold ${item.isChanged ? 'text-amber-950' : 'text-slate-800'}">${item.subject || '-'}</span>
                 ${item.isChanged ? `<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500 text-white">변경</span>` : ''}
-                ${item.isChanged && item.originalSubject ? `<span class="text-[10px] text-slate-400 line-through">${item.originalSubject}</span>` : ''}
               </div>
               ${item.isChanged && item.changedReason ? `<p class="text-[10px] text-amber-700 mt-0.5 truncate">${item.changedReason}</p>` : ''}
             </div>

@@ -829,6 +829,23 @@ function _normalizeTeacherName(name) {
   return String(name || '').trim().replace(/\s+/g, ' ').replace(/(?:선생님|T)$/i, '').trim();
 }
 
+function _extractTeacherFromSubject(subject) {
+  const s = String(subject || '').trim();
+  if (!s) return '';
+  const m = s.match(/^.+?\(([^)]+)\)$/);
+  return m ? _normalizeTeacherName(m[1]) : '';
+}
+
+function _rowMatchesTeacher(row, tName) {
+  if (!row || typeof row !== 'object' || !tName) return false;
+  return (
+    _normalizeTeacherName(row.teacher_name || row.teacher) === tName ||
+    _extractTeacherFromSubject(row.teacher_name) === tName ||
+    _extractTeacherFromSubject(row.teacher) === tName ||
+    _extractTeacherFromSubject(row.subject) === tName
+  );
+}
+
 function mergeTimetableForDay(timetableBase, timetableChanges, options = {}) {
   const mode = options.mode === 'teacher' ? 'teacher' : 'class';
   const g = String(options.grade || '').trim();
@@ -887,13 +904,16 @@ function mergeTimetableForDay(timetableBase, timetableChanges, options = {}) {
       const pKey = pNum > 0 ? pNum : String(c.period || '').trim();
       if (!pKey) return;
       const prev = periodMap.get(pKey);
+      const rawOrigSubj = String(c.original_subject || '').trim();
+      const cleanOrigSubj = rawOrigSubj === '(기존수업)' ? '' : rawOrigSubj;
+      const resolvedOrig = cleanOrigSubj || (prev ? prev.subject : '');
       periodMap.set(pKey, {
         period: pNum || c.period,
         subject: c.changed_subject || (prev ? prev.subject : ''),
         teacher: _normalizeTeacherName(c.changed_teacher || (prev ? prev.teacher : '') || c.original_teacher || ''),
         isChanged: true,
-        original: c.original_subject || (prev ? prev.subject : ''),
-        originalSubject: c.original_subject || (prev ? prev.subject : ''),
+        original: resolvedOrig,
+        originalSubject: resolvedOrig,
         changedReason: c.reason || c.changed_reason || c.memo || '',
         time: `${8 + (pNum || 1)}:50`
       });
@@ -905,11 +925,11 @@ function mergeTimetableForDay(timetableBase, timetableChanges, options = {}) {
   // mode === 'teacher'
   if (!tName) return [];
   const explicitTeacherRows = todayBase.filter(
-    tb => String(tb.entry_type || '').trim() === 'teacher' && _normalizeTeacherName(tb.teacher_name || tb.teacher) === tName
+    tb => String(tb.entry_type || '').trim() === 'teacher' && _rowMatchesTeacher(tb, tName)
   );
   const teacherBase = explicitTeacherRows.length > 0
     ? explicitTeacherRows
-    : todayBase.filter(tb => _normalizeTeacherName(tb.teacher_name || tb.teacher) === tName);
+    : todayBase.filter(tb => _rowMatchesTeacher(tb, tName));
 
   const periodMap = new Map();
   teacherBase.forEach(tb => {

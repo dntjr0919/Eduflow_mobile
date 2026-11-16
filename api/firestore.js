@@ -53,6 +53,27 @@ function _normalizeTeacherName(name) {
   return String(name || '').trim().replace(/\s+/g, ' ').replace(/(?:선생님|T)$/i, '').trim();
 }
 
+function _extractTeacherFromSubject(subject) {
+  const s = String(subject || '').trim();
+  if (!s) return '';
+  const m = s.match(/^.+?\(([^)]+)\)$/);
+  return m ? _normalizeTeacherName(m[1]) : '';
+}
+
+function _rowMatchesTeacher(row, targetNorm) {
+  if (!row || typeof row !== 'object' || !targetNorm) return false;
+  const candidates = [
+    _normalizeTeacherName(row.teacher_name),
+    _normalizeTeacherName(row.teacher),
+    _extractTeacherFromSubject(row.teacher_name),
+    _extractTeacherFromSubject(row.teacher),
+    _extractTeacherFromSubject(row.subject),
+    _normalizeTeacherName(row.changed_teacher),
+    _normalizeTeacherName(row.original_teacher),
+  ];
+  return candidates.some((c) => c && c === targetNorm);
+}
+
 function _teacherNameCandidates(name) {
   const norm = _normalizeTeacherName(name);
   if (!norm) return [];
@@ -545,14 +566,33 @@ async function _handleGetMobileBundle(db, params) {
   let timetableChangesRows = timetableChangesClassRows;
 
   if (role === 'teacher' && teacherCandidates.length > 0) {
-    const [tBaseExtra, tChgChanged, tChgOrig] = await Promise.all([
+    const [tBaseByName, tBaseByTeacher, tChgChanged, tChgOrig] = await Promise.all([
       !skipStatic
         ? db.collection('시간표_기본').where('teacher_name', 'in', teacherCandidates).get().then(_snapToRows).catch(() => [])
+        : Promise.resolve(undefined),
+      !skipStatic
+        ? db.collection('시간표_기본').where('teacher', 'in', teacherCandidates).get().then(_snapToRows).catch(() => [])
         : Promise.resolve(undefined),
       db.collection('시간표_변동').where('changed_teacher', 'in', teacherCandidates).get().then(_snapToRows).catch(() => []),
       db.collection('시간표_변동').where('original_teacher', 'in', teacherCandidates).get().then(_snapToRows).catch(() => []),
     ]);
-    if (tBaseExtra !== undefined) {
+    if (tBaseByName !== undefined || tBaseByTeacher !== undefined) {
+      let tBaseExtra = _mergeRowsById(tBaseByName || [], tBaseByTeacher || []);
+      if (tBaseExtra.length === 0) {
+        const tenantQueries = [
+          ['school_code', schoolCode],
+          ['comcigan_school_code', comciganSchoolCode],
+          ['school_name', schoolName],
+        ].filter(([, val]) => Boolean(val));
+        for (const [field, val] of tenantQueries) {
+          const scopedRows = await db.collection('시간표_기본').where(field, '==', val).limit(500).get().then(_snapToRows).catch(() => []);
+          const matched = scopedRows.filter((r) => _rowMatchesTeacher(r, effectiveTeacherName));
+          if (matched.length > 0) {
+            tBaseExtra = _mergeRowsById(tBaseExtra, matched);
+            break;
+          }
+        }
+      }
       timetableBaseRows = _mergeRowsById(timetableBaseClassRows || [], tBaseExtra);
     }
     timetableChangesRows = _mergeRowsById(timetableChangesClassRows || [], tChgChanged, tChgOrig);
@@ -563,9 +603,7 @@ async function _handleGetMobileBundle(db, params) {
     if (role === 'teacher' && effectiveTeacherName) {
       const isTeacherOwned =
         String(d.entry_type || '').trim() === 'teacher' ||
-        _normalizeTeacherName(d.teacher_name) === effectiveTeacherName ||
-        _normalizeTeacherName(d.changed_teacher) === effectiveTeacherName ||
-        _normalizeTeacherName(d.original_teacher) === effectiveTeacherName;
+        _rowMatchesTeacher(d, effectiveTeacherName);
       if (isTeacherOwned) {
         return _matchesTenant(d, ttTeacherTenant);
       }
