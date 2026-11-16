@@ -4,6 +4,7 @@
   "private": true,
   "description": "EduFlow Mobile PWA - Vercel + Google Apps Script Proxy & Web Push",
   "dependencies": {
+    "firebase-admin": "^14.5.1",
     "web-push": "^3.6.7"
   }
 }

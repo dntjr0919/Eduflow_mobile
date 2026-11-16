@@ -1,0 +1,54 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "시간표_기본",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "grade", "order": "ASCENDING" },
+        { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "시간표_변동",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "grade", "order": "ASCENDING" },
+        { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "계정_학생",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "grade", "order": "ASCENDING" },
+        { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "일일_출결",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "grade", "order": "ASCENDING" },
+        { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "1:1_상담채팅",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "grade", "order": "ASCENDING" },
+        { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "Notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "is_read", "order": "ASCENDING" },
+        { "fieldPath": "grade", "order": "ASCENDING" },
+        { "fieldPath": "class_no", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

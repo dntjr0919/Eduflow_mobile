@@ -1,9 +1,10 @@
 /**
  * Vercel Serverless Function: Web Push Dispatcher & VAPID Public Key Provider
  * - GET /api/push  -> returns VAPID public key for client PushManager.subscribe
- * - POST /api/push -> fetches matching subscriptions from GAS and sends Web Push
+ * - POST /api/push -> fetches matching subscriptions from Cloud Firestore and sends Web Push
  */
 const webpush = require('web-push');
+const { getFirestore, buildFirestoreErrorPayload } = require('./_firebaseAdmin');
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -34,16 +35,6 @@ module.exports = async function handler(req, res) {
     });
   }
 
-  const gasUrl = (process.env.GAS_WEB_APP_URL || '').trim();
-  const apiSecret = (process.env.GAS_API_SECRET || '').trim();
-  if (!gasUrl) {
-    return res.status(200).json({
-      ok: false,
-      skipped: true,
-      error: 'GAS_WEB_APP_URL not configured'
-    });
-  }
-
   let body = {};
   if (typeof req.body === 'string') {
     try {
@@ -67,45 +58,26 @@ module.exports = async function handler(req, res) {
 
   try {
     webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+    const db = getFirestore();
 
-    const gasTarget = new URL(gasUrl);
-    gasTarget.searchParams.set('action', 'get_push_subscriptions');
-    if (targetRole) gasTarget.searchParams.set('target_role', targetRole);
-    if (targetStudentIds.length > 0) {
-      gasTarget.searchParams.set('target_student_ids', targetStudentIds.join(','));
-    }
-    if (targetUserId) {
-      gasTarget.searchParams.set('target_user_id', targetUserId);
-    }
+    let queryRef = db.collection('Push_Subscriptions');
     if (targetEndpoint) {
-      gasTarget.searchParams.set('endpoint', targetEndpoint);
-    }
-    if (apiSecret) {
-      gasTarget.searchParams.set('api_secret', apiSecret);
-    }
-
-    const gasResp = await fetch(gasTarget.toString(), {
-      method: 'GET',
-      redirect: 'follow'
-    });
-    const rawGasText = await gasResp.text();
-    let gasJson = null;
-    try {
-      gasJson = JSON.parse(rawGasText);
-    } catch (_) {
-      return res.status(502).json({
-        ok: false,
-        error: `Apps Script 응답 파싱 실패 (HTTP ${gasResp.status})`
-      });
-    }
-    if (!gasJson || gasJson.ok === false) {
-      return res.status(502).json({
-        ok: false,
-        error: (gasJson && gasJson.error) || 'Push 구독 목록 조회 실패'
-      });
+      queryRef = queryRef.where('endpoint', '==', targetEndpoint);
+    } else if (targetUserId) {
+      queryRef = queryRef.where('user_id', '==', targetUserId);
+    } else if (targetRole && targetRole !== 'all') {
+      queryRef = queryRef.where('role', '==', targetRole);
     }
 
-    const subs = Array.isArray(gasJson.subscriptions) ? gasJson.subscriptions : [];
+    const snap = await queryRef.get();
+    let subs = [];
+    snap.forEach((doc) => subs.push(doc.data() || {}));
+
+    if (targetStudentIds.length > 0) {
+      const idSet = new Set(targetStudentIds);
+      subs = subs.filter((s) => idSet.has(String(s.student_id || '').trim()));
+    }
+
     const validSubs = subs.filter((s) => s.endpoint && s.p256dh && s.auth);
     if (validSubs.length === 0) {
       return res.status(200).json({
@@ -130,10 +102,7 @@ module.exports = async function handler(req, res) {
         webpush.sendNotification(
           {
             endpoint: s.endpoint,
-            keys: {
-              p256dh: s.p256dh,
-              auth: s.auth
-            }
+            keys: { p256dh: s.p256dh, auth: s.auth }
           },
           payload
         )
@@ -174,9 +143,6 @@ module.exports = async function handler(req, res) {
       error: errorSummary || undefined
     });
   } catch (err) {
-    return res.status(502).json({
-      ok: false,
-      error: err && err.message ? err.message : 'Web Push 발송 오류'
-    });
+    return res.status(502).json(buildFirestoreErrorPayload(err, 'WebPush'));
   }
 };

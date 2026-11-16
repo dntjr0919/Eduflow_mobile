@@ -1,9 +1,132 @@
 /* =========================================================
-   EduFlow Mobile - Core Application State, GAS REST API & Shared UI
-   Google Apps Script(GAS) REST API 연동 + 오프라인/데모 폴백 지원
+   EduFlow Mobile - Core Application State, Cloud Firestore API & Shared UI
+   Cloud Firestore 직접 연동 + 읽기 비용 최적화(반별 필터 + 일일 캐싱 + 제한적 onSnapshot)
    ========================================================= */
 
-const GAS_PROXY_ENDPOINT = '/api/gas';
+const GAS_PROXY_ENDPOINT = '/api/firestore';
+
+const FIREBASE_WEB_CONFIG = {
+  apiKey: "AIzaSyDsLrlZsqpNSRnk3BW3aM_p9u2v_9WtpGI",
+  authDomain: "eduflow-db-b44f3.firebaseapp.com",
+  projectId: "eduflow-db-b44f3",
+  storageBucket: "eduflow-db-b44f3.firebasestorage.app",
+  messagingSenderId: "491962677360",
+  appId: "1:491962677360:web:0b39bb5214567cfb3ddcb5"
+};
+
+let _firestoreClient = null;
+let _unsubChatListener = null;
+let _unsubNotiListener = null;
+
+function _getClientFirestore() {
+  if (_firestoreClient) return _firestoreClient;
+  if (typeof window !== 'undefined' && window.firebase && window.firebase.firestore) {
+    if (!window.firebase.apps.length) {
+      window.firebase.initializeApp(FIREBASE_WEB_CONFIG);
+    }
+    _firestoreClient = window.firebase.firestore();
+    return _firestoreClient;
+  }
+  return null;
+}
+
+function _stopRealtimeListeners() {
+  if (typeof _unsubChatListener === 'function') {
+    try { _unsubChatListener(); } catch (_) {}
+    _unsubChatListener = null;
+  }
+  if (typeof _unsubNotiListener === 'function') {
+    try { _unsubNotiListener(); } catch (_) {}
+    _unsubNotiListener = null;
+  }
+}
+
+function _startRealtimeListeners() {
+  const fs = _getClientFirestore();
+  if (!fs) return;
+  _stopRealtimeListeners();
+
+  const cu = mockData.currentUser || {};
+  const role = String(cu.role || state.activeRole || 'student').toLowerCase();
+  const gradeNum = cu.grade ? Number(cu.grade) : null;
+  const classNum = cu.classNo ? Number(cu.classNo) : null;
+
+  // 1) 1:1_상담채팅 실시간 리스너 (본인 방 또는 담당 학급으로 제한)
+  try {
+    let chatQuery = fs.collection('1:1_상담채팅');
+    if (role !== 'teacher' && cu.studentId) {
+      chatQuery = chatQuery.where('room_id', '==', `ROOM-${cu.studentId}`);
+    } else if (gradeNum && classNum) {
+      chatQuery = chatQuery.where('grade', '==', gradeNum).where('class_no', '==', classNum);
+    } else {
+      chatQuery = chatQuery.limit(50);
+    }
+    _unsubChatListener = chatQuery.onSnapshot((snap) => {
+      const chatRows = [];
+      snap.forEach((doc) => chatRows.push({ remote_id: doc.id, ...doc.data() }));
+      chatRows.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+      hydrateMockDataFromBundle({ ok: true, chat_messages: chatRows });
+      if (typeof renderTeacherChat === 'function' && role === 'teacher') renderTeacherChat();
+      if (typeof renderStudentChat === 'function' && role !== 'teacher') renderStudentChat();
+    }, (err) => {
+      console.warn('[Firestore onSnapshot Chat]', err && err.message ? err.message : err);
+    });
+  } catch (_) {}
+
+  // 2) 읽지 않은 Notifications 실시간 리스너 (is_read == false 조건 제한)
+  try {
+    const notiQuery = fs.collection('Notifications').where('is_read', '==', false).limit(50);
+    _unsubNotiListener = notiQuery.onSnapshot((snap) => {
+      const notiRows = [];
+      snap.forEach((doc) => notiRows.push({ remote_id: doc.id, ...doc.data() }));
+      hydrateMockDataFromBundle({ ok: true, notifications: notiRows });
+      if (typeof renderNotifications === 'function') renderNotifications();
+    }, (err) => {
+      console.warn('[Firestore onSnapshot Notifications]', err && err.message ? err.message : err);
+    });
+  } catch (_) {}
+}
+
+function _isTruthyField(val) {
+  return val === true || val === 1 || String(val || '').trim().toLowerCase() === 'true' || String(val || '').trim() === '1';
+}
+
+const DAILY_STATIC_CACHE_KEY = 'eduflow_daily_static_cache_v1';
+
+function _getTodayDateKey() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function _loadDailyStaticCache(grade, classNo) {
+  try {
+    const raw = localStorage.getItem(DAILY_STATIC_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.date !== _getTodayDateKey()) return null;
+    if (String(parsed.grade || '') !== String(grade || '') || String(parsed.classNo || '') !== String(classNo || '')) {
+      return null;
+    }
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function _saveDailyStaticCache(grade, classNo, bundle) {
+  try {
+    if (!bundle) return;
+    localStorage.setItem(DAILY_STATIC_CACHE_KEY, JSON.stringify({
+      date: _getTodayDateKey(),
+      grade: String(grade || ''),
+      classNo: String(classNo || ''),
+      timetable_base: Array.isArray(bundle.timetable_base) ? bundle.timetable_base : [],
+      meals: Array.isArray(bundle.meals) ? bundle.meals : [],
+      doc_rules: Array.isArray(bundle.doc_rules) ? bundle.doc_rules : []
+    }));
+  } catch (_) {}
+}
 
 const gasApi = {
   demoMode: typeof window !== 'undefined' && window.location.protocol === 'file:',
@@ -650,16 +773,29 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null) {
     if (showFeedback) showLoading('최신 데이터를 동기화 중...');
     try {
       const cu = mockData.currentUser;
-      const bundle = await gasApi.get('get_mobile_bundle', {
+      const dailyCache = _loadDailyStaticCache(cu.grade, cu.classNo);
+      const bundleParams = {
         role: state.activeRole,
         student_id: cu.studentId || '',
         grade: cu.grade || '',
         class_no: cu.classNo || ''
-      });
+      };
+      if (dailyCache) {
+        bundleParams.skip_static = '1';
+      }
+      const bundle = await gasApi.get('get_mobile_bundle', bundleParams);
+      if (dailyCache) {
+        bundle.timetable_base = dailyCache.timetable_base;
+        bundle.meals = dailyCache.meals;
+        bundle.doc_rules = dailyCache.doc_rules;
+      } else {
+        _saveDailyStaticCache(cu.grade, cu.classNo, bundle);
+      }
       hydrateMockDataFromBundle(bundle);
       _saveBundleCache(bundle);
+      _startRealtimeListeners();
       renderAll();
-      if (showFeedback) showToast('Google Sheets 최신 데이터를 불러왔습니다.', '🔄');
+      if (showFeedback) showToast('최신 데이터를 동기화했습니다.', '🔄');
     } catch (err) {
       if (err && err.isDemo) {
         if (showFeedback) showToast('데모 모드로 동작 중입니다.', 'ℹ️');
@@ -787,7 +923,7 @@ function hydrateMockDataFromBundle(bundle) {
         mockData.currentUser.neisOfficeCode = t.neis_office_code || '';
         mockData.currentUser.neisSchoolCode = t.neis_school_code || '';
       }
-      mockData.isCounselingOpen = String(t.consultation_enabled) === '1' || t.consultation_enabled === true;
+      mockData.isCounselingOpen = _isTruthyField(t.consultation_enabled);
     } else {
       mockData.isCounselingOpen = false;
     }
@@ -839,7 +975,7 @@ function hydrateMockDataFromBundle(bundle) {
         attSubType: a.att_sub_type || '',
         periodInfo: a.period_info || '',
         reason: a.reason || '',
-        docStatus: String(a.teacher_confirmed) === '1' ? '교사 최종완료' : '접수됨'
+        docStatus: _isTruthyField(a.teacher_confirmed) ? '교사 최종완료' : '접수됨'
       }));
     const todayStr = getLocalTodayStr();
     const todayAtt = bundle.attendance.filter(a => !a.date || a.date === todayStr);
@@ -854,7 +990,7 @@ function hydrateMockDataFromBundle(bundle) {
         attSubType: a.att_sub_type || '',
         periodInfo: a.period_info || '',
         reason: a.reason || '',
-        confirmed: String(a.teacher_confirmed) === '1'
+        confirmed: _isTruthyField(a.teacher_confirmed)
       }));
   }
 
@@ -1104,7 +1240,7 @@ function hydrateMockDataFromBundle(bundle) {
           messages: []
         };
       }
-      if (String(c.is_read) !== '1' && c.sender_role !== 'teacher') {
+      if (!_isTruthyField(c.is_read) && c.sender_role !== 'teacher') {
         roomMap[rId].unread += 1;
       }
       roomMap[rId].messages.push({
@@ -1209,6 +1345,7 @@ function applyRoleUI() {
 }
 
 function logout() {
+  _stopRealtimeListeners();
   _clearAutoLoginAuth();
   _clearBundleCache();
   _hideAllPwaPushUI();

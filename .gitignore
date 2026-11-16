@@ -1,0 +1,11 @@
+#firebase db key
+eduflow-db-b44f3-5692e5dea8c3.json
+#firebaseconfig
+eduflow-mobile-firebaseconfig.json
+
+# Environment & Dependencies
+.env
+.env.local
+.env.*.local
+node_modules/
+.vercel/
