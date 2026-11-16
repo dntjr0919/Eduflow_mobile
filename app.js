@@ -590,9 +590,12 @@ function buildHomeroomSchedule(timetableBase, timetableChanges, grade, classNo) 
 
   const classTodayBase = timetableBase
     .filter(tb => {
+      const eType = String(tb.entry_type || '').trim();
+      const typeOk = !eType || eType === 'class';
       const d = String(tb.day_of_week || '').trim();
       const dayMatch = !d || d.startsWith(dayChar);
-      return dayMatch &&
+      return typeOk &&
+        dayMatch &&
         String(tb.grade || '').trim() === g &&
         String(tb.class_no || '').trim() === cNo;
     })
@@ -633,6 +636,7 @@ function hydrateMockDataFromBundle(bundle) {
   // 2. 교사 & 상담 ON/OFF 상태
   if (Array.isArray(bundle.teachers)) {
     const cu = mockData.currentUser;
+    
     let t = null;
     if (state.activeRole === 'teacher' && cu.userId) {
       t = bundle.teachers.find(x =>
@@ -740,8 +744,12 @@ function hydrateMockDataFromBundle(bundle) {
       .sort((a, b) => Number(a.period || 0) - Number(b.period || 0));
 
     const classBase = (cu.grade && cu.classNo)
-      ? todayBase.filter(tb => String(tb.grade || '') === String(cu.grade) && String(tb.class_no || '') === String(cu.classNo))
-      : todayBase;
+   ? todayBase.filter(tb => {
+       const eType = String(tb.entry_type || '').trim();
+       const typeOk = !eType || eType === 'class';
+       return typeOk && String(tb.grade || '') === String(cu.grade) && String(tb.class_no || '') === String(cu.classNo);
+     })
+   : todayBase.filter(tb => !tb.entry_type || String(tb.entry_type).trim() === 'class');
 
     mockData.timetable = classBase.map(tb => {
       const chg = changes.find(c =>
@@ -769,11 +777,14 @@ function hydrateMockDataFromBundle(bundle) {
       };
     });
 
-    // 교사 본인 시간표 구성 (teacherName 일치 행)
+    // 교사 본인 시간표 구성 (entry_type === 'teacher' 우선, 구데이터 폴백 지원)
     const tName = String(cu.teacherName || '').trim();
-    const teacherBase = tName
-      ? todayBase.filter(tb => String(tb.teacher_name || '').trim() === tName)
+    const explicitTeacherRows = tName
+      ? todayBase.filter(tb => String(tb.entry_type || '').trim() === 'teacher' && String(tb.teacher_name || '').trim() === tName)
       : [];
+    const teacherBase = explicitTeacherRows.length > 0
+      ? explicitTeacherRows
+      : (tName ? todayBase.filter(tb => String(tb.teacher_name || '').trim() === tName) : []);
     mockData.teacherSchedule = teacherBase.map(tb => {
       const chg = changes.find(c =>
         String(c.period) === String(tb.period) &&
