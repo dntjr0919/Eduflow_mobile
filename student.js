@@ -115,8 +115,16 @@ async function handleDocSubmit(docId, btnEl) {
   await withButtonLoading(btnEl, '확인 중...', async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
+        const targetSid = mockData.currentUser.studentId || doc.studentId || '';
+        const sidMatch5 = String(targetSid).trim().match(/^(\d)(\d{2})\d{2}$/);
+        const sidMatch4 = String(targetSid).trim().match(/^(\d)(\d)\d{2}$/);
+        const resolvedGrade = Number(mockData.currentUser.grade) || (sidMatch5 ? Number(sidMatch5[1]) : (sidMatch4 ? Number(sidMatch4[1]) : null));
+        const resolvedClassNo = Number(mockData.currentUser.classNo) || (sidMatch5 ? Number(sidMatch5[2]) : (sidMatch4 ? Number(sidMatch4[2]) : null));
         await gasApi.post('mark_document_submitted', {
           remote_id: docId,
+          student_id: targetSid,
+          grade: resolvedGrade,
+          class_no: resolvedClassNo,
           submitted_by: mockData.currentUser.studentName || mockData.currentUser.studentId
         });
       } catch (err) {
@@ -536,14 +544,18 @@ async function handleAttendanceSubmit(e) {
   await withButtonLoading(submitBtn, isOverwrite ? '저장 중...' : '등록 중...', async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
+        const sidMatch5 = String(stuId || '').trim().match(/^(\d)(\d{2})\d{2}$/);
+        const sidMatch4 = String(stuId || '').trim().match(/^(\d)(\d)\d{2}$/);
+        const resolvedGrade = Number(mockData.currentUser.grade) || (sidMatch5 ? Number(sidMatch5[1]) : (sidMatch4 ? Number(sidMatch4[1]) : 1));
+        const resolvedClassNo = Number(mockData.currentUser.classNo) || (sidMatch5 ? Number(sidMatch5[2]) : (sidMatch4 ? Number(sidMatch4[2]) : 1));
         await gasApi.post('submit_attendance', {
           data: {
             remote_id: attId,
             date: sDate,
             student_id: stuId,
             student_name: stuName,
-            grade: mockData.currentUser.grade || '1',
-            class_no: mockData.currentUser.classNo || '3',
+            grade: resolvedGrade,
+            class_no: resolvedClassNo,
             attendance_type: combinedType,
             att_category: state.selectedAttCategory,
             att_sub_type: state.selectedAttSubType,
@@ -563,6 +575,8 @@ async function handleAttendanceSubmit(e) {
               rule_code: ruleCode,
               student_id: stuId,
               student_name: stuName,
+              grade: resolvedGrade,
+              class_no: resolvedClassNo,
               base_date: eDate || sDate,
               status: '미제출',
               memo: reason

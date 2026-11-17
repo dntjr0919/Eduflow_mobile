@@ -1062,13 +1062,19 @@ function hydrateMockDataFromBundle(bundle) {
   if (Array.isArray(bundle.doc_tracking)) {
     mockData.urgentDocuments = bundle.doc_tracking.map(d => {
       const rawStatus = (d.status || '').trim();
+      const lowerStatus = rawStatus.toLowerCase();
       let status = 'pending';
-      if (rawStatus === '제출했습니다' || rawStatus === 'submitted') status = 'submitted';
-      else if (rawStatus === '확인완료' || rawStatus === 'closed') status = 'closed';
+      if (rawStatus === '제출했습니다' || rawStatus === '학생확인완료' || lowerStatus === 'submitted') {
+        status = 'submitted';
+      } else if (rawStatus === '확인완료' || rawStatus === '최종 종결' || rawStatus === '최종종결' || lowerStatus === 'closed') {
+        status = 'closed';
+      }
       return {
         id: d.remote_id,
         studentId: String(d.student_id || ''),
         studentName: d.student_name || '',
+        grade: d.grade ?? null,
+        classNo: d.class_no ?? null,
         type: (d.rule_code === 'FIELD_TRIP') ? 'planning' : 'urgency',
         dDayText: status === 'submitted' ? '검수대기' : (status === 'closed' ? '종결' : '마감임박'),
         dDayColor: status === 'closed' ? 'success' : (d.rule_code === 'FIELD_TRIP' ? 'alert' : 'urgent'),

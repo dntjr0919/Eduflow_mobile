@@ -32,6 +32,30 @@ function _toIntOrNull(val) {
   return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
+function _inferGradeClassFromStudentId(studentId) {
+  const s = String(studentId || '').trim();
+  if (/^\d{5}$/.test(s)) {
+    return { grade: _toIntOrNull(s.slice(0, 1)), class_no: _toIntOrNull(s.slice(1, 3)) };
+  }
+  if (/^\d{4}$/.test(s)) {
+    return { grade: _toIntOrNull(s.slice(0, 1)), class_no: _toIntOrNull(s.slice(1, 2)) };
+  }
+  return { grade: null, class_no: null };
+}
+
+function _withInferredClass(doc) {
+  if (!doc || typeof doc !== 'object') return doc;
+  const g = _toIntOrNull(doc.grade);
+  const c = _toIntOrNull(doc.class_no);
+  if (g !== null && c !== null) return doc;
+  const inferred = _inferGradeClassFromStudentId(doc.student_id);
+  return {
+    ...doc,
+    grade: g !== null ? g : inferred.grade,
+    class_no: c !== null ? c : inferred.class_no
+  };
+}
+
 function _toBool(val) {
   if (typeof val === 'boolean') return val;
   if (typeof val === 'number') return val !== 0;
@@ -525,9 +549,7 @@ async function _handleGetMobileBundle(db, params) {
           : Promise.resolve([])),
     studentId && role !== 'teacher'
       ? db.collection('서류_추적').where('student_id', '==', studentId).get().then(_snapToRows)
-      : (hasClassFilter
-          ? _queryClassScoped(db, '서류_추적', gradeNum, classNum)
-          : db.collection('서류_추적').limit(100).get().then(_snapToRows)),
+      : db.collection('서류_추적').limit(200).get().then(_snapToRows),
     db.collection('가정통신문_목록').limit(50).get().then(_snapToRows),
     studentId && role !== 'teacher'
       ? db.collection('가정통신문_회신').where('student_id', '==', studentId).get().then(_snapToRows)
@@ -626,7 +648,7 @@ async function _handleGetMobileBundle(db, params) {
     teachers: teachersSnap,
     students: filteredStudents,
     attendance: attendanceRows.filter((d) => _matchesTenant(d, tenant)),
-    doc_tracking: docTrackingRows.filter((d) => _matchesTenant(d, tenant)),
+    doc_tracking: docTrackingRows.map(_withInferredClass).filter((d) => _matchesTenant(d, tenant)),
     notices: filteredNotices,
     notice_replies: noticeRepliesRaw.filter((r) => {
       if (noticeIdSet.size > 0 && r.notice_id && !noticeIdSet.has(String(r.notice_id))) return false;
@@ -939,19 +961,30 @@ module.exports = async function handler(req, res) {
     if (action === 'upsert_document_tracking' || action === 'mark_document_submitted' || action === 'confirm_document') {
       const rid = String(params.remote_id || `doc_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
       const update = { remote_id: rid, updated_at: _nowStr() };
+      const inferred = _inferGradeClassFromStudentId(params.student_id);
+      const resolvedGrade = _toIntOrNull(params.grade) ?? inferred.grade;
+      const resolvedClassNo = _toIntOrNull(params.class_no) ?? inferred.class_no;
       if (action === 'mark_document_submitted') {
         update.status = 'submitted';
         update.submitted_at = _nowStr();
         if (params.attachment_url) update.attachment_url = String(params.attachment_url);
+        if (resolvedGrade !== null) update.grade = resolvedGrade;
+        if (resolvedClassNo !== null) update.class_no = resolvedClassNo;
       } else if (action === 'confirm_document') {
-        update.status = 'closed';
-        update.teacher_confirmed = true;
+        const reqStatus = String(params.status || '').trim().toLowerCase();
+        if (reqStatus === '미제출' || reqStatus === 'pending') {
+          update.status = 'pending';
+          update.teacher_confirmed = false;
+        } else {
+          update.status = 'closed';
+          update.teacher_confirmed = true;
+        }
       } else {
         Object.assign(update, {
           student_id: String(params.student_id || ''),
           student_name: String(params.student_name || ''),
-          grade: _toIntOrNull(params.grade),
-          class_no: _toIntOrNull(params.class_no),
+          grade: resolvedGrade,
+          class_no: resolvedClassNo,
           rule_code: String(params.rule_code || ''),
           doc_type: String(params.doc_type || ''),
           base_date: String(params.base_date || ''),
