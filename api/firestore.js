@@ -63,6 +63,44 @@ function _toBool(val) {
   return s === '1' || s === 'true' || s === 'yes' || s === 'y' || s === '예';
 }
 
+function _addBusinessDays(baseDateStr, businessDays) {
+  const parts = String(baseDateStr || '').trim().split('-');
+  let d;
+  if (parts.length === 3) {
+    d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0);
+  } else {
+    const now = new Date();
+    d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+  }
+  const days = parseInt(businessDays, 10);
+  const fmt = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  if (isNaN(days) || days === 0) return fmt(d);
+  const step = days > 0 ? 1 : -1;
+  const target = Math.abs(days);
+  let counted = 0;
+  let guard = 0;
+  while (counted < target && guard < 365) {
+    d.setDate(d.getDate() + step);
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) {
+      counted++;
+    }
+    guard++;
+  }
+  return fmt(d);
+}
+
+function _computeDocDueDate(ruleCode, baseDate, docRulesRows) {
+  const code = String(ruleCode || 'ABSENCE_REPORT').trim();
+  const base = String(baseDate || '').trim() || new Date().toISOString().slice(0, 10);
+  const rules = Array.isArray(docRulesRows) ? docRulesRows : [];
+  const matched = rules.find((r) => r && (r.rule_code === code || (code === 'ABSENCE_REPORT' && r.remote_id === 'rule_absence')));
+  const defaultDays = code === 'FIELD_TRIP_PRE' ? 3 : 5;
+  const days = (matched && parseInt(matched.due_business_days, 10)) || defaultDays;
+  const signedDays = code === 'FIELD_TRIP_PRE' ? -Math.abs(days) : Math.abs(days);
+  return _addBusinessDays(base, signedDays);
+}
+
 function _snapToRows(snap) {
   const rows = [];
   snap.forEach((doc) => {
@@ -648,7 +686,15 @@ async function _handleGetMobileBundle(db, params) {
     teachers: teachersSnap,
     students: filteredStudents,
     attendance: attendanceRows.filter((d) => _matchesTenant(d, tenant)),
-    doc_tracking: docTrackingRows.map(_withInferredClass).filter((d) => _matchesTenant(d, tenant)),
+    doc_tracking: docTrackingRows
+      .map(_withInferredClass)
+      .filter((d) => _matchesTenant(d, tenant))
+      .map((d) => {
+        if (!String(d.due_date || '').trim() && d.base_date) {
+          return { ...d, due_date: _computeDocDueDate(d.rule_code, d.base_date, docRulesRows) };
+        }
+        return d;
+      }),
     notices: filteredNotices,
     notice_replies: noticeRepliesRaw.filter((r) => {
       if (noticeIdSet.size > 0 && r.notice_id && !noticeIdSet.has(String(r.notice_id))) return false;
@@ -880,11 +926,36 @@ module.exports = async function handler(req, res) {
 
     if (action === 'submit_attendance') {
       const rid = String(params.remote_id || '').trim() || `att_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const attDate = String(params.date || new Date().toISOString().slice(0, 10));
+      const sid = String(params.student_id || '').trim();
+      const actorRole = String(params.role || '').trim().toLowerCase();
+      if (actorRole !== 'teacher') {
+        const confirmedMsg = '이미 담임 선생님이 확인한 출결 내역이 있어 새로 등록하거나 수정할 수 없습니다.';
+        if (params.remote_id) {
+          const existingDoc = await db.collection('일일_출결').doc(rid).get();
+          if (existingDoc.exists && _toBool((existingDoc.data() || {}).teacher_confirmed)) {
+            return res.status(200).json({ ok: false, error: confirmedMsg });
+          }
+        }
+        if (sid) {
+          const sameDaySnap = await db.collection('일일_출결')
+            .where('date', '==', attDate)
+            .where('student_id', '==', sid)
+            .get();
+          let hasConfirmed = false;
+          sameDaySnap.forEach((d) => {
+            if (_toBool((d.data() || {}).teacher_confirmed)) hasConfirmed = true;
+          });
+          if (hasConfirmed) {
+            return res.status(200).json({ ok: false, error: confirmedMsg });
+          }
+        }
+      }
       await db.collection('일일_출결').doc(rid).set(
         {
           remote_id: rid,
-          date: String(params.date || new Date().toISOString().slice(0, 10)),
-          student_id: String(params.student_id || ''),
+          date: attDate,
+          student_id: sid,
           student_name: String(params.student_name || ''),
           grade: _toIntOrNull(params.grade),
           class_no: _toIntOrNull(params.class_no),
@@ -904,6 +975,13 @@ module.exports = async function handler(req, res) {
     if (action === 'delete_attendance') {
       const rid = String(params.remote_id || '').trim();
       if (!rid) return res.status(400).json({ ok: false, error: 'remote_id가 필요합니다.' });
+      const actorRole = String(params.role || '').trim().toLowerCase();
+      if (actorRole !== 'teacher') {
+        const existingDoc = await db.collection('일일_출결').doc(rid).get();
+        if (existingDoc.exists && _toBool((existingDoc.data() || {}).teacher_confirmed)) {
+          return res.status(200).json({ ok: false, error: '이미 담임 선생님이 확인한 출결 내역이 있어 새로 등록하거나 수정할 수 없습니다.' });
+        }
+      }
       await db.collection('일일_출결').doc(rid).delete();
       return res.status(200).json({ ok: true, deleted_id: rid });
     }
@@ -964,6 +1042,7 @@ module.exports = async function handler(req, res) {
       const inferred = _inferGradeClassFromStudentId(params.student_id);
       const resolvedGrade = _toIntOrNull(params.grade) ?? inferred.grade;
       const resolvedClassNo = _toIntOrNull(params.class_no) ?? inferred.class_no;
+      let responseDueDate = '';
       if (action === 'mark_document_submitted') {
         update.status = 'submitted';
         update.submitted_at = _nowStr();
@@ -978,24 +1057,54 @@ module.exports = async function handler(req, res) {
         } else {
           update.status = 'closed';
           update.teacher_confirmed = true;
+          let targetSid = String(params.student_id || '').trim();
+          if (!targetSid) {
+            const docSnap = await db.collection('서류_추적').doc(rid).get();
+            if (docSnap.exists) targetSid = String((docSnap.data() || {}).student_id || '').trim();
+          }
+          if (targetSid) {
+            const notifSnap = await db.collection('Notifications')
+              .where('channel', '==', 'doc_reminder')
+              .where('is_read', '==', false)
+              .limit(50)
+              .get();
+            const batch = db.batch();
+            let hasNotifUpdates = false;
+            notifSnap.forEach((nDoc) => {
+              const nd = nDoc.data() || {};
+              if (String(nd.target_student_id || '').trim() === targetSid) {
+                batch.set(nDoc.ref, { is_read: true, updated_at: _nowStr() }, { merge: true });
+                hasNotifUpdates = true;
+              }
+            });
+            if (hasNotifUpdates) await batch.commit();
+          }
         }
       } else {
+        const ruleCode = String(params.rule_code || 'ABSENCE_REPORT');
+        const baseDate = String(params.base_date || '');
+        let dueDate = String(params.due_date || '').trim();
+        if (!dueDate && baseDate) {
+          const rulesSnap = await db.collection('설정_서류규정').limit(50).get();
+          dueDate = _computeDocDueDate(ruleCode, baseDate, _snapToRows(rulesSnap));
+        }
+        responseDueDate = dueDate;
         Object.assign(update, {
           student_id: String(params.student_id || ''),
           student_name: String(params.student_name || ''),
           grade: resolvedGrade,
           class_no: resolvedClassNo,
-          rule_code: String(params.rule_code || ''),
+          rule_code: ruleCode,
           doc_type: String(params.doc_type || ''),
-          base_date: String(params.base_date || ''),
-          due_date: String(params.due_date || ''),
+          base_date: baseDate,
+          due_date: dueDate,
           memo: String(params.memo || ''),
           status: String(params.status || 'pending'),
           attachment_url: String(params.attachment_url || '')
         });
       }
       await db.collection('서류_추적').doc(rid).set(update, { merge: true });
-      return res.status(200).json({ ok: true, remote_id: rid });
+      return res.status(200).json({ ok: true, remote_id: rid, ...(responseDueDate ? { due_date: responseDueDate } : {}) });
     }
 
     if (action === 'delete_document_tracking') {

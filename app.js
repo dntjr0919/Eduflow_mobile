@@ -309,19 +309,27 @@ function addBusinessDays(baseDateStr, businessDays) {
     d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
   }
   const daysToAdd = parseInt(businessDays, 10);
-  if (isNaN(daysToAdd) || daysToAdd <= 0) {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const fmt = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  if (isNaN(daysToAdd) || daysToAdd === 0) {
+    return fmt(d);
   }
-  let added = 0;
+  const step = daysToAdd > 0 ? 1 : -1;
+  const target = Math.abs(daysToAdd);
+  let counted = 0;
   let guard = 0;
-  while (added < daysToAdd && guard < 365) {
-    d.setDate(d.getDate() + 1);
+  while (counted < target && guard < 365) {
+    d.setDate(d.getDate() + step);
     if (!isNonBusinessDay(d)) {
-      added++;
+      counted++;
     }
     guard++;
   }
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return fmt(d);
+}
+
+function subtractBusinessDays(baseDateStr, businessDays) {
+  const days = Math.abs(parseInt(businessDays, 10) || 0);
+  return addBusinessDays(baseDateStr, -days);
 }
 
 function formatKoreanDateWithDay(ymd) {
@@ -1064,10 +1072,20 @@ function hydrateMockDataFromBundle(bundle) {
       const rawStatus = (d.status || '').trim();
       const lowerStatus = rawStatus.toLowerCase();
       let status = 'pending';
-      if (rawStatus === '제출했습니다' || rawStatus === '학생확인완료' || lowerStatus === 'submitted') {
-        status = 'submitted';
-      } else if (rawStatus === '확인완료' || rawStatus === '최종 종결' || rawStatus === '최종종결' || lowerStatus === 'closed') {
+      if (_isTruthyField(d.teacher_confirmed) || rawStatus === '확인완료' || rawStatus === '최종 종결' || rawStatus === '최종종결' || lowerStatus === 'closed') {
         status = 'closed';
+      } else if (rawStatus === '제출했습니다' || rawStatus === '학생확인완료' || lowerStatus === 'submitted') {
+        status = 'submitted';
+      }
+      let deadline = String(d.due_date || '').trim();
+      if (!deadline && d.base_date) {
+        if (d.rule_code === 'FIELD_TRIP_PRE') {
+          deadline = subtractBusinessDays(d.base_date, mockData.rules.fieldPreDays || 3);
+        } else if (d.rule_code === 'FIELD_TRIP') {
+          deadline = addBusinessDays(d.base_date, mockData.rules.fieldPostDays || 5);
+        } else {
+          deadline = addBusinessDays(d.base_date, mockData.rules.sickDays || 5);
+        }
       }
       return {
         id: d.remote_id,
@@ -1075,13 +1093,13 @@ function hydrateMockDataFromBundle(bundle) {
         studentName: d.student_name || '',
         grade: d.grade ?? null,
         classNo: d.class_no ?? null,
-        type: (d.rule_code === 'FIELD_TRIP') ? 'planning' : 'urgency',
+        type: (d.rule_code === 'FIELD_TRIP' || d.rule_code === 'FIELD_TRIP_PRE') ? 'planning' : 'urgency',
         dDayText: status === 'submitted' ? '검수대기' : (status === 'closed' ? '종결' : '마감임박'),
-        dDayColor: status === 'closed' ? 'success' : (d.rule_code === 'FIELD_TRIP' ? 'alert' : 'urgent'),
+        dDayColor: status === 'closed' ? 'success' : ((d.rule_code === 'FIELD_TRIP' || d.rule_code === 'FIELD_TRIP_PRE') ? 'alert' : 'urgent'),
         title: `${d.doc_type || '서류'} (${d.base_date || ''})`,
         docName: d.doc_type || '증빙서류',
-        description: d.memo || `마감일: ${d.due_date || ''}`,
-        deadline: d.due_date || '',
+        description: d.memo || `마감일: ${deadline}`,
+        deadline,
         status,
         submittedAt: d.submitted_at || null
       };
@@ -1283,7 +1301,13 @@ function hydrateMockDataFromBundle(bundle) {
 
   // 12. 알림 (Notifications 시트)
   if (Array.isArray(bundle.notifications)) {
-    mockData.notifications = [...bundle.notifications].reverse();
+    const cuSid = String(mockData.currentUser.studentId || mockData.currentUser.userId || '');
+    const hasPendingStudentDoc = cuSid
+      ? (mockData.urgentDocuments || []).some(d => String(d.studentId) === cuSid && d.status === 'pending')
+      : false;
+    mockData.notifications = [...bundle.notifications]
+      .filter(n => !(state.activeRole !== 'teacher' && n.channel === 'doc_reminder' && !hasPendingStudentDoc))
+      .reverse();
     const hasUnread = mockData.notifications.some(n => String(n.is_read) !== '1');
     const dot = document.getElementById('unreadDot');
     if (dot) dot.classList.toggle('hidden', !hasUnread);

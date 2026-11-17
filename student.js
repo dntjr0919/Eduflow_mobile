@@ -32,7 +32,11 @@ function renderUrgentDocuments() {
   const badge = document.getElementById('pendingCountBadge');
   const targetStuId = String(mockData.currentUser.studentId || mockData.currentUser.userId || '');
   const myDocs = targetStuId
-    ? mockData.urgentDocuments.filter(d => String(d.studentId) === targetStuId && d.status !== 'closed')
+    ? mockData.urgentDocuments.filter(d => {
+        if (String(d.studentId) !== targetStuId) return false;
+        const st = String(d.status || '').trim().toLowerCase();
+        return st !== 'closed' && st !== '확인완료' && st !== '최종 종결' && st !== '최종종결';
+      })
     : [];
   const pendingDocs = myDocs.filter(d => d.status === 'pending');
 
@@ -89,7 +93,7 @@ function renderUrgentDocuments() {
             <span>를 입력하면 독촉 알림이 중지됩니다.</span>
           </p>
           <div class="flex gap-1.5">
-            <input type="text" id="input-${doc.id}" placeholder="&quot;제출했습니다&quot;를 입력하세요" class="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+            <input type="text" id="input-${doc.id}" data-doc-confirm-input="1" autocomplete="off" placeholder="&quot;제출했습니다&quot;를 입력하세요" class="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
             <button onclick="handleDocSubmit('${doc.id}', this)" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl whitespace-nowrap shadow-xs transition-all">제출 완료 확인</button>
           </div>
           <p id="error-${doc.id}" class="hidden text-[10px] text-urgent-500 mt-1 font-medium">⚠️ 정확히 "제출했습니다" 문구를 입력해야 확인 처리됩니다.</p>
@@ -97,6 +101,52 @@ function renderUrgentDocuments() {
       </div>
     `;
   }).join('');
+  _bindNoPasteDocConfirmInputs(container);
+}
+
+function _bindNoPasteDocConfirmInputs(container) {
+  if (!container) return;
+  const warnPasteBlocked = () => {
+    if (typeof showToast === 'function') {
+      showToast('복사·붙여넣기는 사용할 수 없습니다. 직접 입력해 주세요.', '⚠️');
+    }
+  };
+  container.querySelectorAll('input[data-doc-confirm-input]').forEach(input => {
+    let isComposing = false;
+    let lastValidValue = input.value || '';
+
+    input.addEventListener('paste', (e) => {
+      e.preventDefault();
+      warnPasteBlocked();
+    });
+    input.addEventListener('drop', (e) => {
+      e.preventDefault();
+      warnPasteBlocked();
+    });
+    input.addEventListener('beforeinput', (e) => {
+      if (e.inputType === 'insertFromPaste' || e.inputType === 'insertFromDrop') {
+        e.preventDefault();
+        warnPasteBlocked();
+      }
+    });
+    input.addEventListener('compositionstart', () => {
+      isComposing = true;
+    });
+    input.addEventListener('compositionend', () => {
+      isComposing = false;
+      lastValidValue = input.value || '';
+    });
+    input.addEventListener('input', (e) => {
+      if (e.isComposing || isComposing) return;
+      const current = input.value || '';
+      if (current.length - lastValidValue.length >= 2) {
+        input.value = lastValidValue;
+        warnPasteBlocked();
+        return;
+      }
+      lastValidValue = current;
+    });
+  });
 }
 
 async function handleDocSubmit(docId, btnEl) {
@@ -421,7 +471,7 @@ async function deleteStudentAttendance(attId) {
 
   if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
     try {
-      await gasApi.post('delete_attendance', { remote_id: attId });
+      await gasApi.post('delete_attendance', { remote_id: attId, role: state.activeRole });
     } catch (err) {
       showToast(`출결 삭제 실패: ${err.message}`, '⚠️');
       return;
@@ -478,8 +528,17 @@ async function handleAttendanceSubmit(e) {
     ? (mockData.attendanceHistory.find(x => x.id === editingId) || null)
     : null;
 
+  if (overwriteItem && (overwriteItem.docStatus === '교사 최종완료' || overwriteItem.confirmed)) {
+    showToast('이미 담임 선생님이 확인한 출결 내역이 있어 새로 등록하거나 수정할 수 없습니다.', '⚠️');
+    return;
+  }
+
   if (!editingId) {
     const sameDateItems = mockData.attendanceHistory.filter(item => _doesAttItemMatchDate(item, sDate));
+    if (sameDateItems.some(item => item.docStatus === '교사 최종완료' || item.confirmed)) {
+      showToast('이미 담임 선생님이 확인한 출결 내역이 있어 새로 등록하거나 수정할 수 없습니다.', '⚠️');
+      return;
+    }
     if (sameDateItems.length > 0) {
       const existingAbsence = sameDateItems.find(item => _parseAttCategoryAndSubType(item).subType === '결석');
       if (existingAbsence || state.selectedAttSubType === '결석') {
@@ -526,17 +585,21 @@ async function handleAttendanceSubmit(e) {
   const ruleCode = 'ABSENCE_REPORT';
   const docName = '출결신고서';
 
+  const sickDays = Math.max(1, parseInt(mockData.rules.sickDays || 5, 10) || 5);
+  const baseDate = eDate || sDate;
+  const computedDueDate = addBusinessDays(baseDate, sickDays);
+
   const newDoc = {
     id: docId,
     studentId: stuId,
     studentName: stuName,
     type: 'urgency',
-    dDayText: `기한 +${mockData.rules.sickDays}일`,
+    dDayText: `기한 +${sickDays}영업일`,
     dDayColor: 'urgent',
     title: `${combinedType} (${periodStr})`,
     docName,
     description: reason,
-    deadline: eDate,
+    deadline: computedDueDate,
     status: 'pending',
     submittedAt: null
   };
@@ -577,7 +640,8 @@ async function handleAttendanceSubmit(e) {
               student_name: stuName,
               grade: resolvedGrade,
               class_no: resolvedClassNo,
-              base_date: eDate || sDate,
+              base_date: baseDate,
+              due_date: computedDueDate,
               status: '미제출',
               memo: reason
             }

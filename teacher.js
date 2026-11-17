@@ -1042,6 +1042,7 @@ async function finalizeTeacherDoc(docId, nextStatus, btnEl) {
       try {
         await gasApi.post('confirm_document', {
           remote_id: docId,
+          student_id: doc.studentId || '',
           status: nextStatus === 'closed' ? '확인완료' : '미제출'
         });
       } catch (err) {
