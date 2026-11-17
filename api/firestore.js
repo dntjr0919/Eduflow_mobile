@@ -647,7 +647,7 @@ async function _handleGetMobileBundle(db, params) {
     isStudentScoped && sidIn.length > 0
       ? db.collection('서류_추적').where('student_id', 'in', sidIn).limit(50).get().then(_snapToRows)
       : db.collection('서류_추적').limit(150).get().then(_snapToRows),
-    db.collection('가정통신문_목록').limit(30).get().then(_snapToRows),
+    db.collection('가정통신문_목록').limit(50).get().then(_snapToRows),
     isStudentScoped && sidIn.length > 0
       ? db.collection('가정통신문_회신').where('student_id', 'in', sidIn).limit(50).get().then(_snapToRows)
       : db.collection('가정통신문_회신').limit(150).get().then(_snapToRows),
@@ -743,7 +743,15 @@ async function _handleGetMobileBundle(db, params) {
   const teachersSnap = teachersRaw.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
   const filteredStudents = studentsRows.filter((d) => _matchesTenant(d, tenant));
   const studentIdSet = new Set(filteredStudents.map((s) => String(s.student_id || s.remote_id || '')).filter(Boolean));
-  const filteredNotices = noticesRaw.filter((d) => _matchesTenant(d, tenant));
+  const isTeacherRole = role === 'teacher';
+  const filteredNotices = noticesRaw.filter((d) => {
+    if (!_matchesTenant(d, tenant)) return false;
+    if (!isTeacherRole) {
+      const isPub = d.is_published === undefined ? true : _toBool(d.is_published);
+      if (!isPub) return false;
+    }
+    return true;
+  });
   const noticeIdSet = new Set(filteredNotices.map((n) => String(n.remote_id || '')).filter(Boolean));
 
   const bundle = {
@@ -1222,31 +1230,99 @@ module.exports = async function handler(req, res) {
         });
         if (driveRes.ok) attachmentUrl = driveRes.downloadUrl;
       }
-      await db.collection('가정통신문_목록').doc(rid).set(
-        {
-          remote_id: rid,
-          title: String(params.title || ''),
-          category: String(params.category || '가정통신문'),
-          content: String(params.content || ''),
-          target_grade: _toIntOrNull(params.target_grade ?? params.grade),
-          target_class: _toIntOrNull(params.target_class ?? params.class_no),
-          school_code: String(params.school_code || ''),
-          school_name: String(params.school_name || ''),
-          due_date: String(params.due_date || ''),
-          author_name: String(params.author_name || '담임교사'),
-          attachment_url: attachmentUrl,
-          is_published: params.is_published === undefined ? true : _toBool(params.is_published),
-          updated_at: _nowStr()
-        },
-        { merge: true }
-      );
-      return res.status(200).json({ ok: true, remote_id: rid, attachment_url: attachmentUrl });
+      const isPublished = params.is_published === undefined ? true : _toBool(params.is_published);
+      const nowStr = _nowStr();
+      const noticePayload = {
+        remote_id: rid,
+        title: String(params.title || ''),
+        category: String(params.category || '가정통신문'),
+        content: String(params.content || ''),
+        target_grade: _toIntOrNull(params.target_grade ?? params.grade),
+        target_class: _toIntOrNull(params.target_class ?? params.class_no),
+        school_code: String(params.school_code || ''),
+        school_name: String(params.school_name || ''),
+        due_date: String(params.due_date || ''),
+        author_name: String(params.author_name || '담임교사'),
+        attachment_url: attachmentUrl,
+        requires_reply: params.requires_reply === undefined ? true : _toBool(params.requires_reply),
+        is_published: isPublished,
+        updated_at: nowStr
+      };
+      if (params.reply_schema_json !== undefined) {
+        noticePayload.reply_schema_json = typeof params.reply_schema_json === 'string'
+          ? params.reply_schema_json
+          : JSON.stringify(params.reply_schema_json || []);
+      }
+      if (isPublished) {
+        noticePayload.published_at = nowStr;
+      }
+      await db.collection('가정통신문_목록').doc(rid).set(noticePayload, { merge: true });
+      if (isPublished && params.create_notification !== false) {
+        await _createNoticePublishedNotification(db, noticePayload);
+      }
+      return res.status(200).json({ ok: true, remote_id: rid, attachment_url: attachmentUrl, is_published: isPublished });
+    }
+
+    if (action === 'publish_notice') {
+      const rid = String(params.remote_id || params.notice_id || '').trim();
+      if (!rid) {
+        return res.status(400).json({ ok: false, error: 'remote_id 또는 notice_id가 필요합니다.' });
+      }
+      const docRef = db.collection('가정통신문_목록').doc(rid);
+      const existingSnap = await docRef.get();
+      const existing = existingSnap.exists ? (existingSnap.data() || {}) : {};
+      const nowStr = _nowStr();
+      const mergedPayload = {
+        remote_id: rid,
+        title: String(params.title !== undefined ? params.title : (existing.title || '')).trim(),
+        category: String(params.category !== undefined ? params.category : (existing.category || '가정통신문')).trim(),
+        content: String(params.content !== undefined ? params.content : (existing.content || '')).trim(),
+        due_date: String(params.due_date !== undefined ? params.due_date : (existing.due_date || '')).trim(),
+        target_grade: _toIntOrNull(params.target_grade ?? params.grade ?? existing.target_grade),
+        target_class: _toIntOrNull(params.target_class ?? params.class_no ?? existing.target_class),
+        school_code: String(params.school_code !== undefined ? params.school_code : (existing.school_code || '')).trim(),
+        school_name: String(params.school_name !== undefined ? params.school_name : (existing.school_name || '')).trim(),
+        author_name: String(params.author_name !== undefined ? params.author_name : (existing.author_name || '담임교사')).trim(),
+        requires_reply: params.requires_reply !== undefined
+          ? _toBool(params.requires_reply)
+          : (existing.requires_reply === undefined ? true : _toBool(existing.requires_reply)),
+        is_published: true,
+        published_at: existing.published_at || nowStr,
+        updated_at: nowStr
+      };
+      if (params.reply_schema_json !== undefined) {
+        mergedPayload.reply_schema_json = typeof params.reply_schema_json === 'string'
+          ? params.reply_schema_json
+          : JSON.stringify(params.reply_schema_json || []);
+      }
+      await docRef.set(mergedPayload, { merge: true });
+      const notificationId = await _createNoticePublishedNotification(db, mergedPayload);
+      return res.status(200).json({
+        ok: true,
+        remote_id: rid,
+        is_published: true,
+        notification_id: notificationId,
+        updated_at: nowStr
+      });
     }
 
     if (action === 'submit_notice_reply') {
       const noticeId = String(params.notice_id || '').trim();
       const studentId = String(params.student_id || '').trim();
-      const rid = String(params.remote_id || `reply_${noticeId}_${studentId}`);
+      if (!noticeId || !studentId) {
+        return res.status(400).json({ ok: false, error: 'notice_id와 student_id가 필요합니다.' });
+      }
+      const rid = `${noticeId}_${studentId}`;
+      const replyRef = db.collection('가정통신문_회신').doc(rid);
+      const existingReply = await replyRef.get();
+      if (existingReply.exists) {
+        return res.status(409).json({
+          ok: false,
+          already_submitted: true,
+          remote_id: rid,
+          error: '이미 제출 완료된 가정통신문입니다.'
+        });
+      }
       let sigDriveUrl = String(params.signature_drive_url || params.signature_url || '');
       let driveError = '';
       if (params.signature_base64) {
@@ -1256,13 +1332,22 @@ module.exports = async function handler(req, res) {
           mimeType: 'image/png',
           folderName: 'EduFlow_Signatures'
         });
-        if (driveRes.ok) {
+        if (driveRes.ok && driveRes.downloadUrl) {
           sigDriveUrl = driveRes.downloadUrl;
         } else {
           driveError = driveRes.error || '';
+          if (!sigDriveUrl) {
+            sigDriveUrl = String(params.signature_base64);
+          }
         }
       }
-      await db.collection('가정통신문_회신').doc(rid).set(
+      const nowStr = _nowStr();
+      const consentVal = String(params.consent || params.reply_choice || '').trim();
+      const replyDataJson = typeof params.reply_data_json === 'string'
+        ? params.reply_data_json
+        : JSON.stringify(params.reply_data_json || params.reply_data || {});
+      const signedAt = String(params.signed_at || (sigDriveUrl ? nowStr : nowStr));
+      await replyRef.set(
         {
           remote_id: rid,
           notice_id: noticeId,
@@ -1270,12 +1355,15 @@ module.exports = async function handler(req, res) {
           student_name: String(params.student_name || ''),
           parent_id: String(params.parent_id || ''),
           parent_name: String(params.parent_name || ''),
-          reply_choice: String(params.reply_choice || params.consent || '동의'),
+          consent: consentVal,
+          reply_choice: consentVal || '제출',
+          reply_data_json: replyDataJson,
           signature_drive_url: sigDriveUrl,
           signature_url: sigDriveUrl,
           memo: String(params.memo || ''),
-          submitted_at: _nowStr(),
-          updated_at: _nowStr()
+          signed_at: signedAt,
+          submitted_at: nowStr,
+          updated_at: nowStr
         },
         { merge: true }
       );
@@ -1283,6 +1371,7 @@ module.exports = async function handler(req, res) {
         ok: true,
         remote_id: rid,
         signature_drive_url: sigDriveUrl,
+        signed_at: signedAt,
         drive_warning: driveError || undefined
       });
     }
@@ -1831,10 +1920,42 @@ async function _handleDesktopApiAction(db, action, params, auth) {
   return { status: 400, json: { ok: false, error: `지원하지 않는 데스크톱 action입니다: ${action}` } };
 }
 
+async function _createNoticePublishedNotification(db, notice) {
+  const nowStr = _nowStr();
+  const noticeId = String(notice.remote_id || '').trim();
+  const title = String(notice.title || '새 가정통신문').trim();
+  const dueDate = String(notice.due_date || '').trim();
+  const rid = `noti_notice_${noticeId}_${Date.now()}`;
+  await db.collection('Notifications').doc(rid).set(
+    {
+      remote_id: rid,
+      title: `[가정통신문] ${title}`,
+      message: dueDate
+        ? `${title} (마감: ${dueDate})가 게시되었습니다. 확인 후 회신해 주세요.`
+        : `${title}가 게시되었습니다. 확인해 주세요.`,
+      channel: 'notice_publish',
+      target_role: 'all',
+      sender: String(notice.author_name || '담임교사'),
+      grade: _toIntOrNull(notice.target_grade),
+      class_no: _toIntOrNull(notice.target_class),
+      school_code: String(notice.school_code || ''),
+      school_name: String(notice.school_name || ''),
+      student_id: '',
+      notice_id: noticeId,
+      is_read: false,
+      created_at: nowStr,
+      updated_at: nowStr
+    },
+    { merge: true }
+  );
+  return rid;
+}
+
 module.exports._testHelpers = {
   _handleGetMobileBundle,
   _matchesTenant,
   _normalizeTeacherName,
   _verifyActiveTeacherAuth,
   _handleDesktopApiAction,
+  _createNoticePublishedNotification,
 };

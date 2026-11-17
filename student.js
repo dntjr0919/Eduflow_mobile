@@ -786,24 +786,89 @@ function switchLettersSubTab(sub) {
 
 function renderCirculars() {
   const list = document.getElementById('circularsList');
-  if (mockData.circulars.length === 0) {
+  if (!list) return;
+  const publishedList = (mockData.circulars || []).filter(c => c.isPublished !== false);
+  if (publishedList.length === 0) {
     list.innerHTML = `<div class="bg-white p-5 rounded-2xl border border-slate-200/80 text-center text-xs text-slate-400">등록된 가정통신문이 없습니다.</div>`;
     return;
   }
-  list.innerHTML = mockData.circulars.map(c => `
-    <div onclick="openCircularModal('${c.id}')" class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-indigo-300 transition-all cursor-pointer flex items-center justify-between gap-3">
-      <div class="space-y-1">
-        <div class="flex items-center gap-1.5">
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${c.status === 'pending' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}">
-            ${c.status === 'pending' ? '미제출' : '서명완료'}
-          </span>
-          <span class="text-[10px] text-slate-400">${c.deadline}</span>
+  const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
+  list.innerHTML = publishedList.map(c => {
+    const isSubmitted = c.status === 'submitted' || Boolean(c.myReply);
+    const badgeClass = isSubmitted
+      ? 'bg-emerald-100 text-emerald-700'
+      : (c.requiresReply === false ? 'bg-slate-100 text-slate-600' : 'bg-red-100 text-red-600');
+    const badgeText = isSubmitted ? '제출 완료' : (c.requiresReply === false ? '안내' : '미제출');
+    const actionText = isSubmitted ? '열람 →' : (c.requiresReply === false ? '확인 →' : '회신·서명 →');
+    return `
+      <div onclick="openCircularModal('${esc(c.id)}')" class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-indigo-300 transition-all cursor-pointer flex items-center justify-between gap-3">
+        <div class="space-y-1">
+          <div class="flex items-center gap-1.5">
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeClass}">${badgeText}</span>
+            <span class="text-[10px] text-slate-400">${esc(c.deadline)}</span>
+          </div>
+          <h4 class="text-xs font-bold text-slate-800">${esc(c.title)}</h4>
         </div>
-        <h4 class="text-xs font-bold text-slate-800">${c.title}</h4>
+        <span class="text-xs text-indigo-600 font-bold shrink-0">${actionText}</span>
       </div>
-      <span class="text-xs text-indigo-600 font-bold shrink-0">${c.status === 'pending' ? '서명하기 →' : '열람'}</span>
+    `;
+  }).join('');
+}
+
+function _renderDynamicCircularField(field, idx) {
+  const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
+  const reqMark = field.required ? `<span class="text-urgent-600 font-bold ml-0.5">*</span>` : '';
+  const fieldNameAttr = `circular_dyn_${idx}`;
+
+  if (field.type === 'radio') {
+    const opts = field.options.length > 0 ? field.options : [{ label: '예', value: '예' }, { label: '아니오', value: '아니오' }];
+    return `
+      <div class="space-y-1.5">
+        <label class="block text-[11px] font-bold text-slate-700">${esc(field.label)}${reqMark}</label>
+        <div class="grid ${opts.length <= 2 ? 'grid-cols-2' : 'grid-cols-1'} gap-2">
+          ${opts.map((opt) => `
+            <label class="flex items-center gap-2 p-2.5 rounded-xl border border-slate-200 cursor-pointer has-[:checked]:bg-indigo-50 has-[:checked]:border-indigo-600 has-[:checked]:text-indigo-700 text-xs font-semibold">
+              <input class="text-indigo-600 focus:ring-indigo-500" name="${esc(fieldNameAttr)}" type="radio" value="${esc(opt.value)}"/>
+              <span>${esc(opt.label)}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  if (field.type === 'checkbox') {
+    const opts = field.options.length > 0 ? field.options : [{ label: '확인함', value: '확인함' }];
+    return `
+      <div class="space-y-1.5">
+        <label class="block text-[11px] font-bold text-slate-700">${esc(field.label)}${reqMark}</label>
+        <div class="space-y-1.5">
+          ${opts.map((opt) => `
+            <label class="flex items-center gap-2 p-2.5 rounded-xl border border-slate-200 cursor-pointer has-[:checked]:bg-indigo-50 has-[:checked]:border-indigo-600 has-[:checked]:text-indigo-700 text-xs font-medium">
+              <input class="rounded text-indigo-600 focus:ring-indigo-500" name="${esc(fieldNameAttr)}" type="checkbox" value="${esc(opt.value)}"/>
+              <span>${esc(opt.label)}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  if (field.type === 'textarea') {
+    return `
+      <div class="space-y-1">
+        <label class="block text-[11px] font-bold text-slate-700">${esc(field.label)}${reqMark}</label>
+        <textarea class="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="${esc(fieldNameAttr)}" placeholder="${esc(field.placeholder || '내용을 입력해 주세요')}" rows="3"></textarea>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="space-y-1">
+      <label class="block text-[11px] font-bold text-slate-700">${esc(field.label)}${reqMark}</label>
+      <input class="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="${esc(fieldNameAttr)}" placeholder="${esc(field.placeholder || '입력해 주세요')}" type="text"/>
     </div>
-  `).join('');
+  `;
 }
 
 function openCircularModal(id) {
@@ -813,8 +878,103 @@ function openCircularModal(id) {
   document.getElementById('modalCircularNumber').innerText = c.docNum;
   document.getElementById('modalCircularTitle').innerText = c.title;
   document.getElementById('modalCircularContent').innerText = c.content;
-  document.getElementById('modalCircularMeta').innerHTML = c.meta.map(m => `<p>• ${m}</p>`).join('');
-  clearSignaturePad();
+  document.getElementById('modalCircularMeta').innerHTML = (c.meta || []).map(m => `<p>• ${_escapeNoticeHtml ? _escapeNoticeHtml(m) : m}</p>`).join('');
+
+  const submittedView = document.getElementById('modalCircularSubmittedView');
+  const formView = document.getElementById('modalCircularFormView');
+  const dynFieldsEl = document.getElementById('modalCircularDynamicFields');
+  const sigSection = document.getElementById('modalCircularSignatureSection');
+  const readOnlyNote = document.getElementById('modalCircularReadOnlyNote');
+  const submitBtn = document.getElementById('modalCircularSubmitBtn');
+
+  const isSubmitted = c.status === 'submitted' || Boolean(c.myReply);
+  const parsedFields = typeof _parseNoticeReplySchema === 'function'
+    ? _parseNoticeReplySchema(c.replySchemaJson, c.replyFields)
+    : [];
+
+  if (isSubmitted) {
+    if (submittedView) submittedView.classList.remove('hidden');
+    if (formView) formView.classList.add('hidden');
+
+    const reply = c.myReply || {};
+    const signedAtEl = document.getElementById('modalCircularSubmittedAt');
+    if (signedAtEl) signedAtEl.innerText = reply.signedAt ? `제출일시: ${reply.signedAt}` : '';
+
+    const answersEl = document.getElementById('modalCircularSubmittedAnswers');
+    if (answersEl) {
+      const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
+      let parsedData = {};
+      if (reply.replyDataJson) {
+        try {
+          parsedData = typeof reply.replyDataJson === 'string'
+            ? JSON.parse(reply.replyDataJson)
+            : (reply.replyDataJson || {});
+        } catch (_) {
+          parsedData = {};
+        }
+      }
+      const rowsHtml = [];
+      if (parsedData && typeof parsedData === 'object' && Object.keys(parsedData).length > 0) {
+        const labelByName = {};
+        parsedFields.forEach(f => { labelByName[f.name] = f.label; });
+        Object.entries(parsedData).forEach(([k, v]) => {
+          const valText = Array.isArray(v) ? v.join(', ') : String(v ?? '');
+          if (!valText) return;
+          const label = labelByName[k] || (k === 'consent' ? '참가 동의 여부' : k);
+          rowsHtml.push(`<div><span class="font-bold text-slate-600">${esc(label)}:</span> <span class="text-slate-800">${esc(valText)}</span></div>`);
+        });
+      }
+      if (rowsHtml.length === 0 && reply.consent) {
+        rowsHtml.push(`<div><span class="font-bold text-slate-600">회신 선택:</span> <span class="text-slate-800">${esc(reply.consent)}</span></div>`);
+      }
+      if (rowsHtml.length === 0) {
+        rowsHtml.push(`<div class="text-slate-500">제출이 완료되었습니다.</div>`);
+      }
+      answersEl.innerHTML = rowsHtml.join('');
+    }
+
+    const sigWrap = document.getElementById('modalCircularSubmittedSigWrap');
+    const sigImg = document.getElementById('modalCircularSubmittedSigImg');
+    if (sigWrap && sigImg) {
+      if (reply.signatureUrl) {
+        sigImg.src = reply.signatureUrl;
+        sigWrap.classList.remove('hidden');
+      } else {
+        sigImg.removeAttribute('src');
+        sigWrap.classList.add('hidden');
+      }
+    }
+  } else {
+    if (submittedView) submittedView.classList.add('hidden');
+    if (formView) formView.classList.remove('hidden');
+
+    let activeFields = parsedFields;
+    if (activeFields.length === 0 && c.requiresReply !== false) {
+      activeFields = [{
+        name: 'consent',
+        label: '참가 동의 여부',
+        type: 'radio',
+        required: true,
+        options: [
+          { label: '동의 (참가함)', value: '동의' },
+          { label: '미동의 (불참)', value: '미동의' }
+        ]
+      }];
+    }
+    state.currentCircularFields = activeFields;
+
+    if (dynFieldsEl) {
+      dynFieldsEl.innerHTML = activeFields.map((f, idx) => _renderDynamicCircularField(f, idx)).join('');
+      dynFieldsEl.classList.toggle('hidden', activeFields.length === 0);
+    }
+
+    const needsSig = c.requiresReply !== false;
+    if (sigSection) sigSection.classList.toggle('hidden', !needsSig);
+    if (readOnlyNote) readOnlyNote.classList.toggle('hidden', needsSig || activeFields.length > 0);
+    if (submitBtn) submitBtn.classList.toggle('hidden', !needsSig && activeFields.length === 0);
+    clearSignaturePad();
+  }
+
   openModal('circularModal');
 }
 
@@ -878,39 +1038,85 @@ function clearSignaturePad() {
 }
 
 async function submitCircularSignature(btnEl) {
-  if (!state.hasDrawnSignature) {
+  const cId = state.currentCircularId;
+  const c = mockData.circulars.find(x => x.id === cId);
+  if (!c) return;
+  if (c.status === 'submitted' || c.myReply) {
+    showToast('이미 제출 완료된 가정통신문입니다.', '✅');
+    return;
+  }
+
+  const fields = Array.isArray(state.currentCircularFields) ? state.currentCircularFields : [];
+  const replyData = {};
+  for (let idx = 0; idx < fields.length; idx++) {
+    const f = fields[idx];
+    const nameAttr = `circular_dyn_${idx}`;
+    let val = '';
+    if (f.type === 'radio') {
+      const checked = document.querySelector(`input[name="${nameAttr}"]:checked`);
+      val = checked ? checked.value : '';
+    } else if (f.type === 'checkbox') {
+      const checkedEls = Array.from(document.querySelectorAll(`input[name="${nameAttr}"]:checked`));
+      val = checkedEls.map(el => el.value);
+    } else {
+      const inputEl = document.getElementById(nameAttr);
+      val = inputEl ? inputEl.value.trim() : '';
+    }
+    const isEmpty = Array.isArray(val) ? val.length === 0 : !String(val || '').trim();
+    if (f.required && isEmpty) {
+      showToast(`필수 항목(${f.label})을 입력해 주세요.`, '⚠️');
+      return;
+    }
+    replyData[f.name] = val;
+  }
+
+  const needsSig = c.requiresReply !== false;
+  if (needsSig && !state.hasDrawnSignature) {
     showToast('서명란에 터치 전자서명을 작성해 주세요.', '✍️');
     return;
   }
+
   const canvas = document.getElementById('signaturePad');
-  const signatureBase64 = canvas ? canvas.toDataURL('image/png') : '';
-  const cId = state.currentCircularId;
-  const c = mockData.circulars.find(x => x.id === cId);
+  const signatureBase64 = (needsSig && canvas) ? canvas.toDataURL('image/png') : '';
+  const firstRadio = fields.find(f => f.type === 'radio');
+  const consentVal = String(replyData.consent || (firstRadio ? replyData[firstRadio.name] : '') || '제출');
+  const replyDataJson = JSON.stringify(replyData);
+  const signedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
   await withButtonLoading(btnEl, '제출 중...', async () => {
+    let savedSigUrl = signatureBase64;
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
-        await gasApi.post('submit_notice_reply', {
+        const res = await gasApi.post('submit_notice_reply', {
           data: {
             notice_id: cId,
             student_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
             student_name: mockData.currentUser.studentName || '학생',
             parent_id: mockData.currentUser.userId || '',
             parent_name: mockData.currentUser.parentName || '학부모',
-            consent: '동의',
-            signature_base64: signatureBase64
+            consent: consentVal,
+            reply_data_json: replyDataJson,
+            signature_base64: signatureBase64,
+            signed_at: signedAt
           }
         });
+        if (res && res.signature_drive_url) {
+          savedSigUrl = res.signature_drive_url;
+        }
       } catch (err) {
         showToast(`전자서명 저장 실패: ${err.message}`, '⚠️');
         return;
       }
     }
 
-    if (c && c.status === 'pending') {
-      c.status = 'submitted';
-      c.submittedCount = Math.min(c.totalCount, c.submittedCount + 1);
-    }
+    c.status = 'submitted';
+    c.myReply = {
+      consent: consentVal,
+      replyDataJson,
+      signatureUrl: savedSigUrl,
+      signedAt
+    };
+    c.submittedCount = Math.min(c.totalCount || 999, (c.submittedCount || 0) + 1);
     closeCircularModal();
     renderCirculars();
     if (typeof renderTeacherCirculars === 'function') renderTeacherCirculars();

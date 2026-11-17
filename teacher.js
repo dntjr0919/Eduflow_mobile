@@ -1151,32 +1151,169 @@ async function saveRulesSettings(e) {
 
 // --- TEACHER TAB 3: Circulars & Notices ---
 function renderTeacherCirculars() {
+  const pendingSection = document.getElementById('teacherPendingCircularsSection');
+  const pendingContainer = document.getElementById('teacherPendingCircularsContainer');
+  const pendingCountEl = document.getElementById('teacherPendingCircularCount');
   const container = document.getElementById('teacherCircularsContainer');
-  document.getElementById('teacherCircularCount').innerText = `총 ${mockData.circulars.length}건 진행중`;
-  if (mockData.circulars.length === 0) {
+  const countEl = document.getElementById('teacherCircularCount');
+
+  const allCirculars = Array.isArray(mockData.circulars) ? mockData.circulars : [];
+  const pending = allCirculars.filter(c => c.isPublished === false);
+  const published = allCirculars.filter(c => c.isPublished !== false);
+
+  if (pendingSection && pendingContainer) {
+    if (pending.length === 0) {
+      pendingSection.classList.add('hidden');
+      pendingContainer.innerHTML = '';
+    } else {
+      pendingSection.classList.remove('hidden');
+      if (pendingCountEl) pendingCountEl.innerText = `${pending.length}건`;
+      pendingContainer.innerHTML = pending.map(c => {
+        const fields = typeof _parseNoticeReplySchema === 'function'
+          ? _parseNoticeReplySchema(c.replySchemaJson, c.replyFields)
+          : [];
+        const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
+        return `
+          <div onclick="openCandidateNoticeModal('${esc(c.id)}')" class="bg-white p-3.5 rounded-2xl border border-amber-200 hover:border-amber-400 shadow-xs cursor-pointer transition-all space-y-1.5">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">게시 대기</span>
+              <span class="text-[10px] text-slate-400">${esc(c.deadline || '상시')}</span>
+            </div>
+            <h4 class="text-xs font-bold text-slate-800">${esc(c.title || '제목 없음')}</h4>
+            <div class="flex items-center justify-between text-[10px] text-slate-500">
+              <span>입력칸 ${fields.length}개 · ${c.requiresReply ? '자필서명 포함' : '열람용'}</span>
+              <span class="font-bold text-indigo-600">미리보기·게시 →</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  if (countEl) countEl.innerText = `총 ${published.length}건 진행중`;
+  if (!container) return;
+  if (published.length === 0) {
     container.innerHTML = `<div class="bg-white p-5 rounded-2xl border border-slate-200/80 text-center text-xs text-slate-400">등록된 가정통신문이 없습니다.</div>`;
     return;
   }
-  container.innerHTML = mockData.circulars.map(c => {
+  container.innerHTML = published.map(c => {
     const pct = c.totalCount > 0 ? Math.round((c.submittedCount / c.totalCount) * 100) : 0;
     const unsubmittedCount = Math.max(0, c.totalCount - c.submittedCount);
+    const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
     return `
       <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-2.5">
         <div class="flex items-center justify-between">
-          <span class="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">${c.deadline}</span>
+          <span class="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">${esc(c.deadline)}</span>
           <span class="text-xs font-bold text-slate-800">${c.submittedCount}/${c.totalCount}명 제출 (${pct}%)</span>
         </div>
-        <h4 class="text-xs font-bold text-slate-800">${c.title}</h4>
+        <h4 class="text-xs font-bold text-slate-800">${esc(c.title)}</h4>
         <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
           <div class="bg-indigo-600 h-full rounded-full transition-all" style="width: ${pct}%"></div>
         </div>
         <div class="flex gap-2 pt-1">
-          <button onclick="openUnsubmittedModal('${c.id}')" class="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-xl">미제출자 명단 (${unsubmittedCount}명)</button>
+          <button onclick="openUnsubmittedModal('${esc(c.id)}')" class="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-xl">미제출자 명단 (${unsubmittedCount}명)</button>
           <button onclick="showToast('제출된 서명 이미지가 원본 PDF 좌표에 합성되어 인쇄 대기열로 전송되었습니다.', '🖨️')" class="flex-1 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded-xl">서명본 PDF 일괄 출력</button>
         </div>
       </div>
     `;
   }).join('');
+}
+
+function openCandidateNoticeModal(circularId) {
+  const c = (mockData.circulars || []).find(x => x.id === circularId);
+  if (!c) return;
+  state.currentCandidateNoticeId = circularId;
+  const titleEl = document.getElementById('candidateNoticeTitle');
+  const dueDateEl = document.getElementById('candidateNoticeDueDate');
+  const contentEl = document.getElementById('candidateNoticeContent');
+  const badgeEl = document.getElementById('candidateNoticeReplyBadge');
+  const previewEl = document.getElementById('candidateNoticeSchemaPreview');
+
+  if (titleEl) titleEl.value = c.title || '';
+  if (dueDateEl) dueDateEl.value = c.dueDate || '';
+  if (contentEl) contentEl.value = c.content || '';
+  if (badgeEl) badgeEl.innerText = c.requiresReply ? '자필서명 필수' : '회신 불필요';
+
+  if (previewEl) {
+    const fields = typeof _parseNoticeReplySchema === 'function'
+      ? _parseNoticeReplySchema(c.replySchemaJson, c.replyFields)
+      : [];
+    const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
+    if (fields.length === 0) {
+      previewEl.innerHTML = `<p class="text-[11px] text-slate-400">${c.requiresReply ? '추출된 동적 입력칸이 없어 기본 동의/미동의 및 서명란이 표시됩니다.' : '입력칸 없음 (열람용 안내문)'}</p>`;
+    } else {
+      const typeLabelMap = { radio: '단일선택(라디오)', checkbox: '복수선택(체크)', text: '단답형', textarea: '서술형' };
+      previewEl.innerHTML = fields.map((f, idx) => {
+        const optsText = f.options && f.options.length > 0
+          ? ` (${f.options.map(o => esc(o.label)).join(', ')})`
+          : '';
+        return `
+          <div class="bg-white border border-slate-200/80 rounded-xl px-2.5 py-2 flex items-start justify-between gap-2">
+            <div>
+              <p class="font-semibold text-slate-800">${idx + 1}. ${esc(f.label)}${f.required ? ' <span class="text-urgent-600">*</span>' : ''}</p>
+              ${optsText ? `<p class="text-[10px] text-slate-500 mt-0.5">선택지: ${optsText}</p>` : ''}
+            </div>
+            <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 shrink-0">${typeLabelMap[f.type] || f.type}</span>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+  openModal('candidateNoticeModal');
+}
+
+function closeCandidateNoticeModal() {
+  closeModal('candidateNoticeModal');
+}
+
+async function publishCandidateNotice(btnEl) {
+  const cId = state.currentCandidateNoticeId;
+  const c = (mockData.circulars || []).find(x => x.id === cId);
+  if (!c) return;
+  const title = (document.getElementById('candidateNoticeTitle')?.value || '').trim();
+  const dueDate = (document.getElementById('candidateNoticeDueDate')?.value || '').trim();
+  const content = (document.getElementById('candidateNoticeContent')?.value || '').trim();
+  if (!title) {
+    showToast('가정통신문 제목을 입력해 주세요.', '⚠️');
+    return;
+  }
+
+  await withButtonLoading(btnEl, '게시 중...', async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('publish_notice', {
+          data: {
+            remote_id: c.id,
+            title,
+            due_date: dueDate,
+            content,
+            category: c.docNum || '가정통신문',
+            reply_schema_json: c.replySchemaJson || '',
+            requires_reply: c.requiresReply ? 1 : 0,
+            target_grade: c.targetGrade || mockData.currentUser.grade || '',
+            target_class: c.targetClass || mockData.currentUser.classNo || '',
+            school_code: c.schoolCode || mockData.currentUser.neisSchoolCode || '',
+            school_name: c.schoolName || mockData.currentUser.schoolName || '',
+            author_name: c.authorName || mockData.currentUser.teacherName || '담임교사'
+          }
+        });
+      } catch (err) {
+        showToast(`가정통신문 게시 실패: ${err.message}`, '⚠️');
+        return;
+      }
+    }
+
+    c.title = title;
+    c.dueDate = dueDate;
+    c.deadline = dueDate ? `${dueDate} 마감` : '상시';
+    c.content = content;
+    c.isPublished = true;
+
+    closeCandidateNoticeModal();
+    renderTeacherCirculars();
+    if (typeof renderCirculars === 'function') renderCirculars();
+    showToast('가정통신문이 게시되고 학급 알림이 발송되었습니다.');
+  });
 }
 
 function openNewCircularModal() {
@@ -1210,7 +1347,11 @@ async function publishNewCircular() {
     id: noticeId,
     docNum: '가정통신문',
     title,
+    dueDate,
     deadline: `${dueDate} 마감`,
+    isPublished: true,
+    requiresReply: true,
+    replySchemaJson: '',
     status: 'pending',
     submittedCount: 0,
     totalCount: mockData.students.length,

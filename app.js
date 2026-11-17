@@ -436,6 +436,65 @@ function closeModal(modalId) {
   if (el) el.classList.add('hidden');
 }
 
+function _escapeNoticeHtml(val) {
+  return String(val ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function _parseNoticeReplySchema(rawSchema, fallbackFields) {
+  let parsed = null;
+  if (Array.isArray(rawSchema)) {
+    parsed = rawSchema;
+  } else if (rawSchema && typeof rawSchema === 'object') {
+    parsed = Array.isArray(rawSchema.fields) ? rawSchema.fields : [];
+  } else if (typeof rawSchema === 'string' && rawSchema.trim()) {
+    try {
+      const jsonVal = JSON.parse(rawSchema);
+      if (Array.isArray(jsonVal)) parsed = jsonVal;
+      else if (jsonVal && Array.isArray(jsonVal.fields)) parsed = jsonVal.fields;
+    } catch (_) {
+      parsed = null;
+    }
+  }
+  if ((!parsed || parsed.length === 0) && Array.isArray(fallbackFields) && fallbackFields.length > 0) {
+    parsed = fallbackFields;
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((f) => f && typeof f === 'object')
+    .map((f, idx) => {
+      const rawType = String(f.type || 'text').trim().toLowerCase();
+      const type = ['radio', 'checkbox', 'text', 'textarea'].includes(rawType) ? rawType : 'text';
+      let rawOpts = f.options ?? f.choices ?? [];
+      if (typeof rawOpts === 'string') {
+        rawOpts = rawOpts.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+      const options = Array.isArray(rawOpts)
+        ? rawOpts.map((opt) => {
+            if (opt && typeof opt === 'object') {
+              const label = String(opt.label ?? opt.title ?? opt.value ?? '');
+              const value = String(opt.value ?? opt.label ?? opt.title ?? '');
+              return { label, value };
+            }
+            const s = String(opt ?? '');
+            return { label: s, value: s };
+          }).filter((o) => o.label || o.value)
+        : [];
+      return {
+        name: String(f.name || f.id || f.key || `field_${idx}`),
+        label: String(f.label || f.title || f.question || `항목 ${idx + 1}`),
+        type,
+        options,
+        required: Boolean(f.required),
+        placeholder: String(f.placeholder || '')
+      };
+    });
+}
+
 function toggleNoticeModal() {
   const modal = document.getElementById('noticeModal');
   modal.classList.toggle('hidden');
@@ -1204,6 +1263,13 @@ function hydrateMockDataFromBundle(bundle) {
     const replies = Array.isArray(bundle.notice_replies) ? bundle.notice_replies : [];
     const cuId = String(mockData.currentUser.studentId || '');
     const classTotal = mockData.students.length;
+    const toBoolVal = (val, defaultVal = true) => {
+      if (val === undefined || val === null || val === '') return defaultVal;
+      if (typeof val === 'boolean') return val;
+      if (typeof val === 'number') return val !== 0;
+      const s = String(val).trim().toLowerCase();
+      return s === '1' || s === 'true' || s === 'yes' || s === 'y' || s === '예';
+    };
     mockData.circulars = bundle.notices.map(n => {
       const nReplies = replies.filter(r => r.notice_id === n.remote_id);
       const myReply = cuId ? nReplies.find(r => String(r.student_id) === cuId) : null;
@@ -1211,13 +1277,30 @@ function hydrateMockDataFromBundle(bundle) {
         id: n.remote_id,
         docNum: n.category || '가정통신문',
         title: n.title || '',
+        dueDate: n.due_date || '',
         deadline: n.due_date ? `${n.due_date} 마감` : '상시',
+        isPublished: toBoolVal(n.is_published, true),
+        requiresReply: toBoolVal(n.requires_reply, true),
+        replySchemaJson: n.reply_schema_json || '',
+        replyFields: Array.isArray(n.reply_fields) ? n.reply_fields : null,
+        attachmentUrl: n.attachment_url || '',
+        authorName: n.author_name || '담임교사',
+        targetGrade: n.target_grade ?? '',
+        targetClass: n.target_class ?? '',
+        schoolCode: n.school_code || '',
+        schoolName: n.school_name || '',
         status: myReply ? 'submitted' : 'pending',
         submittedCount: nReplies.length,
         totalCount: classTotal > 0 ? classTotal : nReplies.length,
         submittedStudentIds: nReplies.map(r => String(r.student_id || '')),
         content: n.content || '',
-        meta: n.attachment_url ? [`첨부: ${n.attachment_url}`] : [`작성: ${n.author_name || '담임교사'}`]
+        meta: n.attachment_url ? [`첨부: ${n.attachment_url}`] : [`작성: ${n.author_name || '담임교사'}`],
+        myReply: myReply ? {
+          consent: myReply.consent || myReply.reply_choice || '',
+          replyDataJson: myReply.reply_data_json || '',
+          signatureUrl: myReply.signature_drive_url || myReply.signature_url || myReply.signature_data_url || '',
+          signedAt: myReply.signed_at || myReply.submitted_at || myReply.updated_at || ''
+        } : null
       };
     });
   }
