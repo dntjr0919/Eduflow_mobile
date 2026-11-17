@@ -237,6 +237,7 @@ let mockData = {
     dinner: null
   },
   circulars: [],
+  boardNotices: [],
   budget: {
     balance: 0,
     income: 0,
@@ -1310,6 +1311,11 @@ function hydrateMockDataFromBundle(bundle) {
     });
   }
 
+  // 8-1. 학급 공지 게시판 (board_notices)
+  if (Array.isArray(bundle.board_notices)) {
+    mockData.boardNotices = normalizeBoardNotices(bundle.board_notices);
+  }
+
   // 9. 학급회비
   if (Array.isArray(bundle.budget)) {
     const parseAmount = (val) => {
@@ -1756,6 +1762,46 @@ function logout() {
   document.getElementById('loginScreen').classList.remove('hidden');
 }
 
+function normalizeBoardSourceType(raw) {
+  const s = String(raw || '').trim();
+  const low = s.toLowerCase();
+  if (!s) return '담임 공지';
+  if (low === 'school_bell' || low === 'schoolbell' || s.includes('학교종이')) return '학교종이';
+  if (low === 'kakao' || low === 'kakaotalk' || s.includes('카톡') || s.includes('카카오')) return '학급 카톡';
+  if (low === 'homeroom' || low === 'teacher' || s.includes('담임')) return '담임 공지';
+  return s;
+}
+
+function normalizeBoardNotices(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list
+    .filter((n) => n && typeof n === 'object')
+    .map((n) => {
+      const publishedAt = String(n.published_at || n.created_at || n.updated_at || '').trim();
+      return {
+        id: String(n.remote_id || n.id || '').trim(),
+        title: String(n.title || '').trim(),
+        summary: String(n.summary || n.key_summary || '').trim(),
+        content: String(n.content || n.body || '').trim(),
+        sourceType: normalizeBoardSourceType(n.source_type || n.source || '담임 공지'),
+        sourceUrl: String(n.source_url || '').trim(),
+        isPinned: _isTruthyField(n.is_pinned),
+        isPublished: n.is_published === undefined ? true : _isTruthyField(n.is_published),
+        publishedAt,
+        authorName: String(n.author_name || '담임교사').trim(),
+        grade: n.grade ?? n.target_grade ?? '',
+        classNo: n.class_no ?? n.target_class ?? '',
+        schoolCode: String(n.school_code || '').trim(),
+        schoolName: String(n.school_name || '').trim()
+      };
+    })
+    .sort((a, b) => {
+      const pinDiff = (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0);
+      if (pinDiff !== 0) return pinDiff;
+      return String(b.publishedAt || '').localeCompare(String(a.publishedAt || ''));
+    });
+}
+
 function renderAll() {
   // Student Views
   if (typeof renderUrgentDocuments === 'function') renderUrgentDocuments();
@@ -1763,6 +1809,7 @@ function renderAll() {
   if (typeof renderMeals === 'function') renderMeals();
   if (typeof renderAttendanceHistory === 'function') renderAttendanceHistory();
   if (typeof renderCirculars === 'function') renderCirculars();
+  if (typeof renderBoardNotices === 'function') renderBoardNotices();
   if (typeof renderBudget === 'function') renderBudget();
   if (typeof renderStudentChat === 'function') renderStudentChat();
 
@@ -1770,6 +1817,7 @@ function renderAll() {
   if (typeof renderTeacherHome === 'function') renderTeacherHome();
   if (typeof renderTeacherDocs === 'function') renderTeacherDocs();
   if (typeof renderTeacherCirculars === 'function') renderTeacherCirculars();
+  if (typeof renderTeacherBoardNotices === 'function') renderTeacherBoardNotices();
   if (typeof renderRemoteTasks === 'function') renderRemoteTasks();
   if (typeof renderTeacherChatRooms === 'function') renderTeacherChatRooms();
 }

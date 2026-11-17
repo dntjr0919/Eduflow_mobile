@@ -176,6 +176,20 @@
 <div class="bg-slate-50/80 rounded-xl p-3 border border-slate-100" id="mealContentBox"></div>
 </div>
 
+<div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm" id="homeBoardNoticeSection">
+<div class="flex items-center justify-between mb-2.5">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600 text-sm">📌</div>
+<div>
+<h3 class="text-xs font-bold text-slate-800">최신 학급 공지</h3>
+<p class="text-[10px] text-slate-400">학교종이 · 학급 카톡 · 담임 공지 요약</p>
+</div>
+</div>
+<button class="text-[11px] font-bold text-indigo-600 hover:text-indigo-700" onclick="openBoardNoticesTab()" type="button">전체 보기 →</button>
+</div>
+<div class="space-y-2" id="homeBoardNoticeList"></div>
+</div>
+
 <div class="grid grid-cols-2 gap-2.5">
 <div class="bg-white p-3 rounded-xl border border-slate-200/80 shadow-xs hover:border-indigo-300 transition-all cursor-pointer flex items-center gap-2.5" onclick="switchBottomTab('attendance')">
 <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
@@ -296,6 +310,7 @@
 <main class="hidden flex-1 overflow-y-auto px-4 py-3.5 space-y-4 pb-20 custom-scrollbar" id="tabView-letters">
 <div class="bg-slate-200/80 p-1 rounded-xl flex gap-1">
 <button class="flex-1 py-2 text-xs font-semibold rounded-lg bg-white text-indigo-600 shadow-sm transition-all" id="subTabBtn-circulars" onclick="switchLettersSubTab('circulars')">가정통신문·수요조사</button>
+<button class="flex-1 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 rounded-lg transition-all" id="subTabBtn-board" onclick="switchLettersSubTab('board')">학급 공지</button>
 <button class="flex-1 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 rounded-lg transition-all" id="subTabBtn-budget" onclick="switchLettersSubTab('budget')">학급비 투명 공개</button>
 </div>
 
@@ -305,6 +320,14 @@
 <span class="text-[10px] text-indigo-600 font-medium">터치 서명 지원</span>
 </div>
 <div class="space-y-2.5" id="circularsList"></div>
+</div>
+
+<div class="hidden space-y-3" id="lettersSection-board">
+<div class="flex items-center justify-between">
+<p class="text-xs font-bold text-slate-700">학급 공지 게시판</p>
+<span class="text-[10px] text-slate-400 font-medium" id="boardNoticesCountLabel">총 0건</span>
+</div>
+<div class="space-y-2.5" id="boardNoticesList"></div>
 </div>
 
 <div class="hidden space-y-3" id="lettersSection-budget">
@@ -521,6 +544,13 @@
 <span class="text-[10px] text-slate-400" id="teacherCircularCount">총 0건 진행중</span>
 </div>
 <div class="space-y-3" id="teacherCircularsContainer"></div>
+<div class="pt-2 border-t border-slate-200/80 space-y-2.5" id="teacherBoardNoticesSection">
+<div class="flex items-center justify-between">
+<h4 class="text-xs font-bold text-slate-800 flex items-center gap-1.5"><span>📌 학급 공지 게시판</span></h4>
+<span class="text-[10px] text-slate-400" id="teacherBoardNoticeCount">총 0건</span>
+</div>
+<div class="space-y-2.5" id="teacherBoardNoticesContainer"></div>
+</div>
 </main>
 
 <!-- TEACHER TAB 4: PC Remote Agent Task Queue -->
@@ -694,6 +724,33 @@
 <span class="w-1 h-1 rounded-full bg-transparent"></span>
 </button>
 </nav>
+
+<!-- Modal: Class Board Notice Detail -->
+<div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="boardNoticeModal" onclick="if(event.target===this) closeBoardNoticeModal()">
+<div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3.5 max-h-[88%] flex flex-col overflow-y-auto custom-scrollbar">
+<div class="flex items-center justify-between pb-2 border-b border-slate-100">
+<div class="flex items-center gap-1.5">
+<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700" id="boardModalSourceBadge">담임 공지</span>
+<span class="hidden text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-800" id="boardModalPinnedBadge">📌 상단 고정</span>
+</div>
+<button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeBoardNoticeModal()" type="button">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</button>
+</div>
+<div class="space-y-1">
+<h3 class="text-sm font-bold text-slate-900 leading-snug" id="boardModalTitle"></h3>
+<p class="text-[10px] text-slate-400" id="boardModalMeta"></p>
+</div>
+<div class="hidden bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 space-y-1" id="boardModalSummaryBox">
+<p class="text-[10px] font-bold text-indigo-700">핵심 요약</p>
+<p class="text-xs text-slate-700 leading-relaxed whitespace-pre-line" id="boardModalSummary"></p>
+</div>
+<div class="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5">
+<p class="text-xs text-slate-700 leading-relaxed whitespace-pre-line" id="boardModalContent"></p>
+</div>
+<a class="hidden w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl text-center transition-all" id="boardModalSourceLink" rel="noopener noreferrer" target="_blank">원문 링크 열기 ↗</a>
+</div>
+</div>
 
 <!-- Modal: Circular Signature & Form -->
 <div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="circularModal">

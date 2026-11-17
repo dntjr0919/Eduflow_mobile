@@ -1219,6 +1219,115 @@ function renderTeacherCirculars() {
   }).join('');
 }
 
+function renderTeacherBoardNotices() {
+  const container = document.getElementById('teacherBoardNoticesContainer');
+  const countEl = document.getElementById('teacherBoardNoticeCount');
+  const list = Array.isArray(mockData.boardNotices) ? mockData.boardNotices : [];
+  if (countEl) countEl.innerText = `총 ${list.length}건`;
+  if (!container) return;
+  if (list.length === 0) {
+    container.innerHTML = `<div class="bg-white p-5 rounded-2xl border border-slate-200/80 text-center text-xs text-slate-400">게시된 학급 공지가 없습니다.</div>`;
+    return;
+  }
+  const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
+  const badgeClsFn = typeof _getBoardSourceBadgeClass === 'function'
+    ? _getBoardSourceBadgeClass
+    : (() => 'bg-indigo-50 text-indigo-700 border border-indigo-200/80');
+  const fmtDateFn = typeof _formatBoardDate === 'function'
+    ? _formatBoardDate
+    : (d => String(d || '').slice(0, 10));
+  const safeUrlFn = typeof _safeHttpUrl === 'function'
+    ? _safeHttpUrl
+    : (u => (/^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : ''));
+
+  container.innerHTML = list.map((n) => {
+    const badgeCls = badgeClsFn(n.sourceType);
+    const dateLabel = fmtDateFn(n.publishedAt);
+    const safeUrl = safeUrlFn(n.sourceUrl);
+    const pinBtnCls = n.isPinned
+      ? 'bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300/80'
+      : 'bg-slate-100 hover:bg-slate-200 text-slate-700';
+    return `
+      <div class="bg-white p-3.5 rounded-2xl border ${n.isPinned ? 'border-amber-300/90' : 'border-slate-200/80'} shadow-xs space-y-2">
+        <div onclick="typeof openBoardNoticeModal === 'function' && openBoardNoticeModal('${esc(n.id)}')" class="cursor-pointer space-y-1.5">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeCls}">${esc(n.sourceType || '담임 공지')}</span>
+              ${n.isPinned ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-600">📌 상단 고정</span>' : ''}
+            </div>
+            <span class="text-[10px] text-slate-400 shrink-0">${esc(dateLabel)}</span>
+          </div>
+          <h4 class="text-xs font-bold text-slate-800 leading-snug">${esc(n.title || '제목 없음')}</h4>
+          ${n.summary ? `<p class="text-[11px] text-slate-600 leading-relaxed">${esc(n.summary)}</p>` : ''}
+          ${safeUrl ? `<a href="${esc(safeUrl)}" onclick="event.stopPropagation()" target="_blank" rel="noopener noreferrer" class="inline-block text-[10px] font-bold text-indigo-600 hover:underline">원문 링크 ↗</a>` : ''}
+        </div>
+        <div class="flex gap-2 pt-1 border-t border-slate-100">
+          <button type="button" onclick="toggleBoardNoticePin('${esc(n.id)}', this)" class="flex-1 py-1.5 text-[11px] font-bold rounded-xl transition-all ${pinBtnCls}">${n.isPinned ? '📌 고정 해제' : '📌 상단 고정'}</button>
+          <button type="button" onclick="deleteBoardNotice('${esc(n.id)}', this)" class="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold rounded-xl transition-all">삭제</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function toggleBoardNoticePin(noticeId, btnEl) {
+  const list = Array.isArray(mockData.boardNotices) ? mockData.boardNotices : [];
+  const target = list.find((n) => n.id === noticeId);
+  if (!target) return;
+  const nextPinned = !target.isPinned;
+
+  await withButtonLoading(btnEl, '처리 중...', async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('upsert_board_notice', {
+          remote_id: noticeId,
+          is_pinned: nextPinned
+        });
+      } catch (err) {
+        if (!err.isDemo) {
+          showToast(`고정 상태 변경 실패: ${err.message}`, '⚠️');
+          return;
+        }
+      }
+    }
+    target.isPinned = nextPinned;
+    mockData.boardNotices = list.slice().sort((a, b) => {
+      const pinDiff = (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0);
+      if (pinDiff !== 0) return pinDiff;
+      return String(b.publishedAt || '').localeCompare(String(a.publishedAt || ''));
+    });
+    renderTeacherBoardNotices();
+    if (typeof renderBoardNotices === 'function') renderBoardNotices();
+    showToast(nextPinned ? '공지를 상단에 고정했습니다.' : '상단 고정을 해제했습니다.');
+  });
+}
+
+async function deleteBoardNotice(noticeId, btnEl) {
+  const list = Array.isArray(mockData.boardNotices) ? mockData.boardNotices : [];
+  const target = list.find((n) => n.id === noticeId);
+  if (!target) return;
+  if (typeof confirm === 'function' && !confirm(`"${target.title || '이 공지'}"를 삭제하시겠습니까?`)) {
+    return;
+  }
+
+  await withButtonLoading(btnEl, '삭제 중...', async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('delete_board_notice', { remote_id: noticeId });
+      } catch (err) {
+        if (!err.isDemo) {
+          showToast(`공지 삭제 실패: ${err.message}`, '⚠️');
+          return;
+        }
+      }
+    }
+    mockData.boardNotices = list.filter((n) => n.id !== noticeId);
+    renderTeacherBoardNotices();
+    if (typeof renderBoardNotices === 'function') renderBoardNotices();
+    showToast('학급 공지가 삭제되었습니다.');
+  });
+}
+
 function openCandidateNoticeModal(circularId) {
   const c = (mockData.circulars || []).find(x => x.id === circularId);
   if (!c) return;

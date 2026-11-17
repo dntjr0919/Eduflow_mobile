@@ -625,7 +625,8 @@ async function _handleGetMobileBundle(db, params) {
     docRulesRows,
     chatRows,
     notificationsRaw,
-    budgetRows
+    budgetRows,
+    boardNoticesRows
   ] = await Promise.all([
     _getCachedOrFetch(teacherCacheKey, forceRefresh, () => (
       role === 'teacher' && userId
@@ -679,7 +680,10 @@ async function _handleGetMobileBundle(db, params) {
     db.collection('Notifications').where('is_read', '==', false).limit(50).get().then(_snapToRows),
     gradeIn.length > 0
       ? db.collection('학급회비').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
-      : db.collection('학급회비').limit(100).get().then(_snapToRows)
+      : db.collection('학급회비').limit(100).get().then(_snapToRows),
+    gradeIn.length > 0
+      ? db.collection('학급_공지게시판').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
+      : db.collection('학급_공지게시판').limit(100).get().then(_snapToRows)
   ]);
 
   const effectiveTeacherName = normTeacherParam || (role === 'teacher' && teachersRaw[0] ? _normalizeTeacherName(teachersRaw[0].name || teachersRaw[0].teacher_id || '') : '');
@@ -779,7 +783,24 @@ async function _handleGetMobileBundle(db, params) {
     timetable_changes: timetableChangesRows.filter(_matchesTimetableRow),
     chat_messages: chatRows.filter((d) => _matchesTenant(d, tenant)),
     notifications: notificationsRaw.filter((d) => _matchesTenant(d, tenant)),
-    budget: budgetRows.filter((d) => _matchesTenant(d, tenant))
+    budget: budgetRows.filter((d) => _matchesTenant(d, tenant)),
+    board_notices: (boardNoticesRows || [])
+      .filter((d) => {
+        if (!_matchesTenant(d, tenant)) return false;
+        if (!isTeacherRole) {
+          const isPub = d.is_published === undefined ? true : _toBool(d.is_published);
+          if (!isPub) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const pinA = _toBool(a.is_pinned) ? 1 : 0;
+        const pinB = _toBool(b.is_pinned) ? 1 : 0;
+        if (pinA !== pinB) return pinB - pinA;
+        return String(b.published_at || b.created_at || b.updated_at || '').localeCompare(
+          String(a.published_at || a.created_at || a.updated_at || '')
+        );
+      })
   };
 
   if (timetableBaseRows !== undefined) bundle.timetable_base = timetableBaseRows.filter(_matchesTimetableRow);
@@ -1567,6 +1588,20 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(resSync);
     }
 
+    const hasDesktopAuth = Boolean(
+      params.auth_teacher_id || params.auth_password || params.auth_password_hash
+    );
+
+    if (!hasDesktopAuth && action === 'upsert_board_notice') {
+      const resUpsert = await _upsertBoardNotice(db, params, null);
+      return res.status(resUpsert.status || 200).json(resUpsert.json);
+    }
+
+    if (!hasDesktopAuth && action === 'delete_board_notice') {
+      const resDel = await _deleteBoardNotice(db, params);
+      return res.status(resDel.status || 200).json(resDel.json);
+    }
+
     // =========================================================================
     // 데스크톱 앱 하이브리드 백엔드(Vercel API 모드) 전용 인증 기반 액션
     // =========================================================================
@@ -1587,6 +1622,8 @@ module.exports = async function handler(req, res) {
       'send_class_notification',
       'fetch_sent_notifications',
       'fetch_chat_history',
+      'upsert_board_notice',
+      'delete_board_notice',
     ]);
 
     if (desktopActions.has(action)) {
@@ -1997,7 +2034,94 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     return { status: 200, json: { ok: true, messages: filtered } };
   }
 
+  if (action === 'upsert_board_notice') {
+    return await _upsertBoardNotice(db, params, auth);
+  }
+
+  if (action === 'delete_board_notice') {
+    return await _deleteBoardNotice(db, params);
+  }
+
   return { status: 400, json: { ok: false, error: `지원하지 않는 데스크톱 action입니다: ${action}` } };
+}
+
+function _normalizeBoardSourceType(raw) {
+  const s = String(raw || '').trim();
+  const low = s.toLowerCase();
+  if (!s) return '담임 공지';
+  if (low === 'school_bell' || low === 'schoolbell' || s.includes('학교종이')) return '학교종이';
+  if (low === 'kakao' || low === 'kakaotalk' || s.includes('카톡') || s.includes('카카오')) return '학급 카톡';
+  if (low === 'homeroom' || low === 'teacher' || s.includes('담임')) return '담임 공지';
+  return s;
+}
+
+async function _upsertBoardNotice(db, params, auth = null) {
+  const rid = String(params.remote_id || params.notice_id || params.id || `board_${Date.now()}`).trim();
+  const docRef = db.collection('학급_공지게시판').doc(rid);
+  const existingSnap = await docRef.get();
+  const existing = existingSnap.exists ? (existingSnap.data() || {}) : {};
+  const nowStr = _nowStr();
+
+  const resolvedTitle = params.title !== undefined
+    ? String(params.title || '').trim()
+    : String(existing.title || '').trim();
+  const resolvedSummary = (params.summary !== undefined || params.key_summary !== undefined)
+    ? String(params.summary !== undefined ? params.summary : (params.key_summary || '')).trim()
+    : String(existing.summary || existing.key_summary || '').trim();
+  const resolvedContent = (params.content !== undefined || params.body !== undefined)
+    ? String(params.content !== undefined ? params.content : (params.body || '')).trim()
+    : String(existing.content || existing.body || '').trim();
+
+  if (!existingSnap.exists && !resolvedTitle) {
+    return { status: 400, json: { ok: false, error: '공지 제목(title)이 필요합니다.' } };
+  }
+
+  const rawSource = (params.source_type !== undefined || params.source !== undefined)
+    ? (params.source_type !== undefined ? params.source_type : params.source)
+    : (existing.source_type || existing.source || '담임 공지');
+
+  const isPinned = params.is_pinned !== undefined
+    ? _toBool(params.is_pinned)
+    : (existing.is_pinned !== undefined ? _toBool(existing.is_pinned) : false);
+  const isPublished = params.is_published !== undefined
+    ? _toBool(params.is_published)
+    : (existing.is_published !== undefined ? _toBool(existing.is_published) : true);
+
+  const payload = {
+    remote_id: rid,
+    title: resolvedTitle,
+    summary: resolvedSummary,
+    content: resolvedContent,
+    source_type: _normalizeBoardSourceType(rawSource),
+    source_url: params.source_url !== undefined ? String(params.source_url || '').trim() : String(existing.source_url || '').trim(),
+    is_pinned: isPinned,
+    is_published: isPublished,
+    published_at: String(params.published_at || existing.published_at || nowStr).trim(),
+    created_at: String(params.created_at || existing.created_at || nowStr).trim(),
+    updated_at: nowStr,
+    author_name: String(
+      params.author_name ||
+      (auth && auth.teacherDoc && auth.teacherDoc.name) ||
+      existing.author_name ||
+      '담임교사'
+    ).trim(),
+    grade: _toIntOrNull(params.grade ?? params.target_grade ?? (auth ? auth.gradeNum : null) ?? existing.grade),
+    class_no: _toIntOrNull(params.class_no ?? params.target_class ?? (auth ? auth.classNum : null) ?? existing.class_no),
+    school_code: String(params.school_code || (auth && auth.schoolCode) || existing.school_code || '').trim(),
+    school_name: String(params.school_name || (auth && auth.schoolName) || existing.school_name || '').trim()
+  };
+
+  await docRef.set(payload, { merge: true });
+  return { status: 200, json: { ok: true, remote_id: rid, notice: payload } };
+}
+
+async function _deleteBoardNotice(db, params) {
+  const rid = String(params.remote_id || params.notice_id || params.id || '').trim();
+  if (!rid) {
+    return { status: 400, json: { ok: false, error: 'remote_id가 필요합니다.' } };
+  }
+  await db.collection('학급_공지게시판').doc(rid).delete();
+  return { status: 200, json: { ok: true, remote_id: rid, deleted: true } };
 }
 
 async function _createNoticePublishedNotification(db, notice) {
@@ -2038,4 +2162,7 @@ module.exports._testHelpers = {
   _verifyActiveTeacherAuth,
   _handleDesktopApiAction,
   _createNoticePublishedNotification,
+  _normalizeBoardSourceType,
+  _upsertBoardNotice,
+  _deleteBoardNotice,
 };

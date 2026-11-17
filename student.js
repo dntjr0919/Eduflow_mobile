@@ -776,12 +776,167 @@ function renderAttendanceHistory() {
   }).join('');
 }
 
-// --- TAB 3: Circulars & Class Budget ---
+// --- TAB 3: Circulars, Class Board & Class Budget ---
 function switchLettersSubTab(sub) {
-  document.getElementById('subTabBtn-circulars').className = sub === 'circulars' ? "flex-1 py-2 text-xs font-semibold rounded-lg bg-white text-indigo-600 shadow-sm transition-all" : "flex-1 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 rounded-lg transition-all";
-  document.getElementById('subTabBtn-budget').className = sub === 'budget' ? "flex-1 py-2 text-xs font-semibold rounded-lg bg-white text-indigo-600 shadow-sm transition-all" : "flex-1 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 rounded-lg transition-all";
-  document.getElementById('lettersSection-circulars').classList.toggle('hidden', sub !== 'circulars');
-  document.getElementById('lettersSection-budget').classList.toggle('hidden', sub !== 'budget');
+  const tabs = ['circulars', 'board', 'budget'];
+  tabs.forEach((t) => {
+    const btn = document.getElementById(`subTabBtn-${t}`);
+    const sec = document.getElementById(`lettersSection-${t}`);
+    if (btn) {
+      btn.className = sub === t
+        ? "flex-1 py-2 text-xs font-semibold rounded-lg bg-white text-indigo-600 shadow-sm transition-all"
+        : "flex-1 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 rounded-lg transition-all";
+    }
+    if (sec) {
+      sec.classList.toggle('hidden', sub !== t);
+    }
+  });
+}
+
+function openBoardNoticesTab() {
+  switchBottomTab('letters');
+  switchLettersSubTab('board');
+}
+
+function _getBoardSourceBadgeClass(sourceType) {
+  const s = String(sourceType || '').trim();
+  if (s === '학교종이') return 'bg-amber-100 text-amber-800 border border-amber-200/80';
+  if (s === '학급 카톡') return 'bg-yellow-100 text-yellow-800 border border-yellow-300/80';
+  return 'bg-indigo-50 text-indigo-700 border border-indigo-200/80';
+}
+
+function _safeHttpUrl(rawUrl) {
+  const s = String(rawUrl || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  return '';
+}
+
+function _formatBoardDate(rawDate) {
+  const s = String(rawDate || '').trim();
+  if (!s) return '';
+  return s.slice(0, 10);
+}
+
+function renderBoardNotices() {
+  const listEl = document.getElementById('boardNoticesList');
+  const countEl = document.getElementById('boardNoticesCountLabel');
+  const homeListEl = document.getElementById('homeBoardNoticeList');
+  const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (v => String(v ?? ''));
+
+  const published = (mockData.boardNotices || []).filter((n) => n && n.isPublished !== false);
+
+  if (countEl) countEl.innerText = `총 ${published.length}건`;
+
+  if (homeListEl) {
+    if (published.length === 0) {
+      homeListEl.innerHTML = `<div class="bg-slate-50 rounded-xl p-3 text-center text-[11px] text-slate-400">등록된 학급 공지가 없습니다.</div>`;
+    } else {
+      const topItems = published.slice(0, 2);
+      homeListEl.innerHTML = topItems.map((n) => {
+        const badgeCls = _getBoardSourceBadgeClass(n.sourceType);
+        const dateLabel = _formatBoardDate(n.publishedAt);
+        return `
+          <div onclick="openBoardNoticeModal('${esc(n.id)}')" class="p-2.5 rounded-xl bg-slate-50/90 hover:bg-indigo-50/50 border border-slate-200/70 transition-all cursor-pointer space-y-1">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-1 min-w-0">
+                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${badgeCls} shrink-0">${esc(n.sourceType || '담임 공지')}</span>
+                ${n.isPinned ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 shrink-0">📌 고정</span>' : ''}
+              </div>
+              <span class="text-[10px] text-slate-400 shrink-0">${esc(dateLabel)}</span>
+            </div>
+            <p class="text-xs font-bold text-slate-800 truncate">${esc(n.title || '제목 없음')}</p>
+            ${n.summary ? `<p class="text-[11px] text-slate-600 line-clamp-1">${esc(n.summary)}</p>` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  if (!listEl) return;
+  if (published.length === 0) {
+    listEl.innerHTML = `<div class="bg-white p-5 rounded-2xl border border-slate-200/80 text-center text-xs text-slate-400">등록된 학급 공지가 없습니다.</div>`;
+    return;
+  }
+
+  listEl.innerHTML = published.map((n) => {
+    const badgeCls = _getBoardSourceBadgeClass(n.sourceType);
+    const dateLabel = _formatBoardDate(n.publishedAt);
+    const safeUrl = _safeHttpUrl(n.sourceUrl);
+    return `
+      <div onclick="openBoardNoticeModal('${esc(n.id)}')" class="bg-white p-3.5 rounded-2xl border ${n.isPinned ? 'border-amber-300/90 ring-1 ring-amber-100' : 'border-slate-200/80'} shadow-xs hover:border-indigo-300 transition-all cursor-pointer space-y-1.5">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeCls}">${esc(n.sourceType || '담임 공지')}</span>
+            ${n.isPinned ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-600">📌 고정</span>' : ''}
+          </div>
+          <span class="text-[10px] text-slate-400 shrink-0">${esc(dateLabel)}</span>
+        </div>
+        <h4 class="text-xs font-bold text-slate-900 leading-snug">${esc(n.title || '제목 없음')}</h4>
+        ${n.summary ? `<p class="text-[11px] text-slate-600 leading-relaxed">${esc(n.summary)}</p>` : ''}
+        <div class="flex items-center justify-between pt-1">
+          <span class="text-[10px] text-slate-400">${esc(n.authorName || '담임교사')}</span>
+          <div class="flex items-center gap-2">
+            ${safeUrl ? `<a href="${esc(safeUrl)}" onclick="event.stopPropagation()" target="_blank" rel="noopener noreferrer" class="text-[10px] font-bold text-indigo-600 hover:underline bg-indigo-50 px-2 py-0.5 rounded-lg">원문 링크 ↗</a>` : ''}
+            <span class="text-[10px] font-bold text-slate-500">상세 보기 →</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function openBoardNoticeModal(noticeId) {
+  const n = (mockData.boardNotices || []).find((x) => x.id === noticeId);
+  if (!n) return;
+  const modal = document.getElementById('boardNoticeModal');
+  if (!modal) return;
+
+  const badgeEl = document.getElementById('boardModalSourceBadge');
+  const pinEl = document.getElementById('boardModalPinnedBadge');
+  const titleEl = document.getElementById('boardModalTitle');
+  const metaEl = document.getElementById('boardModalMeta');
+  const summaryBoxEl = document.getElementById('boardModalSummaryBox');
+  const summaryEl = document.getElementById('boardModalSummary');
+  const contentEl = document.getElementById('boardModalContent');
+  const linkEl = document.getElementById('boardModalSourceLink');
+
+  if (badgeEl) {
+    badgeEl.className = `text-[10px] font-bold px-2 py-0.5 rounded-md ${_getBoardSourceBadgeClass(n.sourceType)}`;
+    badgeEl.innerText = n.sourceType || '담임 공지';
+  }
+  if (pinEl) {
+    pinEl.classList.toggle('hidden', !n.isPinned);
+  }
+  if (titleEl) titleEl.innerText = n.title || '제목 없음';
+  if (metaEl) {
+    const parts = [n.authorName || '담임교사', _formatBoardDate(n.publishedAt)].filter(Boolean);
+    metaEl.innerText = parts.join(' · ');
+  }
+  if (summaryBoxEl && summaryEl) {
+    const hasSummary = Boolean(String(n.summary || '').trim());
+    summaryBoxEl.classList.toggle('hidden', !hasSummary);
+    summaryEl.innerText = n.summary || '';
+  }
+  if (contentEl) {
+    contentEl.innerText = n.content || n.summary || '상세 본문 내용이 없습니다.';
+  }
+  if (linkEl) {
+    const safeUrl = _safeHttpUrl(n.sourceUrl);
+    if (safeUrl) {
+      linkEl.href = safeUrl;
+      linkEl.classList.remove('hidden');
+    } else {
+      linkEl.removeAttribute('href');
+      linkEl.classList.add('hidden');
+    }
+  }
+  modal.classList.remove('hidden');
+}
+
+function closeBoardNoticeModal() {
+  const modal = document.getElementById('boardNoticeModal');
+  if (modal) modal.classList.add('hidden');
 }
 
 function renderCirculars() {
