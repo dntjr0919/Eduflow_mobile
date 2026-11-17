@@ -1227,39 +1227,126 @@ function openCandidateNoticeModal(circularId) {
   const dueDateEl = document.getElementById('candidateNoticeDueDate');
   const contentEl = document.getElementById('candidateNoticeContent');
   const badgeEl = document.getElementById('candidateNoticeReplyBadge');
-  const previewEl = document.getElementById('candidateNoticeSchemaPreview');
 
   if (titleEl) titleEl.value = c.title || '';
   if (dueDateEl) dueDateEl.value = c.dueDate || '';
   if (contentEl) contentEl.value = c.content || '';
   if (badgeEl) badgeEl.innerText = c.requiresReply ? '자필서명 필수' : '회신 불필요';
 
-  if (previewEl) {
-    const fields = typeof _parseNoticeReplySchema === 'function'
-      ? _parseNoticeReplySchema(c.replySchemaJson, c.replyFields)
-      : [];
-    const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
-    if (fields.length === 0) {
-      previewEl.innerHTML = `<p class="text-[11px] text-slate-400">${c.requiresReply ? '추출된 동적 입력칸이 없어 기본 동의/미동의 및 서명란이 표시됩니다.' : '입력칸 없음 (열람용 안내문)'}</p>`;
-    } else {
-      const typeLabelMap = { radio: '단일선택(라디오)', checkbox: '복수선택(체크)', text: '단답형', textarea: '서술형' };
-      previewEl.innerHTML = fields.map((f, idx) => {
-        const optsText = f.options && f.options.length > 0
-          ? ` (${f.options.map(o => esc(o.label)).join(', ')})`
-          : '';
-        return `
-          <div class="bg-white border border-slate-200/80 rounded-xl px-2.5 py-2 flex items-start justify-between gap-2">
-            <div>
-              <p class="font-semibold text-slate-800">${idx + 1}. ${esc(f.label)}${f.required ? ' <span class="text-urgent-600">*</span>' : ''}</p>
-              ${optsText ? `<p class="text-[10px] text-slate-500 mt-0.5">선택지: ${optsText}</p>` : ''}
-            </div>
-            <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 shrink-0">${typeLabelMap[f.type] || f.type}</span>
-          </div>
-        `;
-      }).join('');
-    }
-  }
+  const sigMode = c.signatureMode === 'both' ? 'both' : 'single';
+  const sigRadio = document.querySelector(`input[name="candidateNoticeSignatureMode"][value="${sigMode}"]`);
+  if (sigRadio) sigRadio.checked = true;
+
+  const parsedFields = typeof _parseNoticeReplySchema === 'function'
+    ? _parseNoticeReplySchema(c.replySchemaJson, c.replyFields)
+    : [];
+  state.candidateNoticeFields = parsedFields.map((f, idx) => ({
+    name: f.name || `field_${idx}`,
+    label: f.label || `항목 ${idx + 1}`,
+    type: ['radio', 'checkbox', 'text', 'textarea'].includes(f.type) ? f.type : 'text',
+    optionsText: Array.isArray(f.options) ? f.options.map(o => o.label || o.value).filter(Boolean).join(', ') : '',
+    required: Boolean(f.required),
+    placeholder: f.placeholder || ''
+  }));
+
+  renderCandidateNoticeSchemaEditor();
   openModal('candidateNoticeModal');
+}
+
+function renderCandidateNoticeSchemaEditor() {
+  const previewEl = document.getElementById('candidateNoticeSchemaPreview');
+  if (!previewEl) return;
+  const fields = Array.isArray(state.candidateNoticeFields) ? state.candidateNoticeFields : [];
+  const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
+
+  if (fields.length === 0) {
+    previewEl.innerHTML = `<p class="text-[11px] text-slate-400 py-1">등록된 입력칸이 없습니다. [+ 항목 추가]로 추가하거나 항목 없이 기본 동의/서명란으로 게시할 수 있습니다.</p>`;
+    return;
+  }
+
+  previewEl.innerHTML = fields.map((f, idx) => {
+    const showOpts = f.type === 'radio' || f.type === 'checkbox';
+    return `
+      <div class="bg-white border border-slate-200/90 rounded-xl p-2.5 space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[10px] font-bold text-indigo-600">항목 ${idx + 1}</span>
+          <div class="flex items-center gap-2">
+            <label class="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 cursor-pointer">
+              <input type="checkbox" class="rounded text-indigo-600 focus:ring-indigo-500" ${f.required ? 'checked' : ''} onchange="updateCandidateNoticeField(${idx}, 'required', this.checked)"/>
+              <span>필수</span>
+            </label>
+            <button type="button" onclick="removeCandidateNoticeSchemaField(${idx})" class="text-[10px] font-semibold text-rose-500 hover:text-rose-700 px-1.5 py-0.5 rounded bg-rose-50">삭제</button>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-1.5">
+          <input type="text" value="${esc(f.label)}" oninput="updateCandidateNoticeField(${idx}, 'label', this.value)" placeholder="항목명" class="col-span-2 text-[11px] px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+          <select onchange="updateCandidateNoticeField(${idx}, 'type', this.value)" class="text-[11px] px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+            <option value="radio" ${f.type === 'radio' ? 'selected' : ''}>단일선택</option>
+            <option value="checkbox" ${f.type === 'checkbox' ? 'selected' : ''}>복수선택</option>
+            <option value="text" ${f.type === 'text' ? 'selected' : ''}>단답형</option>
+            <option value="textarea" ${f.type === 'textarea' ? 'selected' : ''}>서술형</option>
+          </select>
+        </div>
+        ${showOpts ? `
+          <div>
+            <input type="text" value="${esc(f.optionsText)}" oninput="updateCandidateNoticeField(${idx}, 'optionsText', this.value)" placeholder="선택지 (쉼표로 구분, 예: 동의, 미동의)" class="w-full text-[11px] px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"/>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function updateCandidateNoticeField(idx, key, val) {
+  if (!Array.isArray(state.candidateNoticeFields) || !state.candidateNoticeFields[idx]) return;
+  state.candidateNoticeFields[idx][key] = val;
+  if (key === 'type') {
+    renderCandidateNoticeSchemaEditor();
+  }
+}
+
+function addCandidateNoticeSchemaField() {
+  if (!Array.isArray(state.candidateNoticeFields)) state.candidateNoticeFields = [];
+  const nextNum = state.candidateNoticeFields.length + 1;
+  state.candidateNoticeFields.push({
+    name: `field_${Date.now()}_${nextNum}`,
+    label: `새 항목 ${nextNum}`,
+    type: 'text',
+    optionsText: '',
+    required: false,
+    placeholder: ''
+  });
+  renderCandidateNoticeSchemaEditor();
+}
+
+function removeCandidateNoticeSchemaField(idx) {
+  if (!Array.isArray(state.candidateNoticeFields)) return;
+  state.candidateNoticeFields.splice(idx, 1);
+  renderCandidateNoticeSchemaEditor();
+}
+
+function _buildCandidateNoticeSchemaPayload() {
+  const fields = Array.isArray(state.candidateNoticeFields) ? state.candidateNoticeFields : [];
+  return fields.map((f, idx) => {
+    const type = ['radio', 'checkbox', 'text', 'textarea'].includes(f.type) ? f.type : 'text';
+    const label = String(f.label || '').trim() || `항목 ${idx + 1}`;
+    const name = String(f.name || '').trim() || `field_${idx}`;
+    const opts = (type === 'radio' || type === 'checkbox')
+      ? String(f.optionsText || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+          .map(s => ({ label: s, value: s }))
+      : [];
+    return {
+      name,
+      label,
+      type,
+      options: opts,
+      required: Boolean(f.required),
+      placeholder: String(f.placeholder || '')
+    };
+  });
 }
 
 function closeCandidateNoticeModal() {
@@ -1278,6 +1365,11 @@ async function publishCandidateNotice(btnEl) {
     return;
   }
 
+  const sigModeEl = document.querySelector('input[name="candidateNoticeSignatureMode"]:checked');
+  const signatureMode = sigModeEl && sigModeEl.value === 'both' ? 'both' : 'single';
+  const editedFields = _buildCandidateNoticeSchemaPayload();
+  const replySchemaJson = JSON.stringify(editedFields);
+
   await withButtonLoading(btnEl, '게시 중...', async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
@@ -1288,7 +1380,8 @@ async function publishCandidateNotice(btnEl) {
             due_date: dueDate,
             content,
             category: c.docNum || '가정통신문',
-            reply_schema_json: c.replySchemaJson || '',
+            reply_schema_json: replySchemaJson,
+            signature_mode: signatureMode,
             requires_reply: c.requiresReply ? 1 : 0,
             target_grade: c.targetGrade || mockData.currentUser.grade || '',
             target_class: c.targetClass || mockData.currentUser.classNo || '',
@@ -1307,6 +1400,9 @@ async function publishCandidateNotice(btnEl) {
     c.dueDate = dueDate;
     c.deadline = dueDate ? `${dueDate} 마감` : '상시';
     c.content = content;
+    c.replySchemaJson = replySchemaJson;
+    c.replyFields = editedFields;
+    c.signatureMode = signatureMode;
     c.isPublished = true;
 
     closeCandidateNoticeModal();
@@ -1317,6 +1413,18 @@ async function publishCandidateNotice(btnEl) {
 }
 
 function openNewCircularModal() {
+  const titleEl = document.getElementById('newCircularTitle');
+  const contentEl = document.getElementById('newCircularContent');
+  const dueDateEl = document.getElementById('newCircularDueDate');
+  const reqReplyEl = document.getElementById('newCircularRequiresReply');
+  const singleRadio = document.querySelector('input[name="newCircularSignatureMode"][value="single"]');
+
+  if (titleEl) titleEl.value = '';
+  if (contentEl) contentEl.value = '';
+  if (dueDateEl) dueDateEl.value = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+  if (reqReplyEl) reqReplyEl.checked = true;
+  if (singleRadio) singleRadio.checked = true;
+  toggleNewCircularReplyMode();
   openModal('newCircularModal');
 }
 
@@ -1324,69 +1432,93 @@ function closeNewCircularModal() {
   closeModal('newCircularModal');
 }
 
-function toggleSignBoxPin() {
-  state.isSignBoxPinned = !state.isSignBoxPinned;
-  const box = document.getElementById('pinpointSignBox');
-  const badge = document.getElementById('signPinBadge');
-  if (state.isSignBoxPinned) {
-    box.className = "border-2 border-dashed border-indigo-600 bg-indigo-50/80 rounded-lg p-2 text-center cursor-pointer transition-all hover:bg-indigo-100";
-    badge.innerText = "터치 지정됨";
-  } else {
-    box.className = "border-2 border-dashed border-slate-300 bg-slate-100 rounded-lg p-2 text-center cursor-pointer transition-all";
-    badge.innerText = "해제됨";
+function toggleNewCircularReplyMode() {
+  const reqReplyEl = document.getElementById('newCircularRequiresReply');
+  const sigWrap = document.getElementById('newCircularSignatureModeWrap');
+  if (reqReplyEl && sigWrap) {
+    sigWrap.classList.toggle('hidden', !reqReplyEl.checked);
   }
 }
 
-async function publishNewCircular() {
-  const title = document.getElementById('newCircularTitle').value.trim();
-  if (!title) return;
-  const noticeId = 'CIR-' + Date.now();
-  const dueDate = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+async function publishNewCircular(btnEl) {
+  const title = (document.getElementById('newCircularTitle')?.value || '').trim();
+  const content = (document.getElementById('newCircularContent')?.value || '').trim();
+  const dueDateInput = (document.getElementById('newCircularDueDate')?.value || '').trim();
+  const requiresReply = Boolean(document.getElementById('newCircularRequiresReply')?.checked);
+  const sigModeEl = document.querySelector('input[name="newCircularSignatureMode"]:checked');
+  const signatureMode = (requiresReply && sigModeEl && sigModeEl.value === 'both') ? 'both' : 'single';
 
-  mockData.circulars.unshift({
-    id: noticeId,
-    docNum: '가정통신문',
-    title,
-    dueDate,
-    deadline: `${dueDate} 마감`,
-    isPublished: true,
-    requiresReply: true,
-    replySchemaJson: '',
-    status: 'pending',
-    submittedCount: 0,
-    totalCount: mockData.students.length,
-    submittedStudentIds: [],
-    content: '학부모님의 가정에 늘 행운이 가득하시길 기원합니다. 참가 희망 여부를 전자 서명 후 회신 바랍니다.',
-    meta: [`대상: ${mockData.currentUser.gradeClass || '우리 반'} 전체`, '전자서명 좌표 매핑 완료']
-  });
-  closeNewCircularModal();
-  if (typeof renderCirculars === 'function') renderCirculars();
-  renderTeacherCirculars();
-
-  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
-    try {
-      await gasApi.post('upsert_notice', {
-        data: {
-          remote_id: noticeId,
-          title,
-          category: '가정통신문',
-          content: '참가 희망 여부를 전자 서명 후 회신 바랍니다.',
-          target_grade: mockData.currentUser.grade || '1',
-          target_class: mockData.currentUser.classNo || '3',
-          school_code: mockData.currentUser.neisSchoolCode || '',
-          school_name: mockData.currentUser.schoolName || '',
-          due_date: dueDate,
-          requires_reply: 1,
-          author_name: mockData.currentUser.teacherName || '담임교사',
-          is_published: 1
-        }
-      });
-    } catch (err) {
-      showToast(`가정통신문 배포 실패: ${err.message}`, '⚠️');
-      return;
-    }
+  if (!title) {
+    showToast('가정통신문 제목을 입력해 주세요.', '⚠️');
+    return;
   }
-  showToast('새 가정통신문이 배포되었습니다.');
+  if (!content) {
+    showToast('가정통신문 본문 내용을 입력해 주세요.', '⚠️');
+    return;
+  }
+
+  const noticeId = 'CIR-' + Date.now();
+  const dueDate = dueDateInput || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+
+  const runPublish = async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('upsert_notice', {
+          data: {
+            remote_id: noticeId,
+            title,
+            category: '가정통신문',
+            content,
+            target_grade: mockData.currentUser.grade || '1',
+            target_class: mockData.currentUser.classNo || '3',
+            school_code: mockData.currentUser.neisSchoolCode || '',
+            school_name: mockData.currentUser.schoolName || '',
+            due_date: dueDate,
+            requires_reply: requiresReply ? 1 : 0,
+            signature_mode: signatureMode,
+            author_name: mockData.currentUser.teacherName || '담임교사',
+            is_published: 1
+          }
+        });
+      } catch (err) {
+        showToast(`가정통신문 배포 실패: ${err.message}`, '⚠️');
+        return;
+      }
+    }
+
+    mockData.circulars.unshift({
+      id: noticeId,
+      docNum: '가정통신문',
+      title,
+      dueDate,
+      deadline: dueDate ? `${dueDate} 마감` : '상시',
+      isPublished: true,
+      requiresReply,
+      signatureMode,
+      replySchemaJson: '',
+      status: 'pending',
+      submittedCount: 0,
+      totalCount: mockData.students.length,
+      submittedStudentIds: [],
+      content,
+      meta: [
+        `대상: ${mockData.currentUser.gradeClass || '우리 반'} 전체`,
+        requiresReply
+          ? (signatureMode === 'both' ? '회신 필요 (학생·학부모 2칸 서명)' : '회신 필요 (전자서명 1칸)')
+          : '열람용 안내문'
+      ]
+    });
+    closeNewCircularModal();
+    if (typeof renderCirculars === 'function') renderCirculars();
+    renderTeacherCirculars();
+    showToast('새 가정통신문이 배포되었습니다.');
+  };
+
+  if (btnEl) {
+    await withButtonLoading(btnEl, '배포 중...', runPublish);
+  } else {
+    await runPublish();
+  }
 }
 
 function _getUnsubmittedStudents(circularId) {

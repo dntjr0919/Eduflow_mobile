@@ -718,29 +718,68 @@
 <span class="text-[10px] text-emerald-600" id="modalCircularSubmittedAt"></span>
 </div>
 <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs text-slate-700" id="modalCircularSubmittedAnswers"></div>
-<div class="hidden space-y-1.5" id="modalCircularSubmittedSigWrap">
+<div class="hidden space-y-2" id="modalCircularSubmittedSigWrap">
 <p class="text-[11px] font-bold text-slate-700">제출된 전자서명</p>
+<div class="hidden space-y-1" id="modalCircularSubmittedStudentSigBox">
+<p class="text-[10px] font-semibold text-slate-500">학생 전자서명</p>
+<div class="border border-slate-200 rounded-xl bg-white p-2 flex items-center justify-center">
+<img alt="제출된 학생 서명" class="max-h-24 object-contain" id="modalCircularSubmittedStudentSigImg"/>
+</div>
+</div>
+<div class="space-y-1" id="modalCircularSubmittedParentSigBox">
+<p class="text-[10px] font-semibold text-slate-500" id="modalCircularSubmittedSigLabel">전자서명</p>
 <div class="border border-slate-200 rounded-xl bg-white p-2 flex items-center justify-center">
 <img alt="제출된 서명" class="max-h-24 object-contain" id="modalCircularSubmittedSigImg"/>
+</div>
 </div>
 </div>
 </div>
 <div class="space-y-3.5" id="modalCircularFormView">
 <div class="space-y-3" id="modalCircularDynamicFields"></div>
 <div class="hidden bg-slate-50 border border-slate-200 rounded-xl p-3 text-center text-[11px] text-slate-500" id="modalCircularReadOnlyNote">회신이 필요 없는 안내문입니다.</div>
-<div id="modalCircularSignatureSection">
+<div class="space-y-3" id="modalCircularSignatureSection">
+<div id="modalCircularSingleSigWrap">
 <div class="flex items-center justify-between mb-1.5">
 <label class="text-[11px] font-bold text-slate-700 flex items-center gap-1">
 <span>터치 전자서명</span>
 <span class="text-[10px] text-urgent-600 font-normal">(필수)</span>
 </label>
-<button class="text-[10px] text-slate-500 hover:text-slate-800 bg-slate-100 px-2 py-0.5 rounded" onclick="clearSignaturePad()" type="button">서명 지우기</button>
+<button class="text-[10px] text-slate-500 hover:text-slate-800 bg-slate-100 px-2 py-0.5 rounded" onclick="clearSignaturePad('single')" type="button">서명 지우기</button>
 </div>
 <div class="border-2 border-dashed border-slate-300 rounded-xl bg-white relative overflow-hidden">
 <canvas class="w-full h-28 touch-none cursor-crosshair" height="120" id="signaturePad" width="380"></canvas>
 <div class="absolute inset-0 pointer-events-none flex items-center justify-center text-slate-300 text-xs font-medium" id="signaturePlaceholder">여기에 정자(서명)를 작성해 주세요</div>
 </div>
 <p class="text-[9px] text-slate-400 mt-1">학부모 또는 학생 본인이 손가락 또는 마우스로 정자 서명하세요.</p>
+</div>
+<div class="hidden space-y-3" id="modalCircularBothSigWrap">
+<div>
+<div class="flex items-center justify-between mb-1.5">
+<label class="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+<span>학생 전자서명</span>
+<span class="text-[10px] text-urgent-600 font-normal">(필수)</span>
+</label>
+<button class="text-[10px] text-slate-500 hover:text-slate-800 bg-slate-100 px-2 py-0.5 rounded" onclick="clearSignaturePad('student')" type="button">지우기</button>
+</div>
+<div class="border-2 border-dashed border-slate-300 rounded-xl bg-white relative overflow-hidden">
+<canvas class="w-full h-24 touch-none cursor-crosshair" height="110" id="studentSignaturePad" width="380"></canvas>
+<div class="absolute inset-0 pointer-events-none flex items-center justify-center text-slate-300 text-xs font-medium" id="studentSignaturePlaceholder">학생 본인 정자(서명)를 작성해 주세요</div>
+</div>
+</div>
+<div>
+<div class="flex items-center justify-between mb-1.5">
+<label class="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+<span>학부모(보호자) 전자서명</span>
+<span class="text-[10px] text-urgent-600 font-normal">(필수)</span>
+</label>
+<button class="text-[10px] text-slate-500 hover:text-slate-800 bg-slate-100 px-2 py-0.5 rounded" onclick="clearSignaturePad('parent')" type="button">지우기</button>
+</div>
+<div class="border-2 border-dashed border-slate-300 rounded-xl bg-white relative overflow-hidden">
+<canvas class="w-full h-24 touch-none cursor-crosshair" height="110" id="parentSignaturePad" width="380"></canvas>
+<div class="absolute inset-0 pointer-events-none flex items-center justify-center text-slate-300 text-xs font-medium" id="parentSignaturePlaceholder">학부모(보호자) 정자(서명)를 작성해 주세요</div>
+</div>
+</div>
+</div>
 </div>
 <button class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all" id="modalCircularSubmitBtn" onclick="submitCircularSignature(this)" type="button">서명 및 회신 제출하기</button>
 </div>
@@ -942,35 +981,42 @@
 <div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="newCircularModal">
 <div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3.5 max-h-[92%] flex flex-col overflow-y-auto custom-scrollbar">
 <div class="flex items-center justify-between pb-2 border-b border-slate-100">
-<div class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-indigo-600"></span><h4 class="font-bold text-slate-800 text-sm">새 가정통신문 전자서명 구역 설정</h4></div>
-<button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeNewCircularModal()"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg></button>
+<div class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-indigo-600"></span><h4 class="font-bold text-slate-800 text-sm">모바일 간편 가정통신문 작성</h4></div>
+<button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeNewCircularModal()" type="button"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg></button>
 </div>
-<div class="space-y-2.5">
+<div class="space-y-3">
 <div>
 <label class="block text-[11px] font-bold text-slate-700 mb-1">통신문 제목</label>
 <input class="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="newCircularTitle" placeholder="예: 2026학년도 1학기 현장체험학습 참가 신청서" type="text"/>
 </div>
-<div class="border-2 border-dashed border-indigo-200 rounded-2xl p-3 bg-slate-50 relative select-none">
-<div class="flex items-center justify-between mb-2">
-<span class="text-[10px] font-bold text-indigo-700 flex items-center gap-1"><span>📄 PDF 미리보기 &amp; AI 서명란 자동감지</span></span>
-<span class="text-[9px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">박스 클릭 토글</span>
+<div>
+<label class="block text-[11px] font-bold text-slate-700 mb-1">본문 내용</label>
+<textarea class="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none leading-relaxed" id="newCircularContent" placeholder="학부모님께 전달할 안내 내용을 입력해 주세요." rows="4"></textarea>
 </div>
-<div class="bg-white border border-slate-200 rounded-xl p-3 shadow-xs min-h-[160px] relative">
-<div class="text-center space-y-1 mb-3">
-<p class="text-[9px] text-slate-400">가정통신문 미리보기</p>
-<p class="text-[11px] font-bold text-slate-800" id="previewCircularHeaderTitle">전자서명 회신 동의서</p>
+<div>
+<label class="block text-[11px] font-bold text-slate-700 mb-1">회신 마감일</label>
+<input class="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="newCircularDueDate" type="date"/>
 </div>
-<p class="text-[9px] text-slate-500 leading-tight mb-4">학부모님의 가정에 늘 행운이 가득하시길 기원합니다. 1학기 방과후 야간 자기주도학습 실시와 관련하여 아래와 같이 희망 여부를 수합하오니 전자 서명 후 회신 바랍니다.</p>
-<div class="border-2 border-dashed border-indigo-600 bg-indigo-50/80 rounded-lg p-2 text-center cursor-pointer transition-all hover:bg-indigo-100" id="pinpointSignBox" onclick="toggleSignBoxPin()">
-<div class="flex items-center justify-between text-[9px] text-indigo-700 font-bold mb-1">
-<span id="signPinLabel">📍 [AI 감지됨] 학부모 전자서명란</span>
-<span class="bg-indigo-600 text-white px-1.5 py-0.2 rounded text-[8px]" id="signPinBadge">터치 지정됨</span>
+<div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2.5">
+<label class="flex items-center justify-between cursor-pointer">
+<span class="text-[11px] font-bold text-slate-700">회신·전자서명 필요 여부</span>
+<input checked="" class="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500" id="newCircularRequiresReply" onchange="toggleNewCircularReplyMode()" type="checkbox"/>
+</label>
+<div class="space-y-1.5 pt-1 border-t border-slate-200/80" id="newCircularSignatureModeWrap">
+<p class="text-[10px] font-semibold text-slate-500">서명 방식</p>
+<div class="grid grid-cols-2 gap-2">
+<label class="flex items-center gap-1.5 p-2 rounded-xl border border-slate-200 bg-white cursor-pointer has-[:checked]:bg-indigo-50 has-[:checked]:border-indigo-600 has-[:checked]:text-indigo-700 text-[11px] font-semibold">
+<input checked="" class="text-indigo-600 focus:ring-indigo-500" name="newCircularSignatureMode" type="radio" value="single"/>
+<span>서명 1칸</span>
+</label>
+<label class="flex items-center gap-1.5 p-2 rounded-xl border border-slate-200 bg-white cursor-pointer has-[:checked]:bg-indigo-50 has-[:checked]:border-indigo-600 has-[:checked]:text-indigo-700 text-[11px] font-semibold">
+<input class="text-indigo-600 focus:ring-indigo-500" name="newCircularSignatureMode" type="radio" value="both"/>
+<span>서명 2칸 (학생·학부모)</span>
+</label>
 </div>
-<p class="text-[8px] text-indigo-600">학생·학부모가 이 위치에서 터치 정자 서명을 진행합니다.</p>
 </div>
 </div>
-</div>
-<button class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all" onclick="publishNewCircular()">가정통신문 우리 반에 즉시 배포</button>
+<button class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all" onclick="publishNewCircular(this)" type="button">가정통신문 우리 반에 즉시 배포</button>
 </div>
 </div>
 </div>
@@ -997,10 +1043,26 @@
 </div>
 <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2">
 <div class="flex items-center justify-between">
-<span class="text-[11px] font-bold text-slate-700">추출된 입력칸 미리보기</span>
+<span class="text-[11px] font-bold text-slate-700">서명 방식</span>
 <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700" id="candidateNoticeReplyBadge">서명 필요</span>
 </div>
-<div class="space-y-1.5 text-[11px] text-slate-600" id="candidateNoticeSchemaPreview"></div>
+<div class="grid grid-cols-2 gap-2">
+<label class="flex items-center gap-1.5 p-2 rounded-xl border border-slate-200 bg-white cursor-pointer has-[:checked]:bg-indigo-50 has-[:checked]:border-indigo-600 has-[:checked]:text-indigo-700 text-[11px] font-semibold">
+<input checked="" class="text-indigo-600 focus:ring-indigo-500" name="candidateNoticeSignatureMode" type="radio" value="single"/>
+<span>서명 1칸</span>
+</label>
+<label class="flex items-center gap-1.5 p-2 rounded-xl border border-slate-200 bg-white cursor-pointer has-[:checked]:bg-indigo-50 has-[:checked]:border-indigo-600 has-[:checked]:text-indigo-700 text-[11px] font-semibold">
+<input class="text-indigo-600 focus:ring-indigo-500" name="candidateNoticeSignatureMode" type="radio" value="both"/>
+<span>서명 2칸 (학생·학부모)</span>
+</label>
+</div>
+</div>
+<div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-bold text-slate-700">입력칸 구성 · 수정</span>
+<button class="text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700" onclick="addCandidateNoticeSchemaField()" type="button">+ 항목 추가</button>
+</div>
+<div class="space-y-2 text-[11px] text-slate-600" id="candidateNoticeSchemaPreview"></div>
 </div>
 <button class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all" onclick="publishCandidateNotice(this)" type="button">가정통신문 게시</button>
 </div>

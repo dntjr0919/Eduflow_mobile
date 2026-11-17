@@ -259,8 +259,10 @@ const state = {
   currentUnsubmittedCircularId: null,
   teacherDocFilter: 'pending',
   activeTeacherChatRoomId: '',
-  isSignBoxPinned: true,
-  hasDrawnSignature: false
+  candidateNoticeFields: [],
+  hasDrawnSignature: false,
+  hasDrawnStudentSignature: false,
+  hasDrawnParentSignature: false
 };
 
 const KR_HOLIDAYS = [
@@ -822,6 +824,7 @@ function _applyAuthenticatedUser(user) {
     parentName: role === 'parent' ? rawName : (masked ? `${masked} 학부모님` : ''),
     grade,
     classNo,
+    studentNo: user.student_no !== undefined && user.student_no !== '' ? String(user.student_no) : (user.number !== undefined && user.number !== '' ? String(user.number) : ''),
     gradeClass,
     schoolName: user.school_name || '',
     teacherName: role === 'teacher' ? rawName : (mockData.currentUser.teacherName || ''),
@@ -1281,6 +1284,7 @@ function hydrateMockDataFromBundle(bundle) {
         deadline: n.due_date ? `${n.due_date} 마감` : '상시',
         isPublished: toBoolVal(n.is_published, true),
         requiresReply: toBoolVal(n.requires_reply, true),
+        signatureMode: String(n.signature_mode || 'single').trim().toLowerCase() === 'both' ? 'both' : 'single',
         replySchemaJson: n.reply_schema_json || '',
         replyFields: Array.isArray(n.reply_fields) ? n.reply_fields : null,
         attachmentUrl: n.attachment_url || '',
@@ -1299,6 +1303,7 @@ function hydrateMockDataFromBundle(bundle) {
           consent: myReply.consent || myReply.reply_choice || '',
           replyDataJson: myReply.reply_data_json || '',
           signatureUrl: myReply.signature_drive_url || myReply.signature_url || myReply.signature_data_url || '',
+          studentSignatureUrl: myReply.student_signature_drive_url || myReply.student_signature_url || '',
           signedAt: myReply.signed_at || myReply.submitted_at || myReply.updated_at || ''
         } : null
       };

@@ -871,6 +871,43 @@ function _renderDynamicCircularField(field, idx) {
   `;
 }
 
+function _getCircularDefaultTextValue(field) {
+  if (!field || field.type !== 'text') return '';
+  const cu = mockData.currentUser || {};
+  const studentName = String(cu.studentName || '').trim();
+  const grade = String(cu.grade || '').trim();
+  const classNo = String(cu.classNo || '').trim();
+  let studentNo = String(cu.studentNo || '').trim();
+  if (!studentNo && cu.studentId && Array.isArray(mockData.students)) {
+    const found = mockData.students.find(s => String(s.student_id || '') === String(cu.studentId));
+    if (found && found.number !== undefined && found.number !== null && String(found.number).trim()) {
+      studentNo = String(found.number).trim();
+    }
+  }
+
+  const labelCompact = String(field.label || '').toLowerCase().replace(/[\s/·_-]+/g, '');
+  const nameCompact = String(field.name || '').toLowerCase().replace(/[\s/·_-]+/g, '');
+  const combined = `${labelCompact} ${nameCompact}`;
+  const isGuardian = combined.includes('학부모') || combined.includes('보호자') || combined.includes('교사');
+
+  if (!isGuardian && (combined.includes('학생성명') || combined.includes('학생이름') || combined.includes('studentname') || labelCompact === '성명' || labelCompact === '이름')) {
+    return studentName;
+  }
+  if (combined.includes('학급번호') || combined.includes('학년반번호') || combined.includes('학반번호') || combined.includes('반번호') || combined.includes('학번')) {
+    return [grade ? `${grade}학년` : '', classNo ? `${classNo}반` : '', studentNo ? `${studentNo}번` : ''].filter(Boolean).join(' ');
+  }
+  if (combined.includes('학년반') || labelCompact === '학급' || labelCompact === '반') {
+    return [grade ? `${grade}학년` : '', classNo ? `${classNo}반` : ''].filter(Boolean).join(' ');
+  }
+  if (labelCompact === '번호' || labelCompact === '출석번호' || nameCompact === 'studentno') {
+    return studentNo ? `${studentNo}번` : '';
+  }
+  if (labelCompact === '학년') {
+    return grade ? `${grade}학년` : '';
+  }
+  return '';
+}
+
 function openCircularModal(id) {
   state.currentCircularId = id;
   const c = mockData.circulars.find(x => x.id === id);
@@ -884,6 +921,8 @@ function openCircularModal(id) {
   const formView = document.getElementById('modalCircularFormView');
   const dynFieldsEl = document.getElementById('modalCircularDynamicFields');
   const sigSection = document.getElementById('modalCircularSignatureSection');
+  const singleSigWrap = document.getElementById('modalCircularSingleSigWrap');
+  const bothSigWrap = document.getElementById('modalCircularBothSigWrap');
   const readOnlyNote = document.getElementById('modalCircularReadOnlyNote');
   const submitBtn = document.getElementById('modalCircularSubmitBtn');
 
@@ -934,15 +973,37 @@ function openCircularModal(id) {
     }
 
     const sigWrap = document.getElementById('modalCircularSubmittedSigWrap');
+    const studentSigBox = document.getElementById('modalCircularSubmittedStudentSigBox');
+    const studentSigImg = document.getElementById('modalCircularSubmittedStudentSigImg');
+    const parentSigBox = document.getElementById('modalCircularSubmittedParentSigBox');
+    const sigLabel = document.getElementById('modalCircularSubmittedSigLabel');
     const sigImg = document.getElementById('modalCircularSubmittedSigImg');
-    if (sigWrap && sigImg) {
-      if (reply.signatureUrl) {
+    const hasStudentSig = Boolean(reply.studentSignatureUrl);
+    const hasParentSig = Boolean(reply.signatureUrl);
+
+    if (studentSigBox && studentSigImg) {
+      if (hasStudentSig) {
+        studentSigImg.src = reply.studentSignatureUrl;
+        studentSigBox.classList.remove('hidden');
+      } else {
+        studentSigImg.removeAttribute('src');
+        studentSigBox.classList.add('hidden');
+      }
+    }
+    if (parentSigBox && sigImg) {
+      if (hasParentSig) {
         sigImg.src = reply.signatureUrl;
-        sigWrap.classList.remove('hidden');
+        parentSigBox.classList.remove('hidden');
       } else {
         sigImg.removeAttribute('src');
-        sigWrap.classList.add('hidden');
+        parentSigBox.classList.add('hidden');
       }
+    }
+    if (sigLabel) {
+      sigLabel.innerText = (hasStudentSig || c.signatureMode === 'both') ? '학부모(보호자) 전자서명' : '전자서명';
+    }
+    if (sigWrap) {
+      sigWrap.classList.toggle('hidden', !hasStudentSig && !hasParentSig);
     }
   } else {
     if (submittedView) submittedView.classList.add('hidden');
@@ -966,10 +1027,21 @@ function openCircularModal(id) {
     if (dynFieldsEl) {
       dynFieldsEl.innerHTML = activeFields.map((f, idx) => _renderDynamicCircularField(f, idx)).join('');
       dynFieldsEl.classList.toggle('hidden', activeFields.length === 0);
+      activeFields.forEach((f, idx) => {
+        if (f.type !== 'text') return;
+        const inputEl = document.getElementById(`circular_dyn_${idx}`);
+        if (inputEl && !inputEl.value.trim()) {
+          const defaultVal = _getCircularDefaultTextValue(f);
+          if (defaultVal) inputEl.value = defaultVal;
+        }
+      });
     }
 
     const needsSig = c.requiresReply !== false;
+    const isBothSig = c.signatureMode === 'both';
     if (sigSection) sigSection.classList.toggle('hidden', !needsSig);
+    if (singleSigWrap) singleSigWrap.classList.toggle('hidden', isBothSig);
+    if (bothSigWrap) bothSigWrap.classList.toggle('hidden', !isBothSig);
     if (readOnlyNote) readOnlyNote.classList.toggle('hidden', needsSig || activeFields.length > 0);
     if (submitBtn) submitBtn.classList.toggle('hidden', !needsSig && activeFields.length === 0);
     clearSignaturePad();
@@ -982,10 +1054,10 @@ function closeCircularModal() {
   closeModal('circularModal');
 }
 
-// HTML5 Canvas Touch Electronic Signature Engine
-function initSignaturePad() {
-  const canvas = document.getElementById('signaturePad');
-  if (!canvas) return;
+function _bindSignatureCanvas(canvasId, placeholderId, stateKey) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || canvas.dataset.sigBound === '1') return;
+  canvas.dataset.sigBound = '1';
   const ctx = canvas.getContext('2d');
   ctx.lineWidth = 2.5;
   ctx.lineCap = 'round';
@@ -1005,8 +1077,9 @@ function initSignaturePad() {
   const start = (e) => {
     e.preventDefault();
     drawing = true;
-    state.hasDrawnSignature = true;
-    document.getElementById('signaturePlaceholder').classList.add('hidden');
+    state[stateKey] = true;
+    const ph = document.getElementById(placeholderId);
+    if (ph) ph.classList.add('hidden');
     const pos = getPos(e);
     ctx.beginPath();
     ctx.moveTo(pos.x, pos.y);
@@ -1028,13 +1101,33 @@ function initSignaturePad() {
   canvas.addEventListener('touchend', end);
 }
 
-function clearSignaturePad() {
-  const canvas = document.getElementById('signaturePad');
+// HTML5 Canvas Touch Electronic Signature Engine
+function initSignaturePad() {
+  _bindSignatureCanvas('signaturePad', 'signaturePlaceholder', 'hasDrawnSignature');
+  _bindSignatureCanvas('studentSignaturePad', 'studentSignaturePlaceholder', 'hasDrawnStudentSignature');
+  _bindSignatureCanvas('parentSignaturePad', 'parentSignaturePlaceholder', 'hasDrawnParentSignature');
+}
+
+function _clearSingleCanvas(canvasId, placeholderId, stateKey) {
+  const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  state.hasDrawnSignature = false;
-  document.getElementById('signaturePlaceholder').classList.remove('hidden');
+  state[stateKey] = false;
+  const ph = document.getElementById(placeholderId);
+  if (ph) ph.classList.remove('hidden');
+}
+
+function clearSignaturePad(target) {
+  if (!target || target === 'single') {
+    _clearSingleCanvas('signaturePad', 'signaturePlaceholder', 'hasDrawnSignature');
+  }
+  if (!target || target === 'student') {
+    _clearSingleCanvas('studentSignaturePad', 'studentSignaturePlaceholder', 'hasDrawnStudentSignature');
+  }
+  if (!target || target === 'parent') {
+    _clearSingleCanvas('parentSignaturePad', 'parentSignaturePlaceholder', 'hasDrawnParentSignature');
+  }
 }
 
 async function submitCircularSignature(btnEl) {
@@ -1071,37 +1164,66 @@ async function submitCircularSignature(btnEl) {
   }
 
   const needsSig = c.requiresReply !== false;
-  if (needsSig && !state.hasDrawnSignature) {
-    showToast('서명란에 터치 전자서명을 작성해 주세요.', '✍️');
-    return;
+  const isBothSig = c.signatureMode === 'both';
+  let signatureBase64 = '';
+  let studentSignatureBase64 = '';
+  let parentSignatureBase64 = '';
+
+  if (needsSig && isBothSig) {
+    if (!state.hasDrawnStudentSignature) {
+      showToast('학생 전자서명란에 서명을 작성해 주세요.', '✍️');
+      return;
+    }
+    if (!state.hasDrawnParentSignature) {
+      showToast('학부모(보호자) 전자서명란에 서명을 작성해 주세요.', '✍️');
+      return;
+    }
+    const stuCanvas = document.getElementById('studentSignaturePad');
+    const parCanvas = document.getElementById('parentSignaturePad');
+    studentSignatureBase64 = stuCanvas ? stuCanvas.toDataURL('image/png') : '';
+    parentSignatureBase64 = parCanvas ? parCanvas.toDataURL('image/png') : '';
+    signatureBase64 = parentSignatureBase64;
+  } else if (needsSig) {
+    if (!state.hasDrawnSignature) {
+      showToast('서명란에 터치 전자서명을 작성해 주세요.', '✍️');
+      return;
+    }
+    const canvas = document.getElementById('signaturePad');
+    signatureBase64 = canvas ? canvas.toDataURL('image/png') : '';
   }
 
-  const canvas = document.getElementById('signaturePad');
-  const signatureBase64 = (needsSig && canvas) ? canvas.toDataURL('image/png') : '';
   const firstRadio = fields.find(f => f.type === 'radio');
   const consentVal = String(replyData.consent || (firstRadio ? replyData[firstRadio.name] : '') || '제출');
   const replyDataJson = JSON.stringify(replyData);
   const signedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
   await withButtonLoading(btnEl, '제출 중...', async () => {
-    let savedSigUrl = signatureBase64;
+    let savedSigUrl = isBothSig ? parentSignatureBase64 : signatureBase64;
+    let savedStudentSigUrl = isBothSig ? studentSignatureBase64 : '';
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
-        const res = await gasApi.post('submit_notice_reply', {
-          data: {
-            notice_id: cId,
-            student_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
-            student_name: mockData.currentUser.studentName || '학생',
-            parent_id: mockData.currentUser.userId || '',
-            parent_name: mockData.currentUser.parentName || '학부모',
-            consent: consentVal,
-            reply_data_json: replyDataJson,
-            signature_base64: signatureBase64,
-            signed_at: signedAt
-          }
-        });
+        const payloadData = {
+          notice_id: cId,
+          student_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
+          student_name: mockData.currentUser.studentName || '학생',
+          parent_id: mockData.currentUser.userId || '',
+          parent_name: mockData.currentUser.parentName || '학부모',
+          signature_mode: isBothSig ? 'both' : 'single',
+          consent: consentVal,
+          reply_data_json: replyDataJson,
+          signature_base64: signatureBase64,
+          signed_at: signedAt
+        };
+        if (isBothSig) {
+          payloadData.student_signature_base64 = studentSignatureBase64;
+          payloadData.parent_signature_base64 = parentSignatureBase64;
+        }
+        const res = await gasApi.post('submit_notice_reply', { data: payloadData });
         if (res && res.signature_drive_url) {
           savedSigUrl = res.signature_drive_url;
+        }
+        if (res && res.student_signature_drive_url) {
+          savedStudentSigUrl = res.student_signature_drive_url;
         }
       } catch (err) {
         showToast(`전자서명 저장 실패: ${err.message}`, '⚠️');
@@ -1114,6 +1236,7 @@ async function submitCircularSignature(btnEl) {
       consent: consentVal,
       replyDataJson,
       signatureUrl: savedSigUrl,
+      studentSignatureUrl: savedStudentSigUrl,
       signedAt
     };
     c.submittedCount = Math.min(c.totalCount || 999, (c.submittedCount || 0) + 1);

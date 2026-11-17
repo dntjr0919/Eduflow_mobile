@@ -1231,6 +1231,7 @@ module.exports = async function handler(req, res) {
         if (driveRes.ok) attachmentUrl = driveRes.downloadUrl;
       }
       const isPublished = params.is_published === undefined ? true : _toBool(params.is_published);
+      const signatureMode = String(params.signature_mode || '').trim().toLowerCase() === 'both' ? 'both' : 'single';
       const nowStr = _nowStr();
       const noticePayload = {
         remote_id: rid,
@@ -1245,6 +1246,7 @@ module.exports = async function handler(req, res) {
         author_name: String(params.author_name || '담임교사'),
         attachment_url: attachmentUrl,
         requires_reply: params.requires_reply === undefined ? true : _toBool(params.requires_reply),
+        signature_mode: signatureMode,
         is_published: isPublished,
         updated_at: nowStr
       };
@@ -1260,7 +1262,7 @@ module.exports = async function handler(req, res) {
       if (isPublished && params.create_notification !== false) {
         await _createNoticePublishedNotification(db, noticePayload);
       }
-      return res.status(200).json({ ok: true, remote_id: rid, attachment_url: attachmentUrl, is_published: isPublished });
+      return res.status(200).json({ ok: true, remote_id: rid, attachment_url: attachmentUrl, is_published: isPublished, signature_mode: signatureMode });
     }
 
     if (action === 'publish_notice') {
@@ -1272,6 +1274,8 @@ module.exports = async function handler(req, res) {
       const existingSnap = await docRef.get();
       const existing = existingSnap.exists ? (existingSnap.data() || {}) : {};
       const nowStr = _nowStr();
+      const rawSigMode = params.signature_mode !== undefined ? params.signature_mode : existing.signature_mode;
+      const signatureMode = String(rawSigMode || '').trim().toLowerCase() === 'both' ? 'both' : 'single';
       const mergedPayload = {
         remote_id: rid,
         title: String(params.title !== undefined ? params.title : (existing.title || '')).trim(),
@@ -1286,6 +1290,7 @@ module.exports = async function handler(req, res) {
         requires_reply: params.requires_reply !== undefined
           ? _toBool(params.requires_reply)
           : (existing.requires_reply === undefined ? true : _toBool(existing.requires_reply)),
+        signature_mode: signatureMode,
         is_published: true,
         published_at: existing.published_at || nowStr,
         updated_at: nowStr
@@ -1301,6 +1306,7 @@ module.exports = async function handler(req, res) {
         ok: true,
         remote_id: rid,
         is_published: true,
+        signature_mode: signatureMode,
         notification_id: notificationId,
         updated_at: nowStr
       });
@@ -1344,9 +1350,10 @@ module.exports = async function handler(req, res) {
       if (sigDriveUrl.startsWith('data:')) {
         sigDriveUrl = '';
       }
-      if (params.signature_base64) {
+      const parentSigBase64 = params.parent_signature_base64 || params.signature_base64 || '';
+      if (parentSigBase64) {
         const driveRes = await uploadBase64ToDrive({
-          base64Data: params.signature_base64,
+          base64Data: parentSigBase64,
           fileName: `${baseFileName}.png`,
           mimeType: 'image/png',
           folderName: driveFolderPath
@@ -1359,6 +1366,28 @@ module.exports = async function handler(req, res) {
         }
         sigDriveUrl = driveRes.downloadUrl;
         sigFileId = driveRes.fileId;
+      }
+
+      let studentSigDriveUrl = String(params.student_signature_drive_url || '').trim();
+      let studentSigFileId = String(params.student_signature_file_id || '').trim();
+      if (studentSigDriveUrl.startsWith('data:')) {
+        studentSigDriveUrl = '';
+      }
+      if (params.student_signature_base64) {
+        const stuDriveRes = await uploadBase64ToDrive({
+          base64Data: params.student_signature_base64,
+          fileName: `${baseFileName}_student.png`,
+          mimeType: 'image/png',
+          folderName: driveFolderPath
+        });
+        if (!stuDriveRes.ok || !stuDriveRes.downloadUrl || !stuDriveRes.fileId) {
+          return res.status(502).json({
+            ok: false,
+            error: `Google Drive 학생 서명 이미지 업로드 실패: ${stuDriveRes.error || 'Drive URL 또는 fileId를 받지 못했습니다.'}`
+          });
+        }
+        studentSigDriveUrl = stuDriveRes.downloadUrl;
+        studentSigFileId = stuDriveRes.fileId;
       }
 
       let replyFileDriveUrl = String(params.reply_file_drive_url || '').trim();
@@ -1387,6 +1416,7 @@ module.exports = async function handler(req, res) {
         ? params.reply_data_json
         : JSON.stringify(params.reply_data_json || params.reply_data || {});
       const signedAt = String(params.signed_at || nowStr);
+      const signatureMode = String(params.signature_mode || noticeData.signature_mode || '').trim().toLowerCase() === 'both' ? 'both' : 'single';
       const replyDoc = {
         remote_id: rid,
         notice_id: noticeId,
@@ -1394,11 +1424,14 @@ module.exports = async function handler(req, res) {
         student_name: studentName,
         parent_id: String(params.parent_id || ''),
         parent_name: String(params.parent_name || ''),
+        signature_mode: signatureMode,
         consent: consentVal,
         reply_choice: consentVal || '제출',
         reply_data_json: replyDataJson,
         signature_drive_url: sigDriveUrl,
         signature_file_id: sigFileId,
+        student_signature_drive_url: studentSigDriveUrl,
+        student_signature_file_id: studentSigFileId,
         memo: String(params.memo || ''),
         signed_at: signedAt,
         submitted_at: nowStr,
@@ -1412,8 +1445,11 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({
         ok: true,
         remote_id: rid,
+        signature_mode: signatureMode,
         signature_drive_url: sigDriveUrl,
         signature_file_id: sigFileId,
+        student_signature_drive_url: studentSigDriveUrl,
+        student_signature_file_id: studentSigFileId,
         reply_file_drive_url: replyFileDriveUrl || undefined,
         reply_file_id: replyFileId || undefined,
         signed_at: signedAt
