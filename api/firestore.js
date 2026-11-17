@@ -1323,56 +1323,100 @@ module.exports = async function handler(req, res) {
           error: '이미 제출 완료된 가정통신문입니다.'
         });
       }
-      let sigDriveUrl = String(params.signature_drive_url || params.signature_url || '');
-      let driveError = '';
+      const studentName = String(params.student_name || '').trim();
+      const sanitizeSeg = (val, fallback = '') => String(val ?? '').trim().replace(/[\\/:*?"<>|]/g, '_') || fallback;
+      const noticeSnap = await db.collection('가정통신문_목록').doc(noticeId).get();
+      const noticeData = noticeSnap.exists ? (noticeSnap.data() || {}) : {};
+      const schoolName = sanitizeSeg(noticeData.school_name || params.school_name, '학교미지정');
+      const targetGrade = _toIntOrNull(noticeData.target_grade ?? noticeData.grade ?? params.grade);
+      const targetClass = _toIntOrNull(noticeData.target_class ?? noticeData.class_no ?? params.class_no);
+      const gradeClassLabel = `${targetGrade !== null ? targetGrade : '0'}학년${targetClass !== null ? targetClass : '0'}반`;
+      const teacherName = sanitizeSeg(noticeData.author_name || params.author_name, '담임교사');
+      const noticeTitle = sanitizeSeg(noticeData.title || params.notice_title, '가정통신문');
+      const safeNoticeId = sanitizeSeg(noticeId, 'notice');
+      const safeStudentName = sanitizeSeg(studentName, '학생');
+      const safeStudentId = sanitizeSeg(studentId, 'student');
+      const driveFolderPath = `가정통신문_회신/${schoolName}_${gradeClassLabel}_${teacherName}/${noticeTitle}_${safeNoticeId}`;
+      const baseFileName = `${safeStudentId}_${safeStudentName}`;
+
+      let sigDriveUrl = String(params.signature_drive_url || '').trim();
+      let sigFileId = String(params.signature_file_id || '').trim();
+      if (sigDriveUrl.startsWith('data:')) {
+        sigDriveUrl = '';
+      }
       if (params.signature_base64) {
         const driveRes = await uploadBase64ToDrive({
           base64Data: params.signature_base64,
-          fileName: `sig_${noticeId}_${studentId}.png`,
+          fileName: `${baseFileName}.png`,
           mimeType: 'image/png',
-          folderName: 'EduFlow_Signatures'
+          folderName: driveFolderPath
         });
-        if (driveRes.ok && driveRes.downloadUrl) {
-          sigDriveUrl = driveRes.downloadUrl;
-        } else {
-          driveError = driveRes.error || '';
-          if (!sigDriveUrl) {
-            sigDriveUrl = String(params.signature_base64);
-          }
+        if (!driveRes.ok || !driveRes.downloadUrl || !driveRes.fileId) {
+          return res.status(502).json({
+            ok: false,
+            error: `Google Drive 서명 이미지 업로드 실패: ${driveRes.error || 'Drive URL 또는 fileId를 받지 못했습니다.'}`
+          });
         }
+        sigDriveUrl = driveRes.downloadUrl;
+        sigFileId = driveRes.fileId;
       }
+
+      let replyFileDriveUrl = String(params.reply_file_drive_url || '').trim();
+      let replyFileId = String(params.reply_file_id || '').trim();
+      if (params.reply_file_base64) {
+        const replyFileName = String(params.reply_file_name || `${baseFileName}_reply.pdf`).replace(/[\\/:*?"<>|]/g, '_');
+        const fileRes = await uploadBase64ToDrive({
+          base64Data: params.reply_file_base64,
+          fileName: `${baseFileName}_${replyFileName}`,
+          mimeType: String(params.reply_file_mime || 'application/pdf'),
+          folderName: driveFolderPath
+        });
+        if (!fileRes.ok || !fileRes.downloadUrl || !fileRes.fileId) {
+          return res.status(502).json({
+            ok: false,
+            error: `Google Drive 응답 파일 업로드 실패: ${fileRes.error || 'Drive URL 또는 fileId를 받지 못했습니다.'}`
+          });
+        }
+        replyFileDriveUrl = fileRes.downloadUrl;
+        replyFileId = fileRes.fileId;
+      }
+
       const nowStr = _nowStr();
       const consentVal = String(params.consent || params.reply_choice || '').trim();
       const replyDataJson = typeof params.reply_data_json === 'string'
         ? params.reply_data_json
         : JSON.stringify(params.reply_data_json || params.reply_data || {});
-      const signedAt = String(params.signed_at || (sigDriveUrl ? nowStr : nowStr));
-      await replyRef.set(
-        {
-          remote_id: rid,
-          notice_id: noticeId,
-          student_id: studentId,
-          student_name: String(params.student_name || ''),
-          parent_id: String(params.parent_id || ''),
-          parent_name: String(params.parent_name || ''),
-          consent: consentVal,
-          reply_choice: consentVal || '제출',
-          reply_data_json: replyDataJson,
-          signature_drive_url: sigDriveUrl,
-          signature_url: sigDriveUrl,
-          memo: String(params.memo || ''),
-          signed_at: signedAt,
-          submitted_at: nowStr,
-          updated_at: nowStr
-        },
-        { merge: true }
-      );
+      const signedAt = String(params.signed_at || nowStr);
+      const replyDoc = {
+        remote_id: rid,
+        notice_id: noticeId,
+        student_id: studentId,
+        student_name: studentName,
+        parent_id: String(params.parent_id || ''),
+        parent_name: String(params.parent_name || ''),
+        consent: consentVal,
+        reply_choice: consentVal || '제출',
+        reply_data_json: replyDataJson,
+        signature_drive_url: sigDriveUrl,
+        signature_file_id: sigFileId,
+        memo: String(params.memo || ''),
+        signed_at: signedAt,
+        submitted_at: nowStr,
+        updated_at: nowStr
+      };
+      if (replyFileDriveUrl || replyFileId) {
+        replyDoc.reply_file_drive_url = replyFileDriveUrl;
+        replyDoc.reply_file_id = replyFileId;
+      }
+      await replyRef.set(replyDoc, { merge: true });
       return res.status(200).json({
         ok: true,
         remote_id: rid,
         signature_drive_url: sigDriveUrl,
-        signed_at: signedAt,
-        drive_warning: driveError || undefined
+        signature_file_id: sigFileId,
+        reply_file_drive_url: replyFileDriveUrl || undefined,
+        reply_file_id: replyFileId || undefined,
+        signed_at: signedAt
       });
     }
 
