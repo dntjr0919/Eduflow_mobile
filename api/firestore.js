@@ -962,19 +962,27 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, remote_id: rid });
     }
 
+    if (action === 'delete_document_tracking') {
+      const rid = String(params.remote_id || '').trim();
+      if (!rid) return res.status(400).json({ ok: false, error: 'remote_id가 필요합니다.' });
+      await db.collection('서류_추적').doc(rid).delete();
+      return res.status(200).json({ ok: true, deleted_id: rid });
+    }
+
     if (action === 'upsert_doc_rule') {
       const rid = String(params.remote_id || params.rule_code || `rule_${Date.now()}`);
-      await db.collection('설정_서류규정').doc(rid).set(
-        {
-          remote_id: rid,
-          rule_code: String(params.rule_code || rid),
-          title: String(params.title || ''),
-          due_business_days: _toIntOrNull(params.due_business_days),
-          is_active: params.is_active === undefined ? true : _toBool(params.is_active),
-          updated_at: _nowStr()
-        },
-        { merge: true }
-      );
+      const ruleDoc = {
+        remote_id: rid,
+        rule_code: String(params.rule_code || rid),
+        title: String(params.title || ''),
+        due_business_days: _toIntOrNull(params.due_business_days),
+        is_active: params.is_active === undefined ? true : _toBool(params.is_active),
+        updated_at: _nowStr()
+      };
+      if (Array.isArray(params.required_types)) {
+        ruleDoc.required_types = params.required_types.map(v => String(v));
+      }
+      await db.collection('설정_서류규정').doc(rid).set(ruleDoc, { merge: true });
       return res.status(200).json({ ok: true, remote_id: rid });
     }
 

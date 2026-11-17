@@ -496,7 +496,23 @@ async function handleAttendanceSubmit(e) {
 
   const isOverwrite = Boolean(overwriteItem);
   const attId = isOverwrite ? overwriteItem.id : ('ATT-' + Date.now());
-  const docId = (isOverwrite && overwriteItem.linkedDocId) ? overwriteItem.linkedDocId : ('DOC-' + Date.now());
+  const defaultRequiredTypes = ['질병결석', '인정지각', '인정조퇴', '인정결석', '기타지각', '기타조퇴', '기타결석'];
+  const allowedDocTypes = Array.isArray(mockData.rules.requiredAttTypes)
+    ? mockData.rules.requiredAttTypes
+    : defaultRequiredTypes;
+  const requiresDocument = allowedDocTypes.includes(combinedType);
+
+  const oldTitle = isOverwrite ? `${overwriteItem.type} (${overwriteItem.period})` : '';
+  const existingLinkedDoc = (isOverwrite && Array.isArray(mockData.urgentDocuments))
+    ? mockData.urgentDocuments.find(d =>
+        (overwriteItem.linkedDocId && d.id === overwriteItem.linkedDocId) ||
+        (d.type === 'urgency' && d.title === oldTitle)
+      )
+    : null;
+  const existingDocId = isOverwrite
+    ? (overwriteItem.linkedDocId || (existingLinkedDoc ? existingLinkedDoc.id : null))
+    : null;
+  const docId = existingDocId || ('DOC-' + Date.now());
   const stuId = String(mockData.currentUser.studentId || mockData.currentUser.userId || '');
   const stuName = mockData.currentUser.studentName || '학생';
   const ruleCode = 'ABSENCE_REPORT';
@@ -539,7 +555,7 @@ async function handleAttendanceSubmit(e) {
             memo: periodStr
           }
         });
-        if (!isOverwrite) {
+        if (requiresDocument && (!isOverwrite || !existingDocId)) {
           const docRes = await gasApi.post('upsert_document_tracking', {
             data: {
               remote_id: docId,
@@ -555,6 +571,8 @@ async function handleAttendanceSubmit(e) {
           if (docRes && docRes.due_date) {
             newDoc.deadline = docRes.due_date;
           }
+        } else if (!requiresDocument && isOverwrite && existingDocId) {
+          await gasApi.post('delete_document_tracking', { remote_id: existingDocId });
         }
       } catch (err) {
         showToast(`출결 서버 전송 실패: ${err.message}`, '⚠️');
@@ -563,7 +581,6 @@ async function handleAttendanceSubmit(e) {
     }
 
     if (isOverwrite) {
-      const oldTitle = `${overwriteItem.type} (${overwriteItem.period})`;
       overwriteItem.period = periodStr;
       overwriteItem.startDate = sDate;
       overwriteItem.endDate = eDate;
@@ -583,16 +600,25 @@ async function handleAttendanceSubmit(e) {
           tItem.reason = reason;
         }
       }
-      if (Array.isArray(mockData.urgentDocuments)) {
-        const linkedDoc = mockData.urgentDocuments.find(d =>
-          (overwriteItem.linkedDocId && d.id === overwriteItem.linkedDocId) ||
-          (d.type === 'urgency' && d.title === oldTitle)
-        );
-        if (linkedDoc) {
-          linkedDoc.title = `${combinedType} (${periodStr})`;
-          linkedDoc.description = reason;
-          linkedDoc.deadline = eDate;
+
+      if (requiresDocument) {
+        if (existingLinkedDoc) {
+          existingLinkedDoc.title = `${combinedType} (${periodStr})`;
+          existingLinkedDoc.description = reason;
+          existingLinkedDoc.deadline = eDate;
+        } else if (!existingDocId) {
+          mockData.urgentDocuments.unshift(newDoc);
         }
+        overwriteItem.linkedDocId = docId;
+        if (!overwriteItem.docStatus || overwriteItem.docStatus === '제출 불필요') {
+          overwriteItem.docStatus = '서류 미제출';
+        }
+      } else {
+        if (existingDocId && Array.isArray(mockData.urgentDocuments)) {
+          mockData.urgentDocuments = mockData.urgentDocuments.filter(d => d.id !== existingDocId);
+        }
+        overwriteItem.linkedDocId = null;
+        overwriteItem.docStatus = '제출 불필요';
       }
     } else {
       mockData.attendanceHistory.unshift({
@@ -605,10 +631,12 @@ async function handleAttendanceSubmit(e) {
         attSubType: state.selectedAttSubType,
         periodInfo,
         reason: reason,
-        docStatus: '서류 미제출',
-        linkedDocId: docId
+        docStatus: requiresDocument ? '서류 미제출' : '제출 불필요',
+        linkedDocId: requiresDocument ? docId : null
       });
-      mockData.urgentDocuments.unshift(newDoc);
+      if (requiresDocument) {
+        mockData.urgentDocuments.unshift(newDoc);
+      }
     }
 
     if (editingId) {
@@ -619,7 +647,11 @@ async function handleAttendanceSubmit(e) {
       selectAttSubType('');
     }
     renderAll();
-    showToast(isOverwrite ? '출결 내역이 수정(덮어쓰기)되었습니다.' : '출결 사유가 등록되고 서류 알림이 생성되었습니다.');
+    if (!requiresDocument) {
+      showToast(`출결 사유가 보고되었습니다. (${combinedType}은 신고서 제출 대상이 아닙니다)`);
+    } else {
+      showToast(isOverwrite ? '출결 내역이 수정(덮어쓰기)되었습니다.' : '출결 사유가 등록되고 서류 알림이 생성되었습니다.');
+    }
   });
 }
 
@@ -635,6 +667,7 @@ function renderAttendanceHistory() {
     let badgeStyle = 'bg-red-100 text-red-700';
     if (item.docStatus === '학생확인완료') badgeStyle = 'bg-blue-100 text-blue-700';
     if (item.docStatus === '교사 최종완료') badgeStyle = 'bg-emerald-100 text-emerald-700';
+    if (item.docStatus === '제출 불필요') badgeStyle = 'bg-slate-100 text-slate-600';
     const isLocked = item.docStatus === '교사 최종완료' || item.confirmed;
     const periodLabel = (item.periodInfo && !String(item.period || '').includes(item.periodInfo))
       ? `${item.period} · ${item.periodInfo}`

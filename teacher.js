@@ -1066,6 +1066,13 @@ function openRulesModal() {
   document.getElementById('ruleSick').value = mockData.rules.sickDays;
   document.getElementById('ruleFieldPre').value = mockData.rules.fieldPreDays;
   document.getElementById('ruleFieldPost').value = mockData.rules.fieldPostDays;
+  const defaultRequiredTypes = ['질병결석', '인정지각', '인정조퇴', '인정결석', '기타지각', '기타조퇴', '기타결석'];
+  const reqTypes = Array.isArray(mockData.rules.requiredAttTypes)
+    ? mockData.rules.requiredAttTypes
+    : defaultRequiredTypes;
+  document.querySelectorAll('#rulesModal input[name="reqAttType"]').forEach(cb => {
+    cb.checked = reqTypes.includes(cb.value);
+  });
   openModal('rulesModal');
 }
 
@@ -1085,6 +1092,9 @@ async function saveRulesSettings(e) {
   const nextSickDays = parseInt(document.getElementById('ruleSick').value, 10);
   const nextFieldPreDays = parseInt(document.getElementById('ruleFieldPre').value, 10);
   const nextFieldPostDays = parseInt(document.getElementById('ruleFieldPost').value, 10);
+  const requiredTypes = Array.from(
+    document.querySelectorAll('#rulesModal input[name="reqAttType"]:checked')
+  ).map(cb => cb.value);
 
   await withButtonLoading(submitBtn, '저장 중...', async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
@@ -1096,6 +1106,7 @@ async function saveRulesSettings(e) {
             doc_name: '결석계 및 증빙서류',
             category: '출결서류',
             due_business_days: nextSickDays,
+            required_types: requiredTypes,
             target_roles: 'student,parent',
             is_active: 1
           }
@@ -1131,6 +1142,7 @@ async function saveRulesSettings(e) {
     mockData.rules.sickDays = nextSickDays;
     mockData.rules.fieldPreDays = nextFieldPreDays;
     mockData.rules.fieldPostDays = nextFieldPostDays;
+    mockData.rules.requiredAttTypes = requiredTypes;
     closeRulesModal();
     showToast(`규정 저장 완료 (결석 +${mockData.rules.sickDays}일, 체험학습 -${mockData.rules.fieldPreDays}일/+${mockData.rules.fieldPostDays}일)`, '⚙️');
   });

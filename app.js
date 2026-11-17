@@ -1047,10 +1047,13 @@ function hydrateMockDataFromBundle(bundle) {
 
   // 3. 서류 규정
   if (Array.isArray(bundle.doc_rules)) {
-    const abs = bundle.doc_rules.find(r => r.rule_code === 'ABSENCE_REPORT');
+    const abs = bundle.doc_rules.find(r => r.rule_code === 'ABSENCE_REPORT' || r.remote_id === 'rule_absence');
     const fld = bundle.doc_rules.find(r => r.rule_code === 'FIELD_TRIP');
     const fldPre = bundle.doc_rules.find(r => r.rule_code === 'FIELD_TRIP_PRE');
     if (abs && abs.due_business_days) mockData.rules.sickDays = parseInt(abs.due_business_days, 10) || 5;
+    if (abs && Array.isArray(abs.required_types)) {
+      mockData.rules.requiredAttTypes = abs.required_types.map(v => String(v));
+    }
     if (fld && fld.due_business_days) mockData.rules.fieldPostDays = parseInt(fld.due_business_days, 10) || 5;
     if (fldPre && fldPre.due_business_days) mockData.rules.fieldPreDays = parseInt(fldPre.due_business_days, 10) || 3;
   }
