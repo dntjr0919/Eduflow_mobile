@@ -54,28 +54,41 @@ function _getDriveClient() {
 
 async function _resolveOrCreateFolder(drive, folderName) {
   const envFolderId = (process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim();
-  if (envFolderId) return envFolderId;
+  const rawPath = String(folderName || 'EduFlow_Uploads').trim();
+  const segments = rawPath.split('/').map((s) => s.trim()).filter(Boolean);
 
-  const safeName = String(folderName || 'EduFlow_Uploads').replace(/'/g, "\\'");
-  const listRes = await drive.files.list({
-    q: `name='${safeName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-    fields: 'files(id, name)',
-    pageSize: 1,
-    supportsAllDrives: true,
-    includeItemsFromAllDrives: true
-  });
-  const files = (listRes.data && listRes.data.files) || [];
-  if (files.length > 0) return files[0].id;
+  if (segments.length <= 1 && envFolderId) {
+    return envFolderId;
+  }
 
-  const createRes = await drive.files.create({
-    requestBody: {
-      name: folderName || 'EduFlow_Uploads',
-      mimeType: 'application/vnd.google-apps.folder'
-    },
-    fields: 'id',
-    supportsAllDrives: true
-  });
-  return createRes.data.id;
+  let parentId = envFolderId || null;
+  for (const seg of (segments.length > 0 ? segments : ['EduFlow_Uploads'])) {
+    const safeName = seg.replace(/'/g, "\\'");
+    const parentClause = parentId ? ` and '${parentId}' in parents` : '';
+    const listRes = await drive.files.list({
+      q: `name='${safeName}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentClause}`,
+      fields: 'files(id, name)',
+      pageSize: 1,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true
+    });
+    const files = (listRes.data && listRes.data.files) || [];
+    if (files.length > 0) {
+      parentId = files[0].id;
+    } else {
+      const createRes = await drive.files.create({
+        requestBody: {
+          name: seg,
+          mimeType: 'application/vnd.google-apps.folder',
+          ...(parentId ? { parents: [parentId] } : {})
+        },
+        fields: 'id',
+        supportsAllDrives: true
+      });
+      parentId = createRes.data.id;
+    }
+  }
+  return parentId;
 }
 
 async function uploadBase64ToDrive({
