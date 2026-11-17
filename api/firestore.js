@@ -101,6 +101,57 @@ function _computeDocDueDate(ruleCode, baseDate, docRulesRows) {
   return _addBusinessDays(base, signedDays);
 }
 
+const STATIC_CACHE_TTL_MS = 10 * 60 * 1000;
+if (!globalThis.__eduflowStaticCache) {
+  globalThis.__eduflowStaticCache = new Map();
+}
+const _staticCache = globalThis.__eduflowStaticCache;
+
+function _getStaticCache(key, force = false) {
+  if (force) return undefined;
+  const entry = _staticCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    _staticCache.delete(key);
+    return undefined;
+  }
+  return entry.value;
+}
+
+function _setStaticCache(key, value, ttlMs = STATIC_CACHE_TTL_MS) {
+  _staticCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  return value;
+}
+
+function _invalidateStaticCache(prefix) {
+  if (!prefix) {
+    _staticCache.clear();
+    return;
+  }
+  for (const k of _staticCache.keys()) {
+    if (k.startsWith(prefix)) _staticCache.delete(k);
+  }
+}
+
+async function _getCachedOrFetch(key, force, fetcher) {
+  const cached = _getStaticCache(key, force);
+  if (cached !== undefined) return cached;
+  const fresh = await fetcher();
+  return _setStaticCache(key, fresh);
+}
+
+function _gradeCandidates(gradeNum) {
+  if (gradeNum === null || gradeNum === undefined) return [];
+  return [gradeNum, String(gradeNum)];
+}
+
+function _studentIdCandidates(studentId) {
+  const s = String(studentId || '').trim();
+  if (!s) return [];
+  const n = Number(s);
+  return Number.isFinite(n) && String(n) === s ? [s, n] : [s];
+}
+
 function _snapToRows(snap) {
   const rows = [];
   snap.forEach((doc) => {
@@ -543,18 +594,24 @@ async function _handleGetMobileBundle(db, params) {
   const classNum = _toIntOrNull(params.class_no);
   const schoolCode = String(params.school_code || params.neis_school_code || '').trim();
   const schoolName = String(params.school_name || '').trim();
-  const skipStatic = String(params.skip_static || '') === '1';
+  const forceRefresh = String(params.force || '') === '1';
+  const skipStatic = !forceRefresh && String(params.skip_static || '') === '1';
 
-  const hasClassFilter = gradeNum !== null && classNum !== null;
   const tenant = { schoolCode, schoolName, gradeNum, classNum };
   const rawTeacherParam = String(params.teacher_name || '').trim();
   const normTeacherParam = _normalizeTeacherName(rawTeacherParam);
+  const gradeIn = _gradeCandidates(gradeNum);
+  const sidIn = _studentIdCandidates(studentId);
+  const isStudentScoped = Boolean(studentId && role !== 'teacher');
+  const todayStr = _nowStr().slice(0, 10);
 
-  // 읽기 비용 최적화 & 멀티 테넌트 격리:
-  // 1) 시간표_기본/변동 등은 전체 컬렉션 get() 금지 -> 반드시 grade, class_no 조건절로 본인 반만 조회
-  // 2) 교사 로그인 시 teacher_name 조건으로 교사 개인 시간표(타 학급 수업 포함) 추가 조회 후 병합
-  // 3) 학교(school_code / school_name) 및 학급(grade, class_no) 기준으로 타 학교/타 반 데이터 격리
-  // 4) 시간표_기본, 급식_식단표, 설정_서류규정은 클라이언트 localStorage 일일 캐시 히트 시(skip_static=1) 조회 생략
+  const teacherCacheKey = role === 'teacher' && userId
+    ? `teacher_doc:${userId}`
+    : (gradeNum !== null ? `teachers_grade:${gradeNum}` : 'teachers_default');
+  const ttBaseCacheKey = gradeNum !== null ? `tt_base_grade:${gradeNum}` : null;
+  const mealsCacheKey = `meals:${schoolCode || 'all'}`;
+
+  // 읽기 비용 최적화 (단일 필드 where만 사용해 복합 인덱스 오류 방지 + 정적 데이터 서버 메모리 캐시):
   const [
     teachersRaw,
     studentsRows,
@@ -570,49 +627,59 @@ async function _handleGetMobileBundle(db, params) {
     notificationsRaw,
     budgetRows
   ] = await Promise.all([
-    role === 'teacher' && userId
-      ? db.collection('계정_교사').doc(userId).get().then((d) => (d.exists ? [{ remote_id: d.id, ...d.data() }] : []))
-      : (hasClassFilter
-          ? _queryClassScoped(db, '계정_교사', gradeNum, classNum)
-          : db.collection('계정_교사').limit(20).get().then(_snapToRows)),
-    hasClassFilter
-      ? _queryClassScoped(db, '계정_학생', gradeNum, classNum)
-      : (studentId
-          ? db.collection('계정_학생').doc(studentId).get().then((d) => (d.exists ? [{ remote_id: d.id, ...d.data() }] : []))
+    _getCachedOrFetch(teacherCacheKey, forceRefresh, () => (
+      role === 'teacher' && userId
+        ? db.collection('계정_교사').doc(userId).get().then((d) => (d.exists ? [{ remote_id: d.id, ...d.data() }] : []))
+        : (gradeIn.length > 0
+            ? db.collection('계정_교사').where('grade', 'in', gradeIn).limit(30).get().then(_snapToRows)
+            : db.collection('계정_교사').limit(20).get().then(_snapToRows))
+    )),
+    isStudentScoped && sidIn.length > 0
+      ? db.collection('계정_학생').where('student_id', 'in', sidIn).limit(5).get().then(_snapToRows)
+      : (gradeIn.length > 0
+          ? db.collection('계정_학생').where('grade', 'in', gradeIn).limit(200).get().then(_snapToRows)
           : Promise.resolve([])),
-    hasClassFilter
-      ? _queryClassScoped(db, '일일_출결', gradeNum, classNum)
-      : (studentId
-          ? db.collection('일일_출결').where('student_id', '==', studentId).get().then(_snapToRows)
+    isStudentScoped && sidIn.length > 0
+      ? db.collection('일일_출결').where('student_id', 'in', sidIn).limit(100).get().then(_snapToRows)
+      : (gradeIn.length > 0
+          ? db.collection('일일_출결').where('grade', 'in', gradeIn).limit(200).get().then(_snapToRows)
           : Promise.resolve([])),
-    studentId && role !== 'teacher'
-      ? db.collection('서류_추적').where('student_id', '==', studentId).get().then(_snapToRows)
-      : db.collection('서류_추적').limit(200).get().then(_snapToRows),
-    db.collection('가정통신문_목록').limit(50).get().then(_snapToRows),
-    studentId && role !== 'teacher'
-      ? db.collection('가정통신문_회신').where('student_id', '==', studentId).get().then(_snapToRows)
-      : db.collection('가정통신문_회신').limit(200).get().then(_snapToRows),
-    !skipStatic && hasClassFilter
-      ? _queryClassScoped(db, '시간표_기본', gradeNum, classNum)
+    isStudentScoped && sidIn.length > 0
+      ? db.collection('서류_추적').where('student_id', 'in', sidIn).limit(50).get().then(_snapToRows)
+      : db.collection('서류_추적').limit(150).get().then(_snapToRows),
+    db.collection('가정통신문_목록').limit(30).get().then(_snapToRows),
+    isStudentScoped && sidIn.length > 0
+      ? db.collection('가정통신문_회신').where('student_id', 'in', sidIn).limit(50).get().then(_snapToRows)
+      : db.collection('가정통신문_회신').limit(150).get().then(_snapToRows),
+    !skipStatic && ttBaseCacheKey
+      ? _getCachedOrFetch(ttBaseCacheKey, forceRefresh, () =>
+          db.collection('시간표_기본').where('grade', 'in', gradeIn).limit(300).get().then(_snapToRows)
+        )
       : Promise.resolve(undefined),
-    hasClassFilter
-      ? _queryClassScoped(db, '시간표_변동', gradeNum, classNum)
-      : Promise.resolve([]),
+    gradeIn.length > 0
+      ? db.collection('시간표_변동').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
+      : db.collection('시간표_변동').where('date', '>=', todayStr).limit(100).get().then(_snapToRows),
     !skipStatic
-      ? (schoolCode
-          ? db.collection('급식_식단표').where('school_code', '==', schoolCode).limit(60).get().then(_snapToRows)
-          : db.collection('급식_식단표').limit(60).get().then(_snapToRows))
+      ? _getCachedOrFetch(mealsCacheKey, forceRefresh, () => (
+          schoolCode
+            ? db.collection('급식_식단표').where('school_code', '==', schoolCode).limit(60).get().then(_snapToRows)
+            : db.collection('급식_식단표').limit(60).get().then(_snapToRows)
+        ))
       : Promise.resolve(undefined),
     !skipStatic
-      ? db.collection('설정_서류규정').limit(50).get().then(_snapToRows)
+      ? _getCachedOrFetch('doc_rules', forceRefresh, () =>
+          db.collection('설정_서류규정').limit(50).get().then(_snapToRows)
+        )
       : Promise.resolve(undefined),
-    studentId && role !== 'teacher'
-      ? db.collection('1:1_상담채팅').where('room_id', '==', `ROOM-${studentId}`).get().then(_snapToRows)
-      : (hasClassFilter
-          ? _queryClassScoped(db, '1:1_상담채팅', gradeNum, classNum)
+    isStudentScoped
+      ? db.collection('1:1_상담채팅').where('room_id', '==', `ROOM-${studentId}`).limit(100).get().then(_snapToRows)
+      : (gradeIn.length > 0
+          ? db.collection('1:1_상담채팅').where('grade', 'in', gradeIn).limit(150).get().then(_snapToRows)
           : db.collection('1:1_상담채팅').limit(100).get().then(_snapToRows)),
     db.collection('Notifications').where('is_read', '==', false).limit(50).get().then(_snapToRows),
-    db.collection('학급회비').limit(200).get().then(_snapToRows)
+    gradeIn.length > 0
+      ? db.collection('학급회비').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
+      : db.collection('학급회비').limit(100).get().then(_snapToRows)
   ]);
 
   const effectiveTeacherName = normTeacherParam || (role === 'teacher' && teachersRaw[0] ? _normalizeTeacherName(teachersRaw[0].name || teachersRaw[0].teacher_id || '') : '');
@@ -798,6 +865,7 @@ async function _syncNeisMeals(db, body) {
     count += 1;
   }
   if (count > 0) await batch.commit();
+  _invalidateStaticCache('meals:');
   return { ok: true, count, office_code: officeCode, school_code: schoolCode };
 }
 
@@ -1128,6 +1196,7 @@ module.exports = async function handler(req, res) {
         ruleDoc.required_types = params.required_types.map(v => String(v));
       }
       await db.collection('설정_서류규정').doc(rid).set(ruleDoc, { merge: true });
+      _invalidateStaticCache('doc_rules');
       return res.status(200).json({ ok: true, remote_id: rid });
     }
 
@@ -1278,6 +1347,7 @@ module.exports = async function handler(req, res) {
         if (params.comcigan_school_code !== undefined) data.comcigan_school_code = String(params.comcigan_school_code);
       }
       await db.collection('계정_교사').doc(tid).set(data, { merge: true });
+      _invalidateStaticCache('teacher');
       return res.status(200).json({ ok: true, remote_id: tid });
     }
 
@@ -1505,6 +1575,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     const deleteBaseIds = Array.isArray(params.delete_base_ids) ? params.delete_base_ids : [];
     const deleteChangeIds = Array.isArray(params.delete_change_ids) ? params.delete_change_ids : [];
     const baseWritten = await _batchUpsertDocs(db, '시간표_기본', baseRows, scopeDefaults);
+    if (baseWritten > 0 || deleteBaseIds.length > 0) _invalidateStaticCache('tt_base');
     const changeWritten = await _batchUpsertDocs(db, '시간표_변동', changeRows, scopeDefaults);
     let baseDeleted = 0;
     let changeDeleted = 0;

@@ -92,6 +92,7 @@ function _isTruthyField(val) {
 }
 
 const DAILY_STATIC_CACHE_KEY = 'eduflow_daily_static_cache_v1';
+const STATIC_CACHE_TTL_MS = 30 * 60 * 1000; // 30분
 
 function _getTodayDateKey() {
   const d = new Date();
@@ -105,6 +106,7 @@ function _loadDailyStaticCache(grade, classNo) {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || parsed.date !== _getTodayDateKey()) return null;
+    if (parsed.savedAt && (Date.now() - Number(parsed.savedAt)) > STATIC_CACHE_TTL_MS) return null;
     if (String(parsed.grade || '') !== String(grade || '') || String(parsed.classNo || '') !== String(classNo || '')) {
       return null;
     }
@@ -119,6 +121,7 @@ function _saveDailyStaticCache(grade, classNo, bundle) {
     if (!bundle) return;
     localStorage.setItem(DAILY_STATIC_CACHE_KEY, JSON.stringify({
       date: _getTodayDateKey(),
+      savedAt: Date.now(),
       grade: String(grade || ''),
       classNo: String(classNo || ''),
       timetable_base: Array.isArray(bundle.timetable_base) ? bundle.timetable_base : [],
@@ -773,7 +776,7 @@ function _applyAuthenticatedUser(user) {
   };
 }
 
-async function refreshFromGas(showFeedback = true, triggerBtn = null) {
+async function refreshFromGas(showFeedback = true, triggerBtn = null, forceRefresh = false) {
   if (!gasApi.isConfigured()) {
     if (showFeedback) showToast('데모 모드로 동작 중입니다.', 'ℹ️');
     return;
@@ -783,7 +786,7 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null) {
     if (showFeedback) showLoading('최신 데이터를 동기화 중...');
     try {
       const cu = mockData.currentUser;
-      const dailyCache = _loadDailyStaticCache(cu.grade, cu.classNo);
+      const dailyCache = forceRefresh ? null : _loadDailyStaticCache(cu.grade, cu.classNo);
       const bundleParams = {
         role: state.activeRole,
         user_id: cu.userId || '',
@@ -794,7 +797,9 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null) {
         school_code: cu.neisSchoolCode || '',
         school_name: cu.schoolName || ''
       };
-      if (dailyCache) {
+      if (forceRefresh) {
+        bundleParams.force = '1';
+      } else if (dailyCache) {
         bundleParams.skip_static = '1';
       }
       const bundle = await gasApi.get('get_mobile_bundle', bundleParams);
