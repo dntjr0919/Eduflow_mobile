@@ -505,7 +505,8 @@ async function _handleGetMobileBundle(db, params) {
     mealsRaw,
     docRulesRows,
     chatRows,
-    notificationsRaw
+    notificationsRaw,
+    budgetRows
   ] = await Promise.all([
     role === 'teacher' && userId
       ? db.collection('계정_교사').doc(userId).get().then((d) => (d.exists ? [{ remote_id: d.id, ...d.data() }] : []))
@@ -550,7 +551,8 @@ async function _handleGetMobileBundle(db, params) {
       : (hasClassFilter
           ? _queryClassScoped(db, '1:1_상담채팅', gradeNum, classNum)
           : db.collection('1:1_상담채팅').limit(100).get().then(_snapToRows)),
-    db.collection('Notifications').where('is_read', '==', false).limit(50).get().then(_snapToRows)
+    db.collection('Notifications').where('is_read', '==', false).limit(50).get().then(_snapToRows),
+    db.collection('학급회비').limit(200).get().then(_snapToRows)
   ]);
 
   const effectiveTeacherName = normTeacherParam || (role === 'teacher' && teachersRaw[0] ? _normalizeTeacherName(teachersRaw[0].name || teachersRaw[0].teacher_id || '') : '');
@@ -633,7 +635,8 @@ async function _handleGetMobileBundle(db, params) {
     }),
     timetable_changes: timetableChangesRows.filter(_matchesTimetableRow),
     chat_messages: chatRows.filter((d) => _matchesTenant(d, tenant)),
-    notifications: notificationsRaw.filter((d) => _matchesTenant(d, tenant))
+    notifications: notificationsRaw.filter((d) => _matchesTenant(d, tenant)),
+    budget: budgetRows.filter((d) => _matchesTenant(d, tenant))
   };
 
   if (timetableBaseRows !== undefined) bundle.timetable_base = timetableBaseRows.filter(_matchesTimetableRow);

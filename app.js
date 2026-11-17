@@ -1195,11 +1195,19 @@ function hydrateMockDataFromBundle(bundle) {
 
   // 9. 학급회비
   if (Array.isArray(bundle.budget)) {
+    const parseAmount = (val) => {
+      if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
+      const cleaned = String(val ?? '').replace(/[^0-9.-]/g, '');
+      if (!cleaned || cleaned === '-' || cleaned === '.' || cleaned === '-.') return 0;
+      const num = Number(cleaned);
+      return Number.isFinite(num) ? num : 0;
+    };
     let income = 0;
     let expense = 0;
     const transactions = bundle.budget.map(b => {
-      const amt = Number(b.amount || 0) || 0;
-      const bType = String(b.type || 'expense').toLowerCase() === 'income' ? 'income' : 'expense';
+      const amt = parseAmount(b.amount);
+      const rawType = String(b.type || 'expense').trim().toLowerCase();
+      const bType = (rawType === 'income' || rawType === '수입') ? 'income' : 'expense';
       if (bType === 'income') income += amt;
       else expense += amt;
       return {

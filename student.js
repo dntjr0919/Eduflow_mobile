@@ -857,7 +857,7 @@ function renderBudget() {
       </div>
       <div class="text-right">
         <p class="text-xs font-bold ${tx.type === 'income' ? 'text-indigo-600' : 'text-slate-800'}">
-          ${tx.type === 'income' ? '+' : '-'}${tx.amount.toLocaleString()}원
+          ${tx.type === 'income' ? '+' : '-'}${(Number(tx.amount) || 0).toLocaleString()}원
         </p>
         <button onclick="openReceiptModal('${tx.id}')" class="text-[10px] text-indigo-600 hover:underline font-medium">영수증 보기</button>
       </div>
@@ -874,7 +874,7 @@ function openReceiptModal(txId) {
     <p>적요항목: ${tx.title}</p>
     <p>결제수단: ${tx.card}</p>
     ${tx.receiptUrl ? `<p>증빙링크: <a href="${tx.receiptUrl}" target="_blank" rel="noopener" class="text-indigo-600 underline">영수증 원본 보기</a></p>` : ''}
-    <p class="font-bold text-indigo-700 pt-2 border-t border-slate-200">합계금액: ${tx.amount.toLocaleString()}원</p>
+    <p class="font-bold text-indigo-700 pt-2 border-t border-slate-200">합계금액: ${(Number(tx.amount) || 0).toLocaleString()}원</p>
   `;
   openModal('receiptModal');
 }
