@@ -295,6 +295,151 @@ function renderFieldTripGuide() {
   `;
 }
 
+function _parseAttItemDates(item) {
+  if (!item) return { startDate: '', endDate: '' };
+  if (item.startDate) {
+    return { startDate: item.startDate, endDate: item.endDate || item.startDate };
+  }
+  const matches = String(item.period || '').match(/\d{4}-\d{2}-\d{2}/g);
+  if (!matches || matches.length === 0) return { startDate: '', endDate: '' };
+  return {
+    startDate: matches[0],
+    endDate: matches[1] || matches[0]
+  };
+}
+
+function _doesAttItemMatchDate(item, targetDate) {
+  if (!targetDate) return false;
+  const { startDate, endDate } = _parseAttItemDates(item);
+  if (!startDate) return false;
+  return targetDate >= startDate && targetDate <= (endDate || startDate);
+}
+
+function _parseAttCategoryAndSubType(item) {
+  if (!item) return { category: '', subType: '' };
+  let category = item.attCategory || '';
+  let subType = item.attSubType || '';
+  const typeStr = String(item.type || '');
+  if (!category) {
+    if (typeStr.includes('질병')) category = '질병';
+    else if (typeStr.includes('인정')) category = '인정';
+    else if (typeStr.includes('기타')) category = '기타';
+  }
+  if (!subType) {
+    if (typeStr.includes('결석')) subType = '결석';
+    else if (typeStr.includes('지각')) subType = '지각';
+    else if (typeStr.includes('조퇴')) subType = '조퇴';
+  }
+  return { category, subType };
+}
+
+function _doPeriodRangesOverlap(subA, periodA, subB, periodB) {
+  const options = typeof getPeriodOptionsList === 'function' ? getPeriodOptionsList() : [];
+  const idxA = options.indexOf(periodA);
+  const idxB = options.indexOf(periodB);
+  if (idxA === -1 || idxB === -1) {
+    return String(periodA || '') === String(periodB || '');
+  }
+  const rangeA = subA === '지각' ? [0, idxA] : [idxA, 999];
+  const rangeB = subB === '지각' ? [0, idxB] : [idxB, 999];
+  return Math.max(rangeA[0], rangeB[0]) <= Math.min(rangeA[1], rangeB[1]);
+}
+
+function cancelEditStudentAttendance() {
+  state.editingAttendanceId = null;
+  const btnText = document.getElementById('attSubmitBtnText');
+  if (btnText) btnText.innerText = '담임선생님께 출결 보고하기';
+  const cancelBtn = document.getElementById('attCancelEditBtn');
+  if (cancelBtn) cancelBtn.classList.add('hidden');
+  const reasonEl = document.getElementById('attReason');
+  if (reasonEl) reasonEl.value = '';
+  selectAttCategory('');
+  selectAttSubType('');
+}
+
+function editStudentAttendance(attId) {
+  const item = mockData.attendanceHistory.find(x => x.id === attId);
+  if (!item) return;
+  if (item.docStatus === '교사 최종완료' || item.confirmed) {
+    showToast('교사 확인이 완료된 출결은 수정할 수 없습니다.', '🔒');
+    return;
+  }
+
+  const { startDate, endDate } = _parseAttItemDates(item);
+  const { category, subType } = _parseAttCategoryAndSubType(item);
+
+  const startEl = document.getElementById('attStartDate');
+  const endEl = document.getElementById('attEndDate');
+  const reasonEl = document.getElementById('attReason');
+  if (startEl && startDate) startEl.value = startDate;
+  if (endEl && endDate) endEl.value = endDate;
+
+  selectAttCategory(category);
+  selectAttSubType(subType);
+
+  const periodSelect = document.getElementById('attPeriodSelect');
+  if (periodSelect && item.periodInfo && (subType === '지각' || subType === '조퇴')) {
+    const hasOpt = Array.from(periodSelect.options).some(o => o.value === item.periodInfo);
+    if (!hasOpt) {
+      const opt = document.createElement('option');
+      opt.value = item.periodInfo;
+      opt.textContent = item.periodInfo;
+      periodSelect.appendChild(opt);
+    }
+    periodSelect.value = item.periodInfo;
+  }
+  if (reasonEl) reasonEl.value = item.reason || '';
+
+  state.editingAttendanceId = attId;
+  const btnText = document.getElementById('attSubmitBtnText');
+  if (btnText) btnText.innerText = '출결 수정 내용 저장하기';
+  const cancelBtn = document.getElementById('attCancelEditBtn');
+  if (cancelBtn) cancelBtn.classList.remove('hidden');
+
+  if (startEl) {
+    startEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  showToast('수정할 내용을 변경한 뒤 저장 버튼을 눌러주세요.', '✏️');
+}
+
+async function deleteStudentAttendance(attId) {
+  const item = mockData.attendanceHistory.find(x => x.id === attId);
+  if (!item) return;
+  if (item.docStatus === '교사 최종완료' || item.confirmed) {
+    showToast('교사 확인이 완료된 출결은 삭제할 수 없습니다.', '🔒');
+    return;
+  }
+  if (!confirm('등록한 출결 내역을 삭제하시겠습니까?')) return;
+
+  if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+    try {
+      await gasApi.post('delete_attendance', { remote_id: attId });
+    } catch (err) {
+      showToast(`출결 삭제 실패: ${err.message}`, '⚠️');
+      return;
+    }
+  }
+
+  mockData.attendanceHistory = mockData.attendanceHistory.filter(x => x.id !== attId);
+  if (Array.isArray(mockData.teacherTodayAttendance)) {
+    mockData.teacherTodayAttendance = mockData.teacherTodayAttendance.filter(x => x.id !== attId);
+  }
+  if (Array.isArray(mockData.urgentDocuments)) {
+    const expectedTitle = `${item.type} (${item.period})`;
+    mockData.urgentDocuments = mockData.urgentDocuments.filter(doc => {
+      if (item.linkedDocId && doc.id === item.linkedDocId) return false;
+      if (doc.type === 'urgency' && doc.title === expectedTitle) return false;
+      return true;
+    });
+  }
+
+  if (state.editingAttendanceId === attId) {
+    cancelEditStudentAttendance();
+  }
+  renderAll();
+  showToast('출결 내역이 삭제되었습니다.');
+}
+
 async function handleAttendanceSubmit(e) {
   e.preventDefault();
   if (!state.selectedAttCategory || !state.selectedAttSubType) {
@@ -319,8 +464,39 @@ async function handleAttendanceSubmit(e) {
   const periodStr = isTimeLimited
     ? `${sDate} (${periodInfo})`
     : (sDate === eDate ? sDate : `${sDate} ~ ${eDate}`);
-  const attId = 'ATT-' + Date.now();
-  const docId = 'DOC-' + Date.now();
+
+  const editingId = state.editingAttendanceId || null;
+  let overwriteItem = editingId
+    ? (mockData.attendanceHistory.find(x => x.id === editingId) || null)
+    : null;
+
+  if (!editingId) {
+    const sameDateItems = mockData.attendanceHistory.filter(item => _doesAttItemMatchDate(item, sDate));
+    if (sameDateItems.length > 0) {
+      const existingAbsence = sameDateItems.find(item => _parseAttCategoryAndSubType(item).subType === '결석');
+      if (existingAbsence || state.selectedAttSubType === '결석') {
+        const target = existingAbsence || sameDateItems[0];
+        if (!confirm(`오늘 이미 등록된 출결(${target.type})이 있습니다. 새로운 내용으로 변경(덮어쓰기)할까요?`)) {
+          return;
+        }
+        overwriteItem = target;
+      } else {
+        const overlapping = sameDateItems.find(item => {
+          const { subType: exSub } = _parseAttCategoryAndSubType(item);
+          return (exSub === '지각' || exSub === '조퇴') &&
+            _doPeriodRangesOverlap(exSub, item.periodInfo, state.selectedAttSubType, periodInfo);
+        });
+        if (overlapping) {
+          showToast('이미 동일한 시간대에 출결이 등록되어 있습니다. 아래 이력에서 연필(수정) 버튼을 이용해 주세요.', '⚠️');
+          return;
+        }
+      }
+    }
+  }
+
+  const isOverwrite = Boolean(overwriteItem);
+  const attId = isOverwrite ? overwriteItem.id : ('ATT-' + Date.now());
+  const docId = (isOverwrite && overwriteItem.linkedDocId) ? overwriteItem.linkedDocId : ('DOC-' + Date.now());
   const stuId = String(mockData.currentUser.studentId || mockData.currentUser.userId || '');
   const stuName = mockData.currentUser.studentName || '학생';
   const ruleCode = 'ABSENCE_REPORT';
@@ -341,7 +517,7 @@ async function handleAttendanceSubmit(e) {
     submittedAt: null
   };
 
-  await withButtonLoading(submitBtn, '등록 중...', async () => {
+  await withButtonLoading(submitBtn, isOverwrite ? '저장 중...' : '등록 중...', async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
         await gasApi.post('submit_attendance', {
@@ -363,20 +539,22 @@ async function handleAttendanceSubmit(e) {
             memo: periodStr
           }
         });
-        const docRes = await gasApi.post('upsert_document_tracking', {
-          data: {
-            remote_id: docId,
-            doc_type: docName,
-            rule_code: ruleCode,
-            student_id: stuId,
-            student_name: stuName,
-            base_date: eDate || sDate,
-            status: '미제출',
-            memo: reason
+        if (!isOverwrite) {
+          const docRes = await gasApi.post('upsert_document_tracking', {
+            data: {
+              remote_id: docId,
+              doc_type: docName,
+              rule_code: ruleCode,
+              student_id: stuId,
+              student_name: stuName,
+              base_date: eDate || sDate,
+              status: '미제출',
+              memo: reason
+            }
+          });
+          if (docRes && docRes.due_date) {
+            newDoc.deadline = docRes.due_date;
           }
-        });
-        if (docRes && docRes.due_date) {
-          newDoc.deadline = docRes.due_date;
         }
       } catch (err) {
         showToast(`출결 서버 전송 실패: ${err.message}`, '⚠️');
@@ -384,22 +562,64 @@ async function handleAttendanceSubmit(e) {
       }
     }
 
-    mockData.attendanceHistory.unshift({
-      id: attId,
-      period: periodStr,
-      type: combinedType,
-      attCategory: state.selectedAttCategory,
-      attSubType: state.selectedAttSubType,
-      periodInfo,
-      reason: reason,
-      docStatus: '서류 미제출'
-    });
-    mockData.urgentDocuments.unshift(newDoc);
-    document.getElementById('attReason').value = '';
-    selectAttCategory('');
-    selectAttSubType('');
+    if (isOverwrite) {
+      const oldTitle = `${overwriteItem.type} (${overwriteItem.period})`;
+      overwriteItem.period = periodStr;
+      overwriteItem.startDate = sDate;
+      overwriteItem.endDate = eDate;
+      overwriteItem.type = combinedType;
+      overwriteItem.attCategory = state.selectedAttCategory;
+      overwriteItem.attSubType = state.selectedAttSubType;
+      overwriteItem.periodInfo = periodInfo;
+      overwriteItem.reason = reason;
+
+      if (Array.isArray(mockData.teacherTodayAttendance)) {
+        const tItem = mockData.teacherTodayAttendance.find(x => x.id === attId);
+        if (tItem) {
+          tItem.type = combinedType;
+          tItem.attCategory = state.selectedAttCategory;
+          tItem.attSubType = state.selectedAttSubType;
+          tItem.periodInfo = periodInfo;
+          tItem.reason = reason;
+        }
+      }
+      if (Array.isArray(mockData.urgentDocuments)) {
+        const linkedDoc = mockData.urgentDocuments.find(d =>
+          (overwriteItem.linkedDocId && d.id === overwriteItem.linkedDocId) ||
+          (d.type === 'urgency' && d.title === oldTitle)
+        );
+        if (linkedDoc) {
+          linkedDoc.title = `${combinedType} (${periodStr})`;
+          linkedDoc.description = reason;
+          linkedDoc.deadline = eDate;
+        }
+      }
+    } else {
+      mockData.attendanceHistory.unshift({
+        id: attId,
+        period: periodStr,
+        startDate: sDate,
+        endDate: eDate,
+        type: combinedType,
+        attCategory: state.selectedAttCategory,
+        attSubType: state.selectedAttSubType,
+        periodInfo,
+        reason: reason,
+        docStatus: '서류 미제출',
+        linkedDocId: docId
+      });
+      mockData.urgentDocuments.unshift(newDoc);
+    }
+
+    if (editingId) {
+      cancelEditStudentAttendance();
+    } else {
+      document.getElementById('attReason').value = '';
+      selectAttCategory('');
+      selectAttSubType('');
+    }
     renderAll();
-    showToast('출결 사유가 등록되고 서류 알림이 생성되었습니다.');
+    showToast(isOverwrite ? '출결 내역이 수정(덮어쓰기)되었습니다.' : '출결 사유가 등록되고 서류 알림이 생성되었습니다.');
   });
 }
 
@@ -415,14 +635,29 @@ function renderAttendanceHistory() {
     let badgeStyle = 'bg-red-100 text-red-700';
     if (item.docStatus === '학생확인완료') badgeStyle = 'bg-blue-100 text-blue-700';
     if (item.docStatus === '교사 최종완료') badgeStyle = 'bg-emerald-100 text-emerald-700';
+    const isLocked = item.docStatus === '교사 최종완료' || item.confirmed;
     const periodLabel = (item.periodInfo && !String(item.period || '').includes(item.periodInfo))
       ? `${item.period} · ${item.periodInfo}`
       : item.period;
+    const btnTone = isLocked
+      ? 'text-slate-300 cursor-not-allowed'
+      : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50';
+    const delTone = isLocked
+      ? 'text-slate-300 cursor-not-allowed'
+      : 'text-slate-400 hover:text-red-600 hover:bg-red-50';
     return `
       <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-1.5">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-2">
           <span class="text-xs font-bold text-slate-800">${item.type} <span class="text-[11px] font-normal text-slate-400">(${periodLabel})</span></span>
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeStyle}">${item.docStatus}</span>
+          <div class="flex items-center gap-1 shrink-0">
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeStyle}">${item.docStatus}</span>
+            <button type="button" onclick="editStudentAttendance('${item.id}')" title="${isLocked ? '교사 확인 완료 건은 수정 불가' : '수정'}" class="p-1 rounded-lg transition-colors ${btnTone}" aria-label="출결 수정">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+            </button>
+            <button type="button" onclick="deleteStudentAttendance('${item.id}')" title="${isLocked ? '교사 확인 완료 건은 삭제 불가' : '삭제'}" class="p-1 rounded-lg transition-colors ${delTone}" aria-label="출결 삭제">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+          </div>
         </div>
         <p class="text-[11px] text-slate-600">${item.reason}</p>
       </div>

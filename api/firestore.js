@@ -854,7 +854,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'submit_attendance') {
-      const rid = String(params.remote_id || `att_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
+      const rid = String(params.remote_id || '').trim() || `att_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
       await db.collection('일일_출결').doc(rid).set(
         {
           remote_id: rid,
@@ -874,6 +874,27 @@ module.exports = async function handler(req, res) {
         { merge: true }
       );
       return res.status(200).json({ ok: true, remote_id: rid });
+    }
+
+    if (action === 'delete_attendance') {
+      const rid = String(params.remote_id || '').trim();
+      if (!rid) return res.status(400).json({ ok: false, error: 'remote_id가 필요합니다.' });
+      await db.collection('일일_출결').doc(rid).delete();
+      return res.status(200).json({ ok: true, deleted_id: rid });
+    }
+
+    if (action === 'delete_attendance_batch') {
+      const rawIds = Array.isArray(params.remote_ids) ? params.remote_ids : [];
+      const ids = rawIds.map(id => String(id || '').trim()).filter(Boolean);
+      if (ids.length === 0) {
+        return res.status(400).json({ ok: false, error: 'remote_ids 배열이 필요합니다.' });
+      }
+      const batch = db.batch();
+      ids.forEach(rid => {
+        batch.delete(db.collection('일일_출결').doc(rid));
+      });
+      await batch.commit();
+      return res.status(200).json({ ok: true, deleted_count: ids.length, deleted_ids: ids });
     }
 
     if (action === 'confirm_attendance') {

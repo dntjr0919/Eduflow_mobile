@@ -182,15 +182,32 @@ function renderTeacherHome() {
   const totalBadge = document.getElementById('teacherTotalStudentsBadge');
   if (totalBadge) totalBadge.innerText = `재적 ${totalStudents}명 기준`;
 
+  const activeAttList = mockData.teacherTodayAttendance.filter(item => (item.type || '').trim() !== '출석');
+  const STATUS_PRIORITY = { absent: 3, field: 2, late: 1, present: 0 };
+  const studentStatusMap = new Map();
+  activeAttList.forEach(item => {
+    const sid = String(item.studentId || item.name || item.id || '').trim();
+    if (!sid) return;
+    const t = (item.type || '').trim();
+    let cat = 'absent';
+    if (t === '출석') cat = 'present';
+    else if (t.includes('체험학습')) cat = 'field';
+    else if (t.includes('지각') || t.includes('조퇴')) cat = 'late';
+    else cat = 'absent';
+
+    const prev = studentStatusMap.get(sid);
+    if (!prev || STATUS_PRIORITY[cat] > STATUS_PRIORITY[prev]) {
+      studentStatusMap.set(sid, cat);
+    }
+  });
+
   let absentCnt = 0;
   let lateCnt = 0;
   let fieldCnt = 0;
-  const activeAttList = mockData.teacherTodayAttendance.filter(item => (item.type || '').trim() !== '출석');
-  activeAttList.forEach(item => {
-    const t = item.type || '';
-    if (t.includes('체험학습')) fieldCnt++;
-    else if (t.includes('지각') || t.includes('조퇴')) lateCnt++;
-    else absentCnt++;
+  studentStatusMap.forEach(cat => {
+    if (cat === 'absent') absentCnt++;
+    else if (cat === 'field') fieldCnt++;
+    else if (cat === 'late') lateCnt++;
   });
   const presentCnt = Math.max(0, totalStudents - absentCnt - lateCnt - fieldCnt);
   const elPres = document.getElementById('summaryPresentCount');
@@ -209,18 +226,26 @@ function renderTeacherHome() {
     list.innerHTML = activeAttList.map(item => {
       const typeLabel = item.periodInfo ? `${item.type}(${item.periodInfo})` : item.type;
       return `
-      <div class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200/70">
-        <div>
-          <div class="flex items-center gap-1.5">
+      <div class="flex items-center justify-between gap-2 p-2.5 bg-slate-50 rounded-xl border border-slate-200/70">
+        <div class="min-w-0">
+          <div class="flex items-center gap-1.5 flex-wrap">
             <span class="text-xs font-bold text-slate-800">${item.studentId} ${item.name}</span>
             <span class="text-[10px] px-1.5 py-0.2 rounded font-bold bg-red-100 text-red-700">${typeLabel}</span>
           </div>
-          <p class="text-[10px] text-slate-500 mt-0.5">${item.reason || '사유 미입력'}</p>
+          <p class="text-[10px] text-slate-500 mt-0.5 truncate">${item.reason || '사유 미입력'}</p>
         </div>
-        ${item.confirmed
-          ? `<span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">확인완료</span>`
-          : `<button onclick="confirmTeacherAtt('${item.id}', this)" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-lg shadow-xs">교사 확인</button>`
-        }
+        <div class="flex items-center gap-1 shrink-0">
+          ${item.confirmed
+            ? `<span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">확인완료</span>`
+            : `<button onclick="confirmTeacherAtt('${item.id}', this)" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded-lg shadow-xs">교사 확인</button>`
+          }
+          <button type="button" onclick="editTeacherAtt('${item.id}')" title="출결 수정" class="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" aria-label="출결 수정">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+          </button>
+          <button type="button" onclick="deleteTeacherAtt('${item.id}', this)" title="출결 삭제" class="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" aria-label="출결 삭제">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+          </button>
+        </div>
       </div>
     `;
     }).join('');
@@ -491,6 +516,170 @@ async function confirmTeacherAtt(id, btnEl) {
     if (item) item.confirmed = true;
     renderTeacherHome();
     showToast('출결 보고가 확인 처리되었습니다.');
+  });
+}
+
+async function deleteTeacherAtt(id, btnEl) {
+  const item = mockData.teacherTodayAttendance.find(x => x.id === id);
+  if (!item) return;
+  if (!confirm(`${item.studentId} ${item.name} 학생의 "${item.type}" 출결 내역을 삭제하시겠습니까?`)) return;
+
+  const doDelete = async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        await gasApi.post('delete_attendance', { remote_id: id });
+      } catch (err) {
+        showToast(`출결 삭제 실패: ${err.message}`, '⚠️');
+        return;
+      }
+    }
+    mockData.teacherTodayAttendance = mockData.teacherTodayAttendance.filter(x => x.id !== id);
+    if (Array.isArray(mockData.attendanceHistory)) {
+      mockData.attendanceHistory = mockData.attendanceHistory.filter(x => x.id !== id);
+    }
+    renderTeacherHome();
+    showToast('출결 내역이 삭제되었습니다.');
+  };
+
+  if (btnEl) {
+    await withButtonLoading(btnEl, '...', doDelete);
+  } else {
+    await doDelete();
+  }
+}
+
+function onTeacherAttEditSubTypeChange() {
+  const catEl = document.getElementById('teacherAttEditCategory');
+  const subEl = document.getElementById('teacherAttEditSubType');
+  const periodWrap = document.getElementById('teacherAttEditPeriodWrap');
+  if (!catEl || !subEl || !periodWrap) return;
+
+  const isPresentOrField = catEl.value === '출석' || catEl.value === '체험학습';
+  subEl.disabled = isPresentOrField;
+  const needsPeriod = !isPresentOrField && (subEl.value === '지각' || subEl.value === '조퇴');
+  periodWrap.classList.toggle('hidden', !needsPeriod);
+}
+
+function editTeacherAtt(id) {
+  const item = mockData.teacherTodayAttendance.find(x => x.id === id);
+  if (!item) return;
+
+  const idEl = document.getElementById('teacherAttEditId');
+  const labelEl = document.getElementById('teacherAttEditStudentLabel');
+  const catEl = document.getElementById('teacherAttEditCategory');
+  const subEl = document.getElementById('teacherAttEditSubType');
+  const periodEl = document.getElementById('teacherAttEditPeriod');
+  const reasonEl = document.getElementById('teacherAttEditReason');
+  if (!idEl || !catEl || !subEl || !periodEl || !reasonEl) return;
+
+  idEl.value = item.id;
+  if (labelEl) labelEl.innerText = `${item.studentId} ${item.name} · 현재: ${item.type}`;
+
+  const t = String(item.type || '');
+  let cat = item.attCategory || '';
+  if (!cat) {
+    if (t === '출석') cat = '출석';
+    else if (t.includes('체험학습')) cat = '체험학습';
+    else if (t.includes('인정')) cat = '인정';
+    else if (t.includes('기타')) cat = '기타';
+    else cat = '질병';
+  }
+  let sub = item.attSubType || '';
+  if (!sub) {
+    if (t.includes('지각')) sub = '지각';
+    else if (t.includes('조퇴')) sub = '조퇴';
+    else sub = '결석';
+  }
+
+  catEl.value = cat;
+  subEl.value = sub;
+
+  const options = typeof getPeriodOptionsList === 'function' ? getPeriodOptionsList() : ['조회', '1교시', '2교시', '3교시', '4교시', '5교시', '6교시', '7교시'];
+  periodEl.innerHTML = `<option value="">교시 선택</option>` + options.map(o => `<option value="${o}">${o}</option>`).join('');
+  if (item.periodInfo) {
+    if (!options.includes(item.periodInfo)) {
+      const opt = document.createElement('option');
+      opt.value = item.periodInfo;
+      opt.textContent = item.periodInfo;
+      periodEl.appendChild(opt);
+    }
+    periodEl.value = item.periodInfo;
+  } else {
+    periodEl.value = '';
+  }
+
+  reasonEl.value = item.reason || '';
+  onTeacherAttEditSubTypeChange();
+  openModal('teacherAttEditModal');
+}
+
+async function saveTeacherAttEdit(e) {
+  e.preventDefault();
+  const id = document.getElementById('teacherAttEditId').value;
+  const item = mockData.teacherTodayAttendance.find(x => x.id === id);
+  if (!item) return;
+
+  const cat = document.getElementById('teacherAttEditCategory').value;
+  const sub = document.getElementById('teacherAttEditSubType').value;
+  const isPresentOrField = cat === '출석' || cat === '체험학습';
+  const needsPeriod = !isPresentOrField && (sub === '지각' || sub === '조퇴');
+  const periodInfo = needsPeriod ? document.getElementById('teacherAttEditPeriod').value : '';
+  if (needsPeriod && !periodInfo) {
+    showToast(`${sub} 교시를 선택해 주세요.`, '⚠️');
+    return;
+  }
+  const reason = document.getElementById('teacherAttEditReason').value.trim();
+  const combinedType = isPresentOrField ? cat : `${cat}${sub}`;
+  const submitBtn = e.submitter || (e.target && e.target.querySelector('button[type="submit"]'));
+
+  await withButtonLoading(submitBtn, '저장 중...', async () => {
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      try {
+        const cu = mockData.currentUser || {};
+        await gasApi.post('submit_attendance', {
+          data: {
+            remote_id: item.id,
+            date: typeof getLocalTodayStr === 'function' ? getLocalTodayStr() : new Date().toISOString().slice(0, 10),
+            student_id: item.studentId,
+            student_name: item.name,
+            grade: cu.grade || '',
+            class_no: cu.classNo || '',
+            attendance_type: combinedType,
+            att_category: isPresentOrField ? '' : cat,
+            att_sub_type: isPresentOrField ? '' : sub,
+            period_info: periodInfo,
+            reason,
+            teacher_confirmed: 1
+          }
+        });
+      } catch (err) {
+        showToast(`출결 정정 저장 실패: ${err.message}`, '⚠️');
+        return;
+      }
+    }
+
+    item.type = combinedType;
+    item.attCategory = isPresentOrField ? '' : cat;
+    item.attSubType = isPresentOrField ? '' : sub;
+    item.periodInfo = periodInfo;
+    item.reason = reason;
+    item.confirmed = true;
+
+    if (Array.isArray(mockData.attendanceHistory)) {
+      const hItem = mockData.attendanceHistory.find(x => x.id === item.id);
+      if (hItem) {
+        hItem.type = combinedType;
+        hItem.attCategory = item.attCategory;
+        hItem.attSubType = item.attSubType;
+        hItem.periodInfo = periodInfo;
+        hItem.reason = reason;
+        hItem.docStatus = '교사 최종완료';
+      }
+    }
+
+    closeModal('teacherAttEditModal');
+    renderTeacherHome();
+    showToast('출결 상태가 정정되었습니다.');
   });
 }
 
