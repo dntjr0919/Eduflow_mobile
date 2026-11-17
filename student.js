@@ -886,6 +886,44 @@ function renderBoardNotices() {
   }).join('');
 }
 
+function _linkifyBoardContent(rawText) {
+  const esc = typeof _escapeNoticeHtml === 'function'
+    ? _escapeNoticeHtml
+    : (v => String(v ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;'));
+  const escaped = esc(String(rawText || ''));
+  return escaped.replace(/https?:\/\/[^\s<>"')\]\}]+/gi, (match) => {
+    const safe = _safeHttpUrl(match);
+    if (!safe) return match;
+    return `<a href="${safe}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 underline break-all hover:text-indigo-800">${safe}</a>`;
+  });
+}
+
+function _extractBoardImageUrls(notice) {
+  const candidates = [];
+  if (notice && notice.sourceUrl) candidates.push(String(notice.sourceUrl));
+  const contentStr = String((notice && notice.content) || '');
+  const matches = contentStr.match(/https?:\/\/[^\s<>"')\]\}]+/gi) || [];
+  candidates.push(...matches);
+
+  const seen = new Set();
+  const images = [];
+  for (const raw of candidates) {
+    const safe = _safeHttpUrl(raw);
+    if (!safe || seen.has(safe)) continue;
+    const pathOnly = safe.split(/[?#]/)[0];
+    if (/\.(jpe?g|png|webp)$/i.test(pathOnly)) {
+      seen.add(safe);
+      images.push(safe);
+    }
+  }
+  return images;
+}
+
 function openBoardNoticeModal(noticeId) {
   const n = (mockData.boardNotices || []).find((x) => x.id === noticeId);
   if (!n) return;
@@ -899,6 +937,8 @@ function openBoardNoticeModal(noticeId) {
   const summaryBoxEl = document.getElementById('boardModalSummaryBox');
   const summaryEl = document.getElementById('boardModalSummary');
   const contentEl = document.getElementById('boardModalContent');
+  const imagesBoxEl = document.getElementById('boardModalImagesBox');
+  const imagesEl = document.getElementById('boardModalImages');
   const linkEl = document.getElementById('boardModalSourceLink');
 
   if (badgeEl) {
@@ -919,7 +959,23 @@ function openBoardNoticeModal(noticeId) {
     summaryEl.innerText = n.summary || '';
   }
   if (contentEl) {
-    contentEl.innerText = n.content || n.summary || '상세 본문 내용이 없습니다.';
+    contentEl.innerHTML = _linkifyBoardContent(n.content || n.summary || '상세 본문 내용이 없습니다.');
+  }
+  if (imagesBoxEl && imagesEl) {
+    const imgUrls = _extractBoardImageUrls(n);
+    if (imgUrls.length > 0) {
+      imagesEl.innerHTML = imgUrls
+        .map((url) => (
+          `<a href="${url}" target="_blank" rel="noopener noreferrer" class="block rounded-xl overflow-hidden border border-slate-200 bg-white hover:border-indigo-300 transition-all">` +
+          `<img src="${url}" alt="공지 미리보기 이미지" loading="lazy" class="w-full max-h-64 object-contain bg-white" />` +
+          `</a>`
+        ))
+        .join('');
+      imagesBoxEl.classList.remove('hidden');
+    } else {
+      imagesEl.innerHTML = '';
+      imagesBoxEl.classList.add('hidden');
+    }
   }
   if (linkEl) {
     const safeUrl = _safeHttpUrl(n.sourceUrl);
