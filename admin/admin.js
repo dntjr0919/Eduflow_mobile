@@ -1,6 +1,20 @@
 const AUTO_LOGIN_STORAGE_KEY = 'eduflow_saved_auth';
 const API_ENDPOINT = '/api/firestore';
 
+function getLocalTodayStr() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function shiftDateStr(dateStr, deltaDays) {
+  const parts = String(dateStr || getLocalTodayStr()).split('-').map(Number);
+  const d = parts.length === 3 ? new Date(parts[0], parts[1] - 1, parts[2]) : new Date();
+  d.setDate(d.getDate() + deltaDays);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 const adminState = {
   auth: null, // { role: 'teacher', userId, password, passwordHash }
   overview: null,
@@ -8,6 +22,8 @@ const adminState = {
   selectedNoticeId: '',
   letterFilter: 'all',
   letterSearch: '',
+  attSubtab: 'daily', // 'daily' | 'summary'
+  attDailyDate: getLocalTodayStr(),
   attPeriod: 'month',
   rosterSearch: '',
   counselSearch: '',
@@ -382,8 +398,166 @@ function closeSignatureModal() {
 }
 
 // =========================================================================
-// TAB 2: 전체 출결 누적표 & 서류 추적
+// TAB 2: 전체 출결 누적표 & 서류 추적 + 일자별 출결 조회
 // =========================================================================
+function switchAttendanceSubtab(subtab) {
+  adminState.attSubtab = subtab === 'summary' ? 'summary' : 'daily';
+  const dailyPanel = document.getElementById('att-daily-panel');
+  const summaryPanel = document.getElementById('att-summary-panel');
+  const dailyBtn = document.getElementById('att-subtab-daily');
+  const summaryBtn = document.getElementById('att-subtab-summary');
+
+  const isDaily = adminState.attSubtab === 'daily';
+  if (dailyPanel) dailyPanel.classList.toggle('hidden', !isDaily);
+  if (summaryPanel) summaryPanel.classList.toggle('hidden', isDaily);
+  if (dailyBtn) {
+    dailyBtn.className = isDaily
+      ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-700 shadow-2xs transition'
+      : 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition';
+  }
+  if (summaryBtn) {
+    summaryBtn.className = !isDaily
+      ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-700 shadow-2xs transition'
+      : 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition';
+  }
+}
+
+function formatAttendancePeriodInfo(rec) {
+  if (!rec) return '-';
+  if (rec.periods) return String(rec.periods);
+  if (rec.start_period && rec.end_period) return `${rec.start_period}~${rec.end_period}교시`;
+  if (rec.period !== undefined && rec.period !== null && rec.period !== '') return `${rec.period}교시`;
+  return '종일';
+}
+
+function buildDailyAttendanceRows(selectedDate) {
+  const ov = adminState.overview || {};
+  const students = (ov.students || []).filter((s) => {
+    const st = String(s.status || 'active').toLowerCase();
+    return st !== 'rejected' && st !== 'inactive' && st !== 'disabled';
+  });
+  const dayRecords = (ov.attendance || []).filter((a) => String(a.date || '').slice(0, 10) === selectedDate);
+  const recBySid = new Map();
+  dayRecords.forEach((rec) => {
+    const sid = String(rec.student_id || '').trim();
+    if (!sid) return;
+    if (!recBySid.has(sid)) recBySid.set(sid, []);
+    recBySid.get(sid).push(rec);
+  });
+
+  return students.map((s) => {
+    const sid = String(s.student_id || s.remote_id || '').trim();
+    const list = recBySid.get(sid) || [];
+    if (list.length === 0) {
+      return {
+        student_id: sid,
+        student_no: s.student_no ?? '',
+        student_name: String(s.name || s.student_name || sid),
+        status: '출석',
+        period_info: '-',
+        reason: '-',
+        teacher_confirmed: true,
+        remote_id: '',
+        has_record: false,
+      };
+    }
+    const primary = list[0];
+    const types = list.map((r) => String(r.attendance_type || '출결')).join(', ');
+    const periods = list.map(formatAttendancePeriodInfo).filter((p) => p !== '-').join(', ') || '-';
+    const reasons = list.map((r) => String(r.reason || '').trim()).filter(Boolean).join(' / ') || '-';
+    const allConfirmed = list.every((r) => Boolean(r.teacher_confirmed));
+    return {
+      student_id: sid,
+      student_no: s.student_no ?? '',
+      student_name: String(s.name || s.student_name || sid),
+      status: types,
+      period_info: periods,
+      reason: reasons,
+      teacher_confirmed: allConfirmed,
+      remote_id: String(primary.remote_id || ''),
+      has_record: true,
+    };
+  });
+}
+
+function renderDailyAttendancePanel() {
+  const selectedDate = adminState.attDailyDate || getLocalTodayStr();
+  const dateInput = document.getElementById('att-daily-date');
+  const dateLabel = document.getElementById('att-daily-date-label');
+  if (dateInput && dateInput.value !== selectedDate) dateInput.value = selectedDate;
+  if (dateLabel) dateLabel.textContent = selectedDate;
+
+  const rows = buildDailyAttendanceRows(selectedDate);
+  let present = 0;
+  let absent = 0;
+  let late = 0;
+  let field = 0;
+  rows.forEach((r) => {
+    const st = r.status;
+    if (st.includes('결석')) absent += 1;
+    else if (st.includes('지각') || st.includes('조퇴')) late += 1;
+    else if (st.includes('체험') || st.includes('인정')) field += 1;
+    else present += 1;
+  });
+
+  const elP = document.getElementById('kpi-daily-present');
+  const elA = document.getElementById('kpi-daily-absent');
+  const elL = document.getElementById('kpi-daily-late');
+  const elF = document.getElementById('kpi-daily-field');
+  if (elP) elP.innerHTML = `${present}<span class="text-xs font-normal text-slate-500 ml-1">명</span>`;
+  if (elA) elA.innerHTML = `${absent}<span class="text-xs font-normal text-slate-500 ml-1">명</span>`;
+  if (elL) elL.innerHTML = `${late}<span class="text-xs font-normal text-slate-500 ml-1">명</span>`;
+  if (elF) elF.innerHTML = `${field}<span class="text-xs font-normal text-slate-500 ml-1">명</span>`;
+
+  const tbody = document.getElementById('att-daily-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = rows.length === 0
+    ? '<tr><td colspan="6" class="py-8 text-center text-slate-400">학급 학생 명렬이 없습니다.</td></tr>'
+    : rows.map((r) => {
+        const st = r.status;
+        let badgeCls = 'bg-emerald-100 text-emerald-700';
+        if (st.includes('결석')) badgeCls = 'bg-rose-100 text-rose-700';
+        else if (st.includes('지각') || st.includes('조퇴')) badgeCls = 'bg-amber-100 text-amber-800';
+        else if (st.includes('체험') || st.includes('인정')) badgeCls = 'bg-indigo-100 text-indigo-700';
+
+        const confirmCell = !r.has_record
+          ? '<span class="text-slate-300 text-[11px]">-</span>'
+          : (r.teacher_confirmed
+            ? '<span class="text-emerald-600 font-semibold text-[11px]">확인완료</span>'
+            : `<button type="button" onclick="confirmAttendanceRow('${escapeHtml(r.remote_id)}')" class="px-2 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-[11px] font-semibold">담임 확인</button>`);
+
+        return `
+          <tr class="hover:bg-slate-50">
+            <td class="py-2.5 px-3 text-center font-mono text-slate-500 tabular-nums">${escapeHtml(r.student_id || r.student_no)}</td>
+            <td class="py-2.5 px-4 font-bold text-slate-900">${escapeHtml(r.student_name)}</td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap"><span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${badgeCls}">${escapeHtml(st)}</span></td>
+            <td class="py-2.5 px-3 text-center text-slate-600 whitespace-nowrap">${escapeHtml(r.period_info)}</td>
+            <td class="py-2.5 px-4 text-slate-600">${escapeHtml(r.reason)}</td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap">${confirmCell}</td>
+          </tr>
+        `;
+      }).join('');
+}
+
+function exportDailyAttendanceCsv() {
+  const selectedDate = adminState.attDailyDate || getLocalTodayStr();
+  const rows = buildDailyAttendanceRows(selectedDate);
+  const headers = ['일자', '학번', '이름', '출결상태', '교시정보', '사유', '교사확인'];
+  const lines = [headers.map(csvEscape).join(',')];
+  rows.forEach((r) => {
+    lines.push([
+      selectedDate,
+      r.student_id || r.student_no,
+      r.student_name,
+      r.status,
+      r.period_info,
+      r.reason,
+      !r.has_record ? '-' : (r.teacher_confirmed ? '확인완료' : '미확인'),
+    ].map(csvEscape).join(','));
+  });
+  downloadFileWithBom(`학급_일자별_출결_${selectedDate}.csv`, lines.join('\r\n'));
+}
+
 function filterAttendanceByPeriod(attendanceRows, period) {
   if (period === 'all') return attendanceRows;
   const now = new Date();
@@ -407,6 +581,7 @@ function filterAttendanceByPeriod(attendanceRows, period) {
 }
 
 function renderAttendanceTab() {
+  renderDailyAttendancePanel();
   const ov = adminState.overview || {};
   const students = (ov.students || []).filter((s) => String(s.status || 'active').toLowerCase() !== 'rejected');
   const allAtt = ov.attendance || [];
@@ -682,20 +857,30 @@ function renderLedgerTab() {
 
   const tbody = document.getElementById('ledger-tbody');
   tbody.innerHTML = ledger.length === 0
-    ? '<tr><td colspan="5" class="py-8 text-center text-slate-400">등록된 학급회비 입출금 내역이 없습니다.</td></tr>'
+    ? '<tr><td colspan="7" class="py-8 text-center text-slate-400">등록된 학급회비 입출금 내역이 없습니다.</td></tr>'
     : ledger.map((row) => {
+        const rid = String(row.remote_id || '');
         const amt = Math.abs(Number(row.amount || 0));
         const type = String(row.type || row.tx_type || '').trim();
-        const isInc = type.includes('수입') || type.includes('입금') || type.toLowerCase() === 'income';
+        const isInc = type.includes('수입') || type.includes('입금') || type.toLowerCase() === 'income' || type.toLowerCase() === 'in';
+        const storeCard = [row.store, row.card || row.payment_method, row.memo].filter(Boolean).join(' · ') || '-';
+        const receiptHtml = row.receipt_url
+          ? `<a href="${escapeHtml(row.receipt_url)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:underline font-semibold">보기</a>`
+          : '<span class="text-slate-300">-</span>';
         return `
           <tr class="hover:bg-slate-50">
             <td class="py-2.5 px-4 font-mono text-[11px] text-slate-500 whitespace-nowrap">${escapeHtml(row.date || row.created_at || '-')}</td>
             <td class="py-2.5 px-3 text-center whitespace-nowrap">
-              <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${isInc ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}">${escapeHtml(type || (isInc ? '수입' : '지출'))}</span>
+              <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${isInc ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}">${isInc ? '수입' : '지출'}</span>
             </td>
             <td class="py-2.5 px-4 font-semibold text-slate-800">${escapeHtml(row.title || row.description || row.item || '-')}</td>
+            <td class="py-2.5 px-4 text-slate-500">${escapeHtml(storeCard)}</td>
             <td class="py-2.5 px-4 text-right font-mono font-bold tabular-nums ${isInc ? 'text-emerald-600' : 'text-rose-600'}">${isInc ? '+' : '-'}${amt.toLocaleString('ko-KR')}원</td>
-            <td class="py-2.5 px-4 text-slate-500">${escapeHtml(row.memo || row.payment_method || '-')}</td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap">${receiptHtml}</td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap space-x-1">
+              <button type="button" onclick="openBudgetModal('${escapeHtml(rid)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
+              <button type="button" onclick="deleteBudgetRow('${escapeHtml(rid)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
+            </td>
           </tr>
         `;
       }).join('');
@@ -878,18 +1063,58 @@ function exportAttendanceCsv() {
   downloadFileWithBom(`학급_출결기록_${adminState.attPeriod}.csv`, lines.join('\r\n'));
 }
 
+function openBudgetModal(remoteId = '') {
+  const ov = adminState.overview || {};
+  const ledger = ov.ledger || [];
+  const item = remoteId ? ledger.find((r) => String(r.remote_id || '') === remoteId) : null;
+
+  document.getElementById('budget-modal-title').textContent = item ? '학급회비 내역 수정' : '학급회비 내역 추가';
+  document.getElementById('budget-remote-id').value = item ? String(item.remote_id || '') : '';
+  document.getElementById('budget-date').value = item ? String(item.date || '').slice(0, 10) || getLocalTodayStr() : getLocalTodayStr();
+  const rawType = item ? String(item.type || item.tx_type || '').toLowerCase() : 'expense';
+  document.getElementById('budget-type').value = (rawType === 'income' || rawType.includes('수입') || rawType.includes('입금')) ? 'income' : 'expense';
+  document.getElementById('budget-title').value = item ? String(item.title || item.description || item.item || '') : '';
+  document.getElementById('budget-amount').value = item ? String(Math.abs(Number(item.amount || 0))) : '';
+  document.getElementById('budget-store').value = item ? String(item.store || '') : '';
+  document.getElementById('budget-card').value = item ? String(item.card || item.payment_method || '') : '';
+  document.getElementById('budget-receipt-url').value = item ? String(item.receipt_url || '') : '';
+  document.getElementById('budget-modal').classList.remove('hidden');
+}
+
+function closeBudgetModal() {
+  document.getElementById('budget-modal').classList.add('hidden');
+}
+
+async function deleteBudgetRow(remoteId) {
+  if (!remoteId) return;
+  if (!confirm('이 학급회비 내역을 삭제하시겠습니까?')) return;
+  try {
+    await callApi('delete_budget', { remote_id: remoteId }, true);
+    if (adminState.overview && Array.isArray(adminState.overview.ledger)) {
+      adminState.overview.ledger = adminState.overview.ledger.filter((r) => String(r.remote_id || '') !== remoteId);
+    }
+    renderLedgerTab();
+  } catch (err) {
+    alert(`삭제 실패: ${err.message}`);
+  }
+}
+
 function exportLedgerCsv() {
   const ov = adminState.overview || {};
   const ledger = ov.ledger || [];
-  const headers = ['일자', '구분', '내용', '금액', '비고'];
+  const headers = ['일자', '구분', '항목명', '금액', '사용처', '결제수단', '영수증'];
   const lines = [headers.map(csvEscape).join(',')];
   ledger.forEach((row) => {
+    const rawType = String(row.type || row.tx_type || '').toLowerCase();
+    const isInc = rawType === 'income' || rawType.includes('수입') || rawType.includes('입금');
     lines.push([
       row.date || row.created_at || '',
-      row.type || row.tx_type || '',
+      isInc ? '수입' : '지출',
       row.title || row.description || row.item || '',
       row.amount || 0,
-      row.memo || row.payment_method || '',
+      row.store || '',
+      row.card || row.payment_method || '',
+      row.receipt_url || '',
     ].map(csvEscape).join(','));
   });
   downloadFileWithBom('학급회비_장부.csv', lines.join('\r\n'));
@@ -1068,10 +1293,61 @@ function bindEvents() {
     renderLettersTab();
   });
 
-  // Tab 2 period filter
+  // Tab 2 period filter & daily date controls
   document.getElementById('att-period-filter')?.addEventListener('change', (e) => {
     adminState.attPeriod = e.target.value;
     renderAttendanceTab();
+  });
+  document.getElementById('att-daily-date')?.addEventListener('change', (e) => {
+    adminState.attDailyDate = e.target.value || getLocalTodayStr();
+    renderDailyAttendancePanel();
+  });
+  document.getElementById('att-daily-prev')?.addEventListener('click', () => {
+    adminState.attDailyDate = shiftDateStr(adminState.attDailyDate, -1);
+    renderDailyAttendancePanel();
+  });
+  document.getElementById('att-daily-next')?.addEventListener('click', () => {
+    adminState.attDailyDate = shiftDateStr(adminState.attDailyDate, 1);
+    renderDailyAttendancePanel();
+  });
+  document.getElementById('att-daily-today')?.addEventListener('click', () => {
+    adminState.attDailyDate = getLocalTodayStr();
+    renderDailyAttendancePanel();
+  });
+
+  // Tab 4 budget modal form submit
+  document.getElementById('budget-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('budget-submit-btn');
+    const payload = {
+      remote_id: document.getElementById('budget-remote-id').value.trim(),
+      date: document.getElementById('budget-date').value,
+      type: document.getElementById('budget-type').value,
+      title: document.getElementById('budget-title').value.trim(),
+      amount: Number(document.getElementById('budget-amount').value || 0),
+      store: document.getElementById('budget-store').value.trim(),
+      card: document.getElementById('budget-card').value.trim(),
+      receipt_url: document.getElementById('budget-receipt-url').value.trim(),
+    };
+    if (!payload.title) return;
+    btn.disabled = true;
+    try {
+      const res = await callApi('upsert_budget', payload, true);
+      if (adminState.overview) {
+        const list = Array.isArray(adminState.overview.ledger) ? adminState.overview.ledger : [];
+        const idx = list.findIndex((r) => String(r.remote_id || '') === res.remote_id);
+        if (idx >= 0) list[idx] = res.item;
+        else list.unshift(res.item);
+        list.sort((a, b) => String(b.date || b.created_at || '').localeCompare(String(a.date || a.created_at || '')));
+        adminState.overview.ledger = list;
+      }
+      closeBudgetModal();
+      renderLedgerTab();
+    } catch (err) {
+      alert(`저장 실패: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   // Tab 3 search

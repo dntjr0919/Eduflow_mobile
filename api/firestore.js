@@ -1666,6 +1666,8 @@ module.exports = async function handler(req, res) {
       'delete_board_notice',
       'admin_get_class_overview',
       'admin_reset_account_password',
+      'upsert_budget',
+      'delete_budget',
     ]);
 
     if (desktopActions.has(action)) {
@@ -2249,6 +2251,75 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       status: 200,
       json: { ok: true, remote_id: rid, target_role: targetRole, reset_at: nowStr },
     };
+  }
+
+  if (action === 'upsert_budget') {
+    if (auth.gradeNum === null || auth.classNum === null) {
+      return { status: 403, json: { ok: false, error: '담당 학년·반이 지정된 교사만 학급회비를 등록/수정할 수 있습니다.' } };
+    }
+    const rawTitle = String(params.title || params.description || params.item || '').trim();
+    if (!rawTitle) {
+      return { status: 400, json: { ok: false, error: '항목명(title)을 입력해 주세요.' } };
+    }
+    const rawAmount = Number(params.amount);
+    if (!Number.isFinite(rawAmount) || rawAmount < 0) {
+      return { status: 400, json: { ok: false, error: '유효한 금액(amount)을 입력해 주세요.' } };
+    }
+
+    const rid = String(params.remote_id || `budget_${Date.now()}_${Math.floor(Math.random() * 1000)}`).trim();
+    const docRef = db.collection('학급회비').doc(rid);
+    const existingSnap = params.remote_id ? await docRef.get() : null;
+    const existing = existingSnap && existingSnap.exists ? { remote_id: existingSnap.id, ...(existingSnap.data() || {}) } : null;
+
+    if (existing && !_isStrictClassMember(existing, auth)) {
+      return { status: 403, json: { ok: false, error: '담당 학급의 학급회비 내역만 수정할 수 있습니다.' } };
+    }
+
+    const rawType = String(params.type || params.tx_type || '').trim().toLowerCase();
+    const normalizedType = (rawType === 'income' || rawType === 'in' || rawType.includes('수입') || rawType.includes('입금'))
+      ? 'income'
+      : 'expense';
+
+    const nowStr = _nowStr();
+    const payload = {
+      remote_id: rid,
+      type: normalizedType,
+      amount: Math.round(Math.abs(rawAmount)),
+      date: String(params.date || (existing && existing.date) || nowStr.slice(0, 10)).trim(),
+      title: rawTitle,
+      store: String(params.store || '').trim(),
+      card: String(params.card || params.payment_method || '').trim(),
+      receipt_url: String(params.receipt_url || '').trim(),
+      memo: String(params.memo || '').trim(),
+      school_code: auth.schoolCode,
+      school_name: auth.schoolName,
+      grade: auth.gradeNum,
+      class_no: auth.classNum,
+      teacher_id: auth.teacherId,
+      created_at: String((existing && existing.created_at) || nowStr),
+      updated_at: nowStr,
+    };
+
+    await docRef.set(payload, { merge: true });
+    return { status: 200, json: { ok: true, remote_id: rid, item: payload } };
+  }
+
+  if (action === 'delete_budget') {
+    const rid = String(params.remote_id || params.id || '').trim();
+    if (!rid) {
+      return { status: 400, json: { ok: false, error: '삭제할 학급회비 내역의 remote_id가 필요합니다.' } };
+    }
+    const docRef = db.collection('학급회비').doc(rid);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      return { status: 404, json: { ok: false, error: '해당 학급회비 내역을 찾을 수 없습니다.' } };
+    }
+    const targetDoc = { remote_id: snap.id, ...(snap.data() || {}) };
+    if (!_isStrictClassMember(targetDoc, auth)) {
+      return { status: 403, json: { ok: false, error: '담당 학급의 학급회비 내역만 삭제할 수 있습니다.' } };
+    }
+    await docRef.delete();
+    return { status: 200, json: { ok: true, remote_id: rid, deleted: true } };
   }
 
   return { status: 400, json: { ok: false, error: `지원하지 않는 데스크톱 action입니다: ${action}` } };
