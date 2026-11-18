@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EduFlow Admin - 교사 전용 학급 데이터 관리</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Pretendard', 'Apple SD Gothic Neo', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+          },
+          colors: {
+            surface: '#faf8ff',
+            'surface-container-lowest': '#ffffff',
+            'surface-container-low': '#f2f3ff',
+            'surface-container': '#eaedff',
+            'surface-container-high': '#e2e7ff',
+            'on-surface': '#131b2e',
+            'on-surface-variant': '#464555',
+            secondary: '#505f76',
+            outline: '#777587',
+            'outline-variant': '#c7c4d8',
+            primary: {
+              DEFAULT: '#4f46e5',
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            },
+            'primary-container': '#4f46e5',
+            'on-primary': '#ffffff',
+            tertiary: '#005338',
+            slate: {
+              850: '#151f32',
+              900: '#0f172a',
+            }
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    body { font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Inter', sans-serif; }
+    .tabular-nums { font-variant-numeric: tabular-nums; }
+    ::-webkit-scrollbar { height: 6px; width: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .table-cell-sticky {
+      position: sticky;
+      left: 0;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body class="bg-[#F8FAFC] text-slate-900 antialiased min-h-screen selection:bg-indigo-100 selection:text-indigo-800">
+
+  <!-- ===================================================================== -->
+  <!-- 1. Stitch eduflow_admin_2 기반 교사 전용 인증 게이트 (#admin-auth-gate) -->
+  <!-- ===================================================================== -->
+  <section id="admin-auth-gate" class="hidden min-h-screen w-full flex items-center justify-center bg-surface p-4 relative overflow-hidden">
+    <div class="absolute -top-32 -left-32 w-96 h-96 bg-indigo-200/30 rounded-full blur-3xl pointer-events-none"></div>
+    <div class="absolute -bottom-32 -right-32 w-96 h-96 bg-sky-200/30 rounded-full blur-3xl pointer-events-none"></div>
+
+    <div class="w-full max-w-[460px] relative z-10 flex flex-col items-center">
+      <div class="mb-5 flex items-center gap-2 bg-surface-container-high/80 px-3.5 py-1 rounded-full shadow-xs">
+        <span class="inline-block w-2 h-2 rounded-full bg-emerald-600"></span>
+        <span class="text-[11px] font-semibold text-secondary tracking-wide uppercase">NEIS 연계 교사 전용 데이터 관리 포털</span>
+      </div>
+
+      <div class="w-full bg-white rounded-2xl shadow-xl shadow-slate-900/5 border border-slate-200/80 p-6 sm:p-8">
+        <div class="flex flex-col items-center text-center">
+          <div class="w-14 h-14 rounded-xl bg-gradient-to-tr from-indigo-700 to-indigo-500 flex items-center justify-center text-white font-bold text-2xl shadow-md shadow-indigo-200 mb-3">
+            <i class="fa-solid fa-graduation-cap"></i>
+          </div>
+          <div class="flex items-center gap-1.5 justify-center">
+            <span class="text-2xl font-extrabold text-slate-900 tracking-tight">EduFlow</span>
+            <span class="text-2xl font-extrabold text-indigo-600 tracking-tight">Admin</span>
+          </div>
+          <p class="text-xs text-slate-500 mt-1.5">담임 교사 통합인증 및 우리 반 데이터 관리</p>
+        </div>
+
+        <!-- 학생/학부모 계정 차단 안내 배너 -->
+        <div id="admin-auth-notice" class="hidden mt-5 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2">
+          <i class="fa-solid fa-shield-halved mt-0.5 text-amber-600"></i>
+          <span id="admin-auth-notice-text">교사 전용 페이지입니다. 교사 계정으로 로그인해 주세요.</span>
+        </div>
+
+        <!-- 로그인 오류 배너 -->
+        <div id="admin-login-error" class="hidden mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2">
+          <i class="fa-solid fa-circle-exclamation mt-0.5"></i>
+          <span id="admin-login-error-text"></span>
+        </div>
+
+        <form id="admin-login-form" class="mt-6 space-y-4">
+          <div class="space-y-1">
+            <label for="admin-login-id" class="block text-xs font-semibold text-slate-700">교사 ID</label>
+            <div class="relative flex items-center rounded-xl bg-slate-50 border border-slate-200 focus-within:bg-white focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-600 transition-all">
+              <span class="material-symbols-outlined absolute left-3 text-slate-400 text-[20px] pointer-events-none">badge</span>
+              <input id="admin-login-id" type="text" required autocomplete="username" placeholder="교사 ID (예: 유우석 또는 teacher01)" class="w-full bg-transparent pl-10 pr-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none">
+            </div>
+          </div>
+
+          <div class="space-y-1">
+            <label for="admin-login-pw" class="block text-xs font-semibold text-slate-700">비밀번호</label>
+            <div class="relative flex items-center rounded-xl bg-slate-50 border border-slate-200 focus-within:bg-white focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-600 transition-all">
+              <span class="material-symbols-outlined absolute left-3 text-slate-400 text-[20px] pointer-events-none">lock</span>
+              <input id="admin-login-pw" type="password" autocomplete="current-password" placeholder="교사 계정 비밀번호" class="w-full bg-transparent pl-10 pr-10 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none">
+              <button type="button" id="toggle-pw-btn" aria-label="비밀번호 보기 토글" class="absolute right-2.5 p-1 text-slate-400 hover:text-slate-700 rounded">
+                <span class="material-symbols-outlined text-[18px]" id="pw-visibility-icon">visibility</span>
+              </button>
+            </div>
+          </div>
+
+          <button type="submit" id="admin-login-submit" class="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 mt-2">
+            <span class="material-symbols-outlined text-[19px]">login</span>
+            <span>교사 포털 로그인</span>
+          </button>
+        </form>
+
+        <div class="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+          <a href="/" class="hover:text-indigo-600 font-semibold flex items-center gap-1 transition">
+            <i class="fa-solid fa-arrow-left text-[11px]"></i>
+            <span>모바일 앱으로 돌아가기</span>
+          </a>
+          <span class="text-[11px] text-slate-400">담당 학급 DB 격리 적용</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 2. 초기 세션 확인 로딩 오버레이 (#admin-loading-gate)                  -->
+  <!-- ===================================================================== -->
+  <section id="admin-loading-gate" class="min-h-screen w-full flex flex-col items-center justify-center bg-[#F8FAFC] p-6">
+    <div class="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center text-xl shadow-md shadow-indigo-200 mb-4">
+      <i class="fa-solid fa-circle-notch fa-spin"></i>
+    </div>
+    <p class="text-sm font-bold text-slate-800">교사 인증 및 담당 학급 데이터를 불러오는 중...</p>
+    <p class="text-xs text-slate-400 mt-1">잠시만 기다려 주세요.</p>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 3. 메인 SPA 어드민 셸 (#admin-app-shell)                              -->
+  <!-- ===================================================================== -->
+  <div id="admin-app-shell" class="hidden min-h-screen flex flex-col lg:flex-row">
+
+    <!-- Mobile Top Bar (< lg) -->
+    <header class="lg:hidden bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-40 shadow-xs">
+      <div class="flex items-center space-x-3">
+        <button id="mobile-menu-btn" type="button" aria-label="메뉴 열기" class="p-2 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-100 focus:outline-none">
+          <i class="fa-solid fa-bars text-lg"></i>
+        </button>
+        <div class="flex items-center space-x-2">
+          <div class="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-sm">E</div>
+          <span class="font-bold text-slate-900 text-base tracking-tight">EduFlow <span class="text-indigo-600 font-medium">Admin</span></span>
+        </div>
+      </div>
+      <div class="flex items-center space-x-2">
+        <span id="mobile-class-badge" class="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-1 rounded-full border border-indigo-100">-학년 -반</span>
+        <button id="mobile-refresh-btn" type="button" title="새로고침" class="p-1.5 text-slate-500 hover:text-indigo-600 rounded-lg hover:bg-slate-100">
+          <i class="fa-solid fa-rotate text-sm"></i>
+        </button>
+        <div id="mobile-teacher-avatar" class="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-xs">교</div>
+      </div>
+    </header>
+
+    <!-- Mobile Horizontal Tab Strip (< lg) -->
+    <div class="lg:hidden bg-white border-b border-slate-200 px-3 py-2 overflow-x-auto flex space-x-1.5 sticky top-[57px] z-30">
+      <button type="button" data-tab="tab-letters" id="mobile-tab-btn-letters" class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white whitespace-nowrap flex items-center space-x-1.5">
+        <i class="fa-solid fa-file-signature text-xs"></i><span>가정통신문 회신</span>
+      </button>
+      <button type="button" data-tab="tab-attendance" id="mobile-tab-btn-attendance" class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:bg-slate-100 whitespace-nowrap flex items-center space-x-1.5">
+        <i class="fa-solid fa-calendar-check text-xs"></i><span>출결·서류</span>
+      </button>
+      <button type="button" data-tab="tab-roster" id="mobile-tab-btn-roster" class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:bg-slate-100 whitespace-nowrap flex items-center space-x-1.5">
+        <i class="fa-solid fa-users-gear text-xs"></i><span>명렬표·계정</span>
+      </button>
+      <button type="button" data-tab="tab-ledger" id="mobile-tab-btn-ledger" class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:bg-slate-100 whitespace-nowrap flex items-center space-x-1.5">
+        <i class="fa-solid fa-wallet text-xs"></i><span>회비·공지</span>
+      </button>
+      <button type="button" data-tab="tab-counsel" id="mobile-tab-btn-counsel" class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:bg-slate-100 whitespace-nowrap flex items-center space-x-1.5">
+        <i class="fa-solid fa-comments text-xs"></i><span>1:1 상담</span>
+      </button>
+    </div>
+
+    <!-- Mobile Sidebar Backdrop -->
+    <div id="mobile-backdrop" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-40 hidden lg:hidden transition-opacity"></div>
+
+    <!-- Left Sidebar (Desktop fixed 260px / Mobile Slide Drawer) -->
+    <aside id="main-sidebar" class="fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-slate-200 transform -translate-x-full lg:translate-x-0 lg:static transition-transform duration-200 ease-in-out flex flex-col justify-between shadow-lg lg:shadow-none shrink-0">
+      <div class="p-5 flex flex-col h-full">
+        <div class="flex items-center justify-between pb-5 border-b border-slate-100">
+          <div class="flex items-center space-x-3">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-700 to-indigo-500 flex items-center justify-center text-white font-bold text-lg shadow-sm shadow-indigo-200">
+              <i class="fa-solid fa-graduation-cap"></i>
+            </div>
+            <div>
+              <div class="font-extrabold text-slate-900 tracking-tight text-lg leading-tight flex items-center gap-1">
+                EduFlow <span class="text-indigo-600 font-semibold text-xs px-1.5 py-0.5 rounded bg-indigo-50">Admin</span>
+              </div>
+              <p class="text-[11px] font-medium text-slate-400 mt-0.5">학급 데이터 통합 관리</p>
+            </div>
+          </div>
+          <button id="mobile-sidebar-close-btn" type="button" aria-label="메뉴 닫기" class="lg:hidden text-slate-400 hover:text-slate-600 p-1">
+            <i class="fa-solid fa-xmark text-lg"></i>
+          </button>
+        </div>
+
+        <!-- Teacher Profile Card -->
+        <div class="mt-4 p-3.5 bg-gradient-to-br from-slate-50 to-indigo-50/40 border border-slate-200/80 rounded-xl flex items-center space-x-3">
+          <div class="relative shrink-0">
+            <div id="sidebar-teacher-avatar" class="w-10 h-10 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-sm border-2 border-white shadow-xs">교</div>
+            <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"></span>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-1">
+              <span id="sidebar-teacher-name" class="text-xs font-bold text-slate-900 truncate">선생님</span>
+              <span class="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded shrink-0">담임</span>
+            </div>
+            <p id="sidebar-teacher-class" class="text-[11px] text-slate-500 truncate mt-0.5">-</p>
+          </div>
+        </div>
+
+        <!-- Navigation Menu -->
+        <div class="mt-6 flex-1">
+          <div class="px-2 text-[11px] font-bold text-slate-400 tracking-wider uppercase mb-2">학급 업무 관제 메뉴</div>
+          <nav class="space-y-1">
+            <a href="#letters" data-tab="tab-letters" id="nav-item-letters" class="group flex items-center justify-between px-3 py-2.5 text-xs font-semibold rounded-xl bg-indigo-600 text-white shadow-sm shadow-indigo-200 transition-all">
+              <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-file-signature text-sm w-4 text-center"></i>
+                <span>가정통신문 회신·서명</span>
+              </div>
+              <span id="badge-letters-rate" class="bg-indigo-700/80 text-[10px] px-1.5 py-0.5 rounded-md font-bold text-indigo-100">0%</span>
+            </a>
+
+            <a href="#attendance" data-tab="tab-attendance" id="nav-item-attendance" class="group flex items-center justify-between px-3 py-2.5 text-xs font-medium rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-all">
+              <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-calendar-check text-sm w-4 text-center text-slate-400 group-hover:text-slate-700"></i>
+                <span>전체 출결 & 서류 추적</span>
+              </div>
+              <span id="badge-attendance-docs" class="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0.5 rounded-md font-bold">0건</span>
+            </a>
+
+            <a href="#roster" data-tab="tab-roster" id="nav-item-roster" class="group flex items-center justify-between px-3 py-2.5 text-xs font-medium rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-all">
+              <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-users-gear text-sm w-4 text-center text-slate-400 group-hover:text-slate-700"></i>
+                <span>우리 반 명렬표 & 계정</span>
+              </div>
+              <span id="badge-roster-count" class="text-slate-400 text-[11px]">0명</span>
+            </a>
+
+            <a href="#ledger" data-tab="tab-ledger" id="nav-item-ledger" class="group flex items-center justify-between px-3 py-2.5 text-xs font-medium rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-all">
+              <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-wallet text-sm w-4 text-center text-slate-400 group-hover:text-slate-700"></i>
+                <span>학급회비 장부 & 공지</span>
+              </div>
+            </a>
+
+            <a href="#counsel" data-tab="tab-counsel" id="nav-item-counsel" class="group flex items-center justify-between px-3 py-2.5 text-xs font-medium rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-all">
+              <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-comments text-sm w-4 text-center text-slate-400 group-hover:text-slate-700"></i>
+                <span>1:1 상담 기록</span>
+              </div>
+              <span id="badge-counsel-count" class="bg-indigo-100 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded-full font-bold">0</span>
+            </a>
+          </nav>
+        </div>
+
+        <!-- Bottom Utilities -->
+        <div class="pt-4 border-t border-slate-100 space-y-2">
+          <div class="text-[11px] text-slate-400 px-2 flex items-center justify-between">
+            <span>최근 조회</span>
+            <span id="last-synced-time" class="font-mono">-</span>
+          </div>
+          <a href="/" class="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-slate-700 hover:text-indigo-600 hover:bg-slate-50 rounded-xl transition">
+            <div class="flex items-center space-x-2">
+              <i class="fa-solid fa-mobile-screen-button text-indigo-500"></i>
+              <span>모바일 앱으로 이동</span>
+            </div>
+            <i class="fa-solid fa-arrow-up-right-from-square text-[10px] text-slate-400"></i>
+          </a>
+          <button id="admin-logout-btn" type="button" class="w-full flex items-center space-x-2 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-xl transition">
+            <i class="fa-solid fa-right-from-bracket"></i>
+            <span>로그아웃</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 flex flex-col min-w-0 overflow-y-auto">
+
+      <!-- ================================================================= -->
+      <!-- TAB 1: 가정통신문 회신·서명 대장                                  -->
+      <!-- ================================================================= -->
+      <div id="tab-letters" class="tab-content flex-1 p-4 lg:p-7 max-w-7xl w-full mx-auto space-y-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <div class="flex items-center space-x-2 text-xs font-medium text-slate-400 mb-1">
+              <span>홈</span><i class="fa-solid fa-chevron-right text-[10px]"></i>
+              <span>학급 행정</span><i class="fa-solid fa-chevron-right text-[10px]"></i>
+              <span class="text-indigo-600 font-semibold">가정통신문 회신·서명 대장</span>
+            </div>
+            <h1 class="text-xl lg:text-2xl font-bold text-slate-900 tracking-tight">가정통신문 회신·서명 대장</h1>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" onclick="refreshAdminData()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
+              <i class="fa-solid fa-rotate text-slate-500 text-xs refresh-spin-icon"></i>
+              <span>새로고침</span>
+            </button>
+            <button type="button" onclick="exportLettersCsv()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-xl hover:bg-emerald-700 transition">
+              <i class="fa-solid fa-file-excel text-xs"></i>
+              <span>CSV 다운로드</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Selector & Filter Toolbar -->
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 lg:p-5 shadow-xs space-y-4">
+          <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div class="flex-1 max-w-2xl">
+              <label for="letter-doc-selector" class="block text-[11px] font-bold text-slate-400 mb-1">조회할 가정통신문 선택</label>
+              <div class="relative">
+                <select id="letter-doc-selector" class="w-full appearance-none bg-slate-50 hover:bg-slate-100/80 text-slate-900 text-xs lg:text-sm font-semibold rounded-xl border border-slate-200 pl-3.5 pr-10 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition cursor-pointer">
+                  <option value="">등록된 가정통신문이 없습니다</option>
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-500">
+                  <i class="fa-solid fa-chevron-down text-xs"></i>
+                </div>
+              </div>
+            </div>
+            <div id="letter-doc-meta" class="flex items-center gap-2 text-xs text-slate-500 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200/60 self-start lg:self-end">
+              <i class="fa-regular fa-clock text-slate-400"></i>
+              <span>마감일: -</span>
+            </div>
+          </div>
+
+          <div class="pt-3 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div class="flex items-center space-x-1.5 overflow-x-auto">
+              <span class="text-xs font-bold text-slate-500 mr-1 hidden sm:inline">제출 필터:</span>
+              <button type="button" data-letter-filter="all" id="filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white transition">전체 (0)</button>
+              <button type="button" data-letter-filter="completed" id="filter-completed" class="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100 transition">제출완료 (0)</button>
+              <button type="button" data-letter-filter="pending" id="filter-pending" class="px-3 py-1.5 rounded-lg text-xs font-medium text-rose-600 hover:bg-rose-50 transition">미제출 (0)</button>
+            </div>
+            <div class="relative w-full md:w-64">
+              <input type="text" id="letter-search-input" placeholder="학생 이름 또는 학번 검색..." class="w-full pl-9 pr-3.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition">
+              <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                <i class="fa-solid fa-magnifying-glass text-xs"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- KPI Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs relative overflow-hidden">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-slate-500">학급 정원 (전체)</span>
+              <div class="w-8 h-8 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center text-sm"><i class="fa-solid fa-users"></i></div>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <span id="kpi-letters-total" class="text-2xl lg:text-3xl font-extrabold text-slate-900 tabular-nums">0</span>
+              <span class="text-xs text-slate-500">명</span>
+            </div>
+            <div class="absolute bottom-0 left-0 right-0 h-1 bg-slate-200"></div>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs relative overflow-hidden">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-slate-500">전자서명 제출 완료</span>
+              <div class="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-sm"><i class="fa-solid fa-circle-check"></i></div>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <span id="kpi-letters-completed" class="text-2xl lg:text-3xl font-extrabold text-emerald-600 tabular-nums">0</span>
+              <span id="kpi-letters-rate" class="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 tabular-nums">0.0%</span>
+            </div>
+            <div id="kpi-letters-bar-ok" class="absolute bottom-0 left-0 h-1 bg-emerald-500 transition-all" style="width: 0%;"></div>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs relative overflow-hidden">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-slate-500">미제출 인원</span>
+              <div class="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center text-sm"><i class="fa-solid fa-triangle-exclamation"></i></div>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <span id="kpi-letters-pending" class="text-2xl lg:text-3xl font-extrabold text-rose-600 tabular-nums">0</span>
+              <span class="text-xs text-rose-600 font-semibold">명 미회신</span>
+            </div>
+            <div id="kpi-letters-bar-pending" class="absolute bottom-0 left-0 h-1 bg-rose-400 transition-all" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Dynamic Reply Ledger Table -->
+        <div class="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
+          <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div class="flex items-center space-x-2">
+              <span class="text-xs font-bold text-slate-800">학생 회신 대장 명부</span>
+              <span class="text-[11px] text-slate-400">(표시 중: <span id="letters-filtered-count" class="font-bold text-slate-700">0</span>명)</span>
+            </div>
+            <span class="text-[11px] text-slate-400"><i class="fa-solid fa-hand-pointer mr-1"></i>서명 썸네일 클릭 시 원본 이미지 미리보기</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead id="letters-table-head"></thead>
+              <tbody id="letters-table-body" class="divide-y divide-slate-200/80 bg-white"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================= -->
+      <!-- TAB 2: 전체 출결 누적표 & 서류 추적                                -->
+      <!-- ================================================================= -->
+      <div id="tab-attendance" class="tab-content hidden flex-1 p-4 lg:p-7 max-w-7xl w-full mx-auto space-y-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h2 class="text-xl lg:text-2xl font-bold text-slate-900">전체 출결 누적표 & 서류 추적</h2>
+            <p class="text-xs text-slate-500 mt-1">학생별 결석·지각·조퇴 누계 및 증빙서류 제출 현황</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <select id="att-period-filter" class="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-700">
+              <option value="week">이번 주</option>
+              <option value="month" selected>이번 달</option>
+              <option value="all">전체 누적</option>
+            </select>
+            <button type="button" onclick="refreshAdminData()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
+              <i class="fa-solid fa-rotate text-slate-500 text-xs refresh-spin-icon"></i><span>새로고침</span>
+            </button>
+            <button type="button" onclick="exportAttendanceCsv()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 transition">
+              <i class="fa-solid fa-file-excel text-xs"></i><span>CSV 다운로드</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+            <span class="text-xs text-slate-400 font-bold">결석 누계</span>
+            <p id="kpi-att-absent" class="text-2xl font-bold text-slate-900 mt-1 tabular-nums">0<span class="text-xs font-normal text-slate-500 ml-1">건</span></p>
+          </div>
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+            <span class="text-xs text-slate-400 font-bold">지각 / 조퇴</span>
+            <p id="kpi-att-late" class="text-2xl font-bold text-slate-900 mt-1 tabular-nums">0<span class="text-xs font-normal text-slate-500 ml-1">건</span></p>
+          </div>
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+            <span class="text-xs text-slate-400 font-bold">체험학습 / 기타</span>
+            <p id="kpi-att-field" class="text-2xl font-bold text-indigo-600 mt-1 tabular-nums">0<span class="text-xs font-normal text-slate-500 ml-1">건</span></p>
+          </div>
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+            <span class="text-xs text-rose-500 font-bold">서류 미제출/추적 중</span>
+            <p id="kpi-att-doc-pending" class="text-2xl font-bold text-rose-600 mt-1 tabular-nums">0<span class="text-xs font-normal text-slate-500 ml-1">건</span></p>
+          </div>
+        </div>
+
+        <!-- 학생별 출결 누계표 -->
+        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+          <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 font-bold text-xs text-slate-800">학생별 출결 누계표</div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold text-[11px] whitespace-nowrap">
+                  <th class="py-2.5 px-3 text-center">학번</th>
+                  <th class="py-2.5 px-4">이름</th>
+                  <th class="py-2.5 px-3 text-center">출석</th>
+                  <th class="py-2.5 px-3 text-center">결석</th>
+                  <th class="py-2.5 px-3 text-center">지각</th>
+                  <th class="py-2.5 px-3 text-center">조퇴</th>
+                  <th class="py-2.5 px-3 text-center">체험학습·기타</th>
+                  <th class="py-2.5 px-3 text-center">미확인</th>
+                </tr>
+              </thead>
+              <tbody id="att-summary-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 상세 출결 & 서류 추적 2열 그리드 -->
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+            <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 font-bold text-xs text-slate-800">상세 출결 기록</div>
+            <div class="overflow-x-auto max-h-[420px]">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold text-[11px] whitespace-nowrap">
+                    <th class="py-2.5 px-3">일자</th>
+                    <th class="py-2.5 px-3">학생</th>
+                    <th class="py-2.5 px-3">유형</th>
+                    <th class="py-2.5 px-3">사유</th>
+                    <th class="py-2.5 px-3 text-center">확인</th>
+                  </tr>
+                </thead>
+                <tbody id="att-detail-tbody" class="divide-y divide-slate-100"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+            <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 font-bold text-xs text-slate-800">증빙 서류 추적 (`서류_추적`)</div>
+            <div class="overflow-x-auto max-h-[420px]">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold text-[11px] whitespace-nowrap">
+                    <th class="py-2.5 px-3">학생</th>
+                    <th class="py-2.5 px-3">서류명/규정</th>
+                    <th class="py-2.5 px-3">마감일</th>
+                    <th class="py-2.5 px-3 text-center">상태</th>
+                    <th class="py-2.5 px-3 text-center">조치</th>
+                  </tr>
+                </thead>
+                <tbody id="doc-tracking-tbody" class="divide-y divide-slate-100"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================= -->
+      <!-- TAB 3: 우리 반 명렬표 & 계정 관리                                  -->
+      <!-- ================================================================= -->
+      <div id="tab-roster" class="tab-content hidden flex-1 p-4 lg:p-7 max-w-7xl w-full mx-auto space-y-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h2 class="text-xl lg:text-2xl font-bold text-slate-900">우리 반 명렬표 & 계정 관리</h2>
+            <p class="text-xs text-slate-500 mt-1">학생·학부모 계정 연동 현황, 가입 승인 대기 처리 및 비밀번호 초기화</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="text" id="roster-search-input" placeholder="이름·학번·ID 검색..." class="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 w-48 focus:outline-none focus:border-indigo-500">
+            <button type="button" onclick="refreshAdminData()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
+              <i class="fa-solid fa-rotate text-slate-500 text-xs refresh-spin-icon"></i><span>새로고침</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+            <span class="text-xs text-slate-400 font-bold">등록 학생 계정</span>
+            <p id="kpi-roster-students" class="text-2xl font-bold text-slate-900 mt-1 tabular-nums">0명</p>
+          </div>
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+            <span class="text-xs text-slate-400 font-bold">연동 학부모 계정</span>
+            <p id="kpi-roster-parents" class="text-2xl font-bold text-indigo-600 mt-1 tabular-nums">0명</p>
+          </div>
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+            <span class="text-xs text-amber-600 font-bold">가입 승인 대기 (Pending)</span>
+            <p id="kpi-roster-pending" class="text-2xl font-bold text-amber-600 mt-1 tabular-nums">0건</p>
+          </div>
+        </div>
+
+        <!-- 가입 승인 대기 목록 -->
+        <div id="roster-pending-card" class="hidden bg-amber-50/60 border border-amber-200 rounded-2xl p-4 lg:p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold text-amber-900 flex items-center gap-2">
+              <i class="fa-solid fa-user-clock text-amber-600"></i>
+              <span>가입 승인 대기 요청</span>
+            </h3>
+          </div>
+          <div id="roster-pending-list" class="space-y-2"></div>
+        </div>
+
+        <!-- 명렬표 테이블 -->
+        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+          <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 font-bold text-xs text-slate-800">학급 명렬표 및 계정 관리</div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold text-[11px] whitespace-nowrap">
+                  <th class="py-2.5 px-3 text-center">번호/학번</th>
+                  <th class="py-2.5 px-4">학생 이름</th>
+                  <th class="py-2.5 px-3">학생 로그인 ID</th>
+                  <th class="py-2.5 px-3 text-center">학생 상태</th>
+                  <th class="py-2.5 px-3">학부모 연동</th>
+                  <th class="py-2.5 px-3 text-center">학부모 상태</th>
+                  <th class="py-2.5 px-4 text-center">비밀번호 초기화</th>
+                </tr>
+              </thead>
+              <tbody id="roster-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================= -->
+      <!-- TAB 4: 학급회비 장부 & 공지·알림                                  -->
+      <!-- ================================================================= -->
+      <div id="tab-ledger" class="tab-content hidden flex-1 p-4 lg:p-7 max-w-7xl w-full mx-auto space-y-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h2 class="text-xl lg:text-2xl font-bold text-slate-900">학급회비 장부 & 공지·알림</h2>
+            <p class="text-xs text-slate-500 mt-1">학급회비 입출금 내역 및 학급 공지게시판·발송 알림 이력</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button type="button" onclick="refreshAdminData()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
+              <i class="fa-solid fa-rotate text-slate-500 text-xs refresh-spin-icon"></i><span>새로고침</span>
+            </button>
+            <button type="button" onclick="exportLedgerCsv()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 transition">
+              <i class="fa-solid fa-file-excel text-xs"></i><span>장부 CSV</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+            <span class="text-xs text-slate-400 font-bold">현재 잔액</span>
+            <p id="kpi-ledger-balance" class="text-2xl font-extrabold text-indigo-600 mt-1 tabular-nums">₩ 0</p>
+          </div>
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+            <span class="text-xs text-slate-400 font-bold">총 수입</span>
+            <p id="kpi-ledger-income" class="text-2xl font-bold text-emerald-600 mt-1 tabular-nums">₩ 0</p>
+          </div>
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+            <span class="text-xs text-slate-400 font-bold">총 지출</span>
+            <p id="kpi-ledger-expense" class="text-2xl font-bold text-rose-600 mt-1 tabular-nums">₩ 0</p>
+          </div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+          <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 font-bold text-xs text-slate-800">학급회비 입출금 내역</div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold text-[11px] whitespace-nowrap">
+                  <th class="py-2.5 px-4">일자</th>
+                  <th class="py-2.5 px-3 text-center">구분</th>
+                  <th class="py-2.5 px-4">내용 / 적요</th>
+                  <th class="py-2.5 px-4 text-right">금액</th>
+                  <th class="py-2.5 px-4">비고</th>
+                </tr>
+              </thead>
+              <tbody id="ledger-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+            <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 font-bold text-xs text-slate-800">학급 공지게시판 (`학급_공지게시판`)</div>
+            <div id="board-notices-list" class="divide-y divide-slate-100 max-h-[380px] overflow-y-auto"></div>
+          </div>
+          <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+            <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 font-bold text-xs text-slate-800">알림 발송 이력 (`Notifications`)</div>
+            <div id="sent-notifications-list" class="divide-y divide-slate-100 max-h-[380px] overflow-y-auto"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================= -->
+      <!-- TAB 5: 1:1 상담 기록                                               -->
+      <!-- ================================================================= -->
+      <div id="tab-counsel" class="tab-content hidden flex-1 p-4 lg:p-7 max-w-7xl w-full mx-auto space-y-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h2 class="text-xl lg:text-2xl font-bold text-slate-900">1:1 상담 기록</h2>
+            <p class="text-xs text-slate-500 mt-1">학생·학부모와의 1:1 상담 채팅 내역 조회 및 내보내기</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" onclick="refreshAdminData()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
+              <i class="fa-solid fa-rotate text-slate-500 text-xs refresh-spin-icon"></i><span>새로고침</span>
+            </button>
+            <button type="button" onclick="exportCounselTxt()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-slate-900 text-white rounded-xl text-xs font-semibold hover:bg-slate-800 transition">
+              <i class="fa-solid fa-file-lines text-xs"></i><span>텍스트(.txt) 내보내기</span>
+            </button>
+            <button type="button" onclick="exportCounselCsv()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 transition">
+              <i class="fa-solid fa-file-excel text-xs"></i><span>CSV 내보내기</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl grid grid-cols-1 md:grid-cols-3 min-h-[480px] overflow-hidden shadow-xs">
+          <div class="border-b md:border-b-0 md:border-r border-slate-200 p-3 flex flex-col bg-slate-50/50">
+            <input type="text" id="counsel-search-input" placeholder="학생 검색..." class="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl mb-2 focus:outline-none focus:border-indigo-500">
+            <div id="counsel-student-list" class="space-y-1 overflow-y-auto max-h-[440px]"></div>
+          </div>
+          <div class="md:col-span-2 flex flex-col">
+            <div id="counsel-detail-header" class="px-5 py-3.5 border-b border-slate-200 bg-white flex items-center justify-between">
+              <span class="text-sm font-bold text-slate-800">학생을 선택해 주세요</span>
+            </div>
+            <div id="counsel-chat-messages" class="flex-1 p-5 space-y-3 overflow-y-auto max-h-[440px] bg-slate-50/40"></div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Signature Preview Modal -->
+  <div id="signature-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div id="signature-modal-box" class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        <div class="flex items-center space-x-2">
+          <div class="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-xs"><i class="fa-solid fa-signature"></i></div>
+          <div>
+            <h3 class="text-sm font-bold text-slate-900">전자서명 원본 확인</h3>
+            <p id="sig-signer" class="text-[11px] text-slate-500 font-medium"></p>
+          </div>
+        </div>
+        <button type="button" onclick="closeSignatureModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
+          <i class="fa-solid fa-xmark text-base"></i>
+        </button>
+      </div>
+      <div class="p-6 flex flex-col items-center">
+        <div class="w-full bg-slate-50 rounded-xl p-4 border border-slate-200 flex items-center justify-center min-h-[160px]">
+          <img id="sig-image" src="" alt="전자 서명 원본" class="max-h-48 object-contain">
+        </div>
+        <div class="w-full mt-4 bg-indigo-50/50 rounded-xl p-3 border border-indigo-100/60 text-xs text-slate-600 flex justify-between">
+          <span class="text-slate-400">서명 일시:</span>
+          <span id="sig-timestamp" class="font-mono text-slate-800 font-medium">-</span>
+        </div>
+      </div>
+      <div class="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end space-x-2">
+        <button type="button" onclick="closeSignatureModal()" class="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200/70 rounded-xl">닫기</button>
+        <a id="sig-open-link" href="#" target="_blank" rel="noopener noreferrer" class="px-4 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">원본 새 창 열기</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Password Reset Modal -->
+  <div id="pw-reset-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-2xl max-w-sm w-full shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        <h3 class="text-sm font-bold text-slate-900">계정 비밀번호 초기화</h3>
+        <button type="button" onclick="closePwResetModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="pw-reset-form" class="p-5 space-y-4">
+        <p id="pw-reset-target-label" class="text-xs text-slate-600 font-medium"></p>
+        <div>
+          <label for="pw-reset-input" class="block text-xs font-semibold text-slate-700 mb-1">새 비밀번호</label>
+          <input id="pw-reset-input" type="text" value="1234" required class="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closePwResetModal()" class="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">취소</button>
+          <button type="submit" id="pw-reset-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">초기화 실행</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/admin/admin.js"></script>
+</body>
+</html>

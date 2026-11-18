@@ -1522,6 +1522,9 @@ function openAccountMenuModal() {
   if (actionsEl) {
     if (role === 'teacher') {
       actionsEl.innerHTML = `
+        <button type="button" onclick="closeModal('accountMenuModal'); window.location.href='/admin';" class="w-full py-3 px-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-bold rounded-xl text-xs text-left flex items-center justify-between">
+          <span>📊 학급 데이터 관리 (/admin)</span><span>→</span>
+        </button>
         <button type="button" onclick="closeModal('accountMenuModal'); openTeacherProfileModal()" class="w-full py-3 px-4 bg-purple-50 hover:bg-purple-100 text-purple-800 font-bold rounded-xl text-xs text-left flex items-center justify-between">
           <span>✏️ 프로필 수정 (학교·학급·NEIS)</span><span>→</span>
         </button>
