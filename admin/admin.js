@@ -22,7 +22,10 @@ const adminState = {
   selectedNoticeId: '',
   letterFilter: 'all',
   letterSearch: '',
-  attSubtab: 'daily', // 'daily' | 'summary'
+  attSubtab: 'reports', // 'reports' | 'daily' | 'summary'
+  attReportStatus: 'all', // 'all' | 'unconfirmed' | 'confirmed'
+  attReportPeriod: 'all', // 'all' | 'week' | 'month'
+  attReportSearch: '',
   attDailyDate: getLocalTodayStr(),
   attPeriod: 'month',
   rosterSearch: '',
@@ -408,28 +411,130 @@ function closeSignatureModal() {
 }
 
 // =========================================================================
-// TAB 2: 전체 출결 누적표 & 서류 추적 + 일자별 출결 조회
+// TAB 2: 학생·학부모 출결 보고 + 일자별 출석체크 + 누적표 & 서류 추적
 // =========================================================================
 function switchAttendanceSubtab(subtab) {
-  adminState.attSubtab = subtab === 'summary' ? 'summary' : 'daily';
-  const dailyPanel = document.getElementById('att-daily-panel');
-  const summaryPanel = document.getElementById('att-summary-panel');
-  const dailyBtn = document.getElementById('att-subtab-daily');
-  const summaryBtn = document.getElementById('att-subtab-summary');
+  const target = (subtab === 'daily' || subtab === 'summary') ? subtab : 'reports';
+  adminState.attSubtab = target;
+  const map = [
+    { key: 'reports', panelId: 'att-reports-panel', btnId: 'att-subtab-reports' },
+    { key: 'daily', panelId: 'att-daily-panel', btnId: 'att-subtab-daily' },
+    { key: 'summary', panelId: 'att-summary-panel', btnId: 'att-subtab-summary' },
+  ];
+  map.forEach(({ key, panelId, btnId }) => {
+    const active = key === target;
+    const panel = document.getElementById(panelId);
+    const btn = document.getElementById(btnId);
+    if (panel) panel.classList.toggle('hidden', !active);
+    if (btn) {
+      btn.className = active
+        ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-700 shadow-2xs transition'
+        : 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition';
+    }
+  });
+}
 
-  const isDaily = adminState.attSubtab === 'daily';
-  if (dailyPanel) dailyPanel.classList.toggle('hidden', !isDaily);
-  if (summaryPanel) summaryPanel.classList.toggle('hidden', isDaily);
-  if (dailyBtn) {
-    dailyBtn.className = isDaily
-      ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-700 shadow-2xs transition'
-      : 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition';
-  }
-  if (summaryBtn) {
-    summaryBtn.className = !isDaily
-      ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-700 shadow-2xs transition'
-      : 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition';
-  }
+function filterAttendanceReports(attendanceRows, { status = 'all', period = 'all', search = '' } = {}) {
+  const nonPresent = (Array.isArray(attendanceRows) ? attendanceRows : []).filter((a) => {
+    const t = String(a && a.attendance_type ? a.attendance_type : '').trim();
+    return t !== '' && t !== '출석';
+  });
+  const byPeriod = filterAttendanceByPeriod(nonPresent, period);
+  const term = String(search || '').trim().toLowerCase();
+  return byPeriod
+    .filter((a) => {
+      const confirmed = Boolean(a.teacher_confirmed);
+      if (status === 'unconfirmed' && confirmed) return false;
+      if (status === 'confirmed' && !confirmed) return false;
+      if (term) {
+        const hay = `${a.student_name || ''} ${a.student_id || ''} ${a.attendance_type || ''} ${a.reason || ''}`.toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => String(b.date || b.updated_at || '').localeCompare(String(a.date || a.updated_at || '')));
+}
+
+function renderAttendanceReportsPanel() {
+  const ov = adminState.overview || {};
+  const allReports = filterAttendanceReports(ov.attendance || [], { status: 'all', period: adminState.attReportPeriod, search: '' });
+  const unconfirmedCount = allReports.filter((a) => !a.teacher_confirmed).length;
+  const confirmedCount = allReports.length - unconfirmedCount;
+
+  const kTotal = document.getElementById('kpi-att-reports-total');
+  const kUnconf = document.getElementById('kpi-att-reports-unconfirmed');
+  const kConf = document.getElementById('kpi-att-reports-confirmed');
+  if (kTotal) kTotal.innerHTML = `${allReports.length}<span class="text-xs font-normal text-slate-500 ml-1">건</span>`;
+  if (kUnconf) kUnconf.innerHTML = `${unconfirmedCount}<span class="text-xs font-normal text-slate-500 ml-1">건</span>`;
+  if (kConf) kConf.innerHTML = `${confirmedCount}<span class="text-xs font-normal text-slate-500 ml-1">건</span>`;
+
+  const fAll = document.getElementById('att-report-filter-all');
+  const fUnconf = document.getElementById('att-report-filter-unconfirmed');
+  const fConf = document.getElementById('att-report-filter-confirmed');
+  if (fAll) fAll.textContent = `전체 (${allReports.length})`;
+  if (fUnconf) fUnconf.textContent = `미확인만 (${unconfirmedCount})`;
+  if (fConf) fConf.textContent = `확인완료 (${confirmedCount})`;
+
+  const filtered = filterAttendanceReports(ov.attendance || [], {
+    status: adminState.attReportStatus,
+    period: adminState.attReportPeriod,
+    search: adminState.attReportSearch,
+  });
+
+  const visibleEl = document.getElementById('att-reports-visible-count');
+  if (visibleEl) visibleEl.textContent = String(filtered.length);
+
+  const tbody = document.getElementById('att-reports-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = filtered.length === 0
+    ? '<tr><td colspan="7" class="py-10 text-center text-slate-400">조회된 학생·학부모 출결 보고 내역이 없습니다.</td></tr>'
+    : filtered.map((a) => {
+        const rid = String(a.remote_id || '');
+        const t = String(a.attendance_type || '출결');
+        let badgeCls = 'bg-slate-100 text-slate-700';
+        if (t.includes('결석')) badgeCls = 'bg-rose-100 text-rose-700';
+        else if (t.includes('지각') || t.includes('조퇴')) badgeCls = 'bg-amber-100 text-amber-800';
+        else if (t.includes('체험') || t.includes('인정')) badgeCls = 'bg-indigo-100 text-indigo-700';
+        const periodText = a.period_info || formatAttendancePeriodInfo(a);
+        const confirmed = Boolean(a.teacher_confirmed);
+        const confirmCell = confirmed
+          ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">확인완료</span>'
+          : `<button type="button" onclick="confirmAttendanceRow('${escapeHtml(rid)}')" class="px-2.5 py-1 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg text-[11px] font-semibold">담임 확인</button>`;
+        return `
+          <tr class="hover:bg-slate-50 ${confirmed ? '' : 'bg-amber-50/30'}">
+            <td class="py-2.5 px-3 font-mono text-[11px] text-slate-600 whitespace-nowrap">${escapeHtml(a.date || '-')}</td>
+            <td class="py-2.5 px-3 text-center font-mono text-slate-500 tabular-nums">${escapeHtml(a.student_id || '-')}</td>
+            <td class="py-2.5 px-4 font-bold text-slate-900 whitespace-nowrap">${escapeHtml(a.student_name || a.student_id || '-')}</td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap"><span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${badgeCls}">${escapeHtml(t)}</span></td>
+            <td class="py-2.5 px-3 text-center text-slate-600 whitespace-nowrap">${escapeHtml(periodText)}</td>
+            <td class="py-2.5 px-4 text-slate-700">${escapeHtml(a.reason || '사유 미입력')}</td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap">${confirmCell}</td>
+          </tr>
+        `;
+      }).join('');
+}
+
+function exportAttendanceReportsCsv() {
+  const ov = adminState.overview || {};
+  const rows = filterAttendanceReports(ov.attendance || [], {
+    status: adminState.attReportStatus,
+    period: adminState.attReportPeriod,
+    search: adminState.attReportSearch,
+  });
+  const headers = ['날짜', '학번', '이름', '출결구분', '교시', '상세사유', '확인상태'];
+  const lines = [headers.map(csvEscape).join(',')];
+  rows.forEach((a) => {
+    lines.push([
+      a.date || '',
+      a.student_id || '',
+      a.student_name || '',
+      a.attendance_type || '',
+      a.period_info || formatAttendancePeriodInfo(a),
+      a.reason || '',
+      a.teacher_confirmed ? '확인완료' : '미확인',
+    ].map(csvEscape).join(','));
+  });
+  downloadFileWithBom('학생학부모_출결보고.csv', lines.join('\r\n'));
 }
 
 function formatAttendancePeriodInfo(rec) {
@@ -628,6 +733,7 @@ function filterAttendanceByPeriod(attendanceRows, period) {
 }
 
 function renderAttendanceTab() {
+  renderAttendanceReportsPanel();
   renderDailyAttendancePanel();
   const ov = adminState.overview || {};
   const students = (ov.students || []).filter((s) => String(s.status || 'active').toLowerCase() !== 'rejected');
@@ -1681,6 +1787,30 @@ function bindEvents() {
   document.getElementById('letter-search-input')?.addEventListener('input', (e) => {
     adminState.letterSearch = e.target.value;
     renderLettersTab();
+  });
+
+  // Tab 2 student/parent attendance report filters
+  document.querySelectorAll('[data-att-report-status]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      adminState.attReportStatus = btn.getAttribute('data-att-report-status') || 'all';
+      ['all', 'unconfirmed', 'confirmed'].forEach((k) => {
+        const el = document.getElementById(`att-report-filter-${k}`);
+        if (!el) return;
+        const active = k === adminState.attReportStatus;
+        if (k === 'all') el.className = active ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white transition' : 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200/70 transition';
+        if (k === 'unconfirmed') el.className = active ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 text-white transition' : 'px-3 py-1.5 rounded-lg text-xs font-medium text-rose-600 hover:bg-rose-50 transition';
+        if (k === 'confirmed') el.className = active ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white transition' : 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200/70 transition';
+      });
+      renderAttendanceReportsPanel();
+    });
+  });
+  document.getElementById('att-report-period-filter')?.addEventListener('change', (e) => {
+    adminState.attReportPeriod = e.target.value;
+    renderAttendanceReportsPanel();
+  });
+  document.getElementById('att-report-search')?.addEventListener('input', (e) => {
+    adminState.attReportSearch = e.target.value;
+    renderAttendanceReportsPanel();
   });
 
   // Tab 2 period filter & daily date controls

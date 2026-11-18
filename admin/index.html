@@ -439,8 +439,9 @@
             <p class="text-xs text-slate-500 mt-1">일자별 출결 현황, 학생별 결석·지각·조퇴 누계 및 증빙서류 제출 현황</p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <div class="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
-              <button type="button" id="att-subtab-daily" onclick="switchAttendanceSubtab('daily')" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-700 shadow-2xs transition">일자별 조회</button>
+            <div class="inline-flex flex-wrap rounded-xl bg-slate-100 p-1 border border-slate-200">
+              <button type="button" id="att-subtab-reports" onclick="switchAttendanceSubtab('reports')" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-indigo-700 shadow-2xs transition">학생·학부모 출결 보고</button>
+              <button type="button" id="att-subtab-daily" onclick="switchAttendanceSubtab('daily')" class="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition">일자별 출석체크</button>
               <button type="button" id="att-subtab-summary" onclick="switchAttendanceSubtab('summary')" class="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition">누적표 & 서류 추적</button>
             </div>
             <button type="button" onclick="refreshAdminData()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
@@ -449,8 +450,73 @@
           </div>
         </div>
 
-        <!-- Subtab A: 일자별 출결 상황 조회 (#att-daily-panel) -->
-        <div id="att-daily-panel" class="space-y-6">
+        <!-- Subtab 1 (기본): 학생·학부모 출결 보고 (#att-reports-panel) -->
+        <div id="att-reports-panel" class="space-y-6">
+          <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <div class="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
+                <button type="button" data-att-report-status="all" id="att-report-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white transition">전체 (0)</button>
+                <button type="button" data-att-report-status="unconfirmed" id="att-report-filter-unconfirmed" class="px-3 py-1.5 rounded-lg text-xs font-medium text-rose-600 hover:bg-rose-50 transition">미확인만 (0)</button>
+                <button type="button" data-att-report-status="confirmed" id="att-report-filter-confirmed" class="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200/70 transition">확인완료 (0)</button>
+              </div>
+              <select id="att-report-period-filter" class="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-700">
+                <option value="all" selected>전체 기간</option>
+                <option value="week">이번 주</option>
+                <option value="month">이번 달</option>
+              </select>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <div class="relative flex-1 sm:w-56">
+                <input type="text" id="att-report-search" placeholder="이름·학번·사유 검색..." class="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+                <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs absolute left-2.5 top-2.5"></i>
+              </div>
+              <button type="button" onclick="exportAttendanceReportsCsv()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 transition">
+                <i class="fa-solid fa-file-excel text-xs"></i><span>출결 보고 CSV 다운로드</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span class="text-xs text-slate-400 font-bold">전체 출결 보고 (단순 출석 제외)</span>
+              <p id="kpi-att-reports-total" class="text-2xl font-bold text-slate-900 mt-1 tabular-nums">0<span class="text-xs font-normal text-slate-500 ml-1">건</span></p>
+            </div>
+            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span class="text-xs text-rose-500 font-bold">담임 미확인</span>
+              <p id="kpi-att-reports-unconfirmed" class="text-2xl font-bold text-rose-600 mt-1 tabular-nums">0<span class="text-xs font-normal text-slate-500 ml-1">건</span></p>
+            </div>
+            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span class="text-xs text-emerald-600 font-bold">담임 확인완료</span>
+              <p id="kpi-att-reports-confirmed" class="text-2xl font-bold text-emerald-600 mt-1 tabular-nums">0<span class="text-xs font-normal text-slate-500 ml-1">건</span></p>
+            </div>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+            <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
+              <span class="font-bold text-xs text-slate-800">학생·학부모 출결 보고 및 변동 내역 (최신순)</span>
+              <span class="text-[11px] text-slate-400">표시 중: <strong id="att-reports-visible-count" class="text-slate-700">0</strong>건</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold text-[11px] whitespace-nowrap">
+                    <th class="py-2.5 px-3">날짜</th>
+                    <th class="py-2.5 px-3 text-center">학번</th>
+                    <th class="py-2.5 px-4">이름</th>
+                    <th class="py-2.5 px-3 text-center">출결 구분</th>
+                    <th class="py-2.5 px-3 text-center">교시</th>
+                    <th class="py-2.5 px-4">상세 사유</th>
+                    <th class="py-2.5 px-3 text-center">확인 상태</th>
+                  </tr>
+                </thead>
+                <tbody id="att-reports-tbody" class="divide-y divide-slate-100"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Subtab 2: 일자별 출석체크 (#att-daily-panel) -->
+        <div id="att-daily-panel" class="hidden space-y-6">
           <!-- 미확인 / 최근 학생·학부모 출결 보고 배너 -->
           <div id="att-unconfirmed-card" class="hidden bg-amber-50/70 border border-amber-200 rounded-2xl p-4 space-y-2.5">
             <div class="flex items-center justify-between">

@@ -2166,7 +2166,10 @@ async function _handleDesktopApiAction(db, action, params, auth) {
         ? db.collection('계정_학부모').where('grade', 'in', gradeIn).limit(250).get().then(_snapToRows).catch(() => [])
         : Promise.resolve([]),
       hasAssignedClass
-        ? db.collection('일일_출결').where('grade', 'in', gradeIn).limit(400).get().then(_snapToRows).catch(() => [])
+        ? Promise.all([
+            db.collection('일일_출결').where('grade', 'in', gradeIn).limit(1500).get().then(_snapToRows).catch(() => []),
+            db.collection('일일_출결').where('attendance_type', '!=', '출석').limit(500).get().then(_snapToRows).catch(() => []),
+          ]).then(([byGrade, nonPresent]) => _mergeRowsById(nonPresent, byGrade))
         : Promise.resolve([]),
       hasAssignedClass
         ? db.collection('서류_추적').where('grade', 'in', gradeIn).limit(300).get().then(_snapToRows).catch(() => [])
