@@ -1564,6 +1564,10 @@ function openAccountMenuModal() {
         </button>
       `;
     } else {
+      const currentPhone = String(cu.phone || '').trim();
+      const phoneSubHtml = currentPhone
+        ? `<span class="block text-[10px] font-normal text-emerald-700 mt-0.5">현재 번호: ${_escapeNoticeHtml(currentPhone)}</span>`
+        : `<span class="block text-[10px] font-normal text-slate-400 mt-0.5">등록된 번호 없음</span>`;
       const idBtnHtml = cu.customIdChanged
         ? `<button type="button" disabled class="w-full py-3 px-4 bg-slate-100 text-slate-400 font-bold rounded-xl text-xs text-left cursor-not-allowed">
             🪪 로그인 ID 변경 완료 (${cu.customId || cu.userId}) · 재변경 불가
@@ -1572,6 +1576,13 @@ function openAccountMenuModal() {
             <span>🪪 로그인 ID 변경 (최초 1회)</span><span>→</span>
            </button>`;
       actionsEl.innerHTML = `
+        <button type="button" onclick="closeModal('accountMenuModal'); openMyPhoneModal()" class="w-full py-3 px-4 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold rounded-xl text-xs text-left flex items-center justify-between">
+          <span>
+            📱 내 연락처(휴대폰 번호) 등록·수정
+            ${phoneSubHtml}
+          </span>
+          <span>→</span>
+        </button>
         ${idBtnHtml}
         <button type="button" onclick="closeModal('accountMenuModal'); openChangePasswordModal()" class="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs text-left flex items-center justify-between">
           <span>🔐 비밀번호 변경</span><span>→</span>
@@ -1658,6 +1669,47 @@ async function submitCustomIdChange(e) {
       showToast(`커스텀 ID(${newCustomId})가 확정되었습니다.`, '🪪');
     } catch (err) {
       showToast(`ID 변경 실패: ${err && err.message ? err.message : '오류'}`, '⚠️');
+    }
+  });
+}
+
+function openMyPhoneModal() {
+  const cu = mockData.currentUser || {};
+  const input = document.getElementById('myPhoneInput');
+  if (input) {
+    input.value = cu.phone || '';
+  }
+  openModal('myPhoneModal');
+}
+
+async function submitMyPhoneUpdate(e) {
+  if (e) e.preventDefault();
+  const cu = mockData.currentUser || {};
+  const phone = (document.getElementById('myPhoneInput')?.value || '').trim();
+  const submitBtn = (e && e.submitter) || document.getElementById('myPhoneSubmitBtn');
+  await withButtonLoading(submitBtn, '저장 중...', async () => {
+    try {
+      const res = await gasApi.post('update_my_phone', {
+        role: cu.role || state.activeRole || 'student',
+        user_id: cu.userId || cu.studentId || '',
+        phone
+      });
+      const savedPhone = res && res.phone !== undefined ? String(res.phone) : phone;
+      cu.phone = savedPhone;
+      try {
+        const rawCache = localStorage.getItem(BUNDLE_CACHE_STORAGE_KEY);
+        if (rawCache) {
+          const parsedCache = JSON.parse(rawCache);
+          if (parsedCache && parsedCache.currentUser && typeof parsedCache.currentUser === 'object') {
+            parsedCache.currentUser.phone = savedPhone;
+            localStorage.setItem(BUNDLE_CACHE_STORAGE_KEY, JSON.stringify(parsedCache));
+          }
+        }
+      } catch (_) {}
+      closeModal('myPhoneModal');
+      showToast(savedPhone ? '연락처가 저장되었습니다.' : '연락처가 삭제되었습니다.', '📱');
+    } catch (err) {
+      showToast(`연락처 저장 실패: ${err && err.message ? err.message : '오류'}`, '⚠️');
     }
   });
 }

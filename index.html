@@ -1253,6 +1253,24 @@
 </div>
 </div>
 
+<!-- Modal: Student/Parent My Phone Update -->
+<div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="myPhoneModal" onclick="if (event.target === this) closeModal('myPhoneModal')">
+<div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3.5 max-h-[90%] flex flex-col overflow-y-auto custom-scrollbar">
+<div class="flex items-center justify-between pb-2 border-b border-slate-100">
+<h4 class="font-bold text-slate-800 text-sm flex items-center gap-1.5"><span>📱 내 연락처(휴대폰 번호) 등록·수정</span></h4>
+<button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeModal('myPhoneModal')" type="button"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg></button>
+</div>
+<p class="text-[11px] text-slate-500 leading-relaxed">학급 비상 연락 및 안내를 위한 본인 휴대폰 번호를 등록·수정할 수 있습니다. (비우고 저장하면 삭제됩니다)</p>
+<form class="space-y-3 text-xs" onsubmit="submitMyPhoneUpdate(event)">
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1" for="myPhoneInput">휴대폰 번호</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none" id="myPhoneInput" maxlength="20" placeholder="예: 010-1234-5678" type="tel"/>
+</div>
+<button class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-md shadow-emerald-200 transition-all mt-1" id="myPhoneSubmitBtn" type="submit">연락처 저장하기</button>
+</form>
+</div>
+</div>
+
 <!-- Modal: New Account Registration -->
 <div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="signupModal">
 <div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3 max-h-[92%] flex flex-col overflow-y-auto custom-scrollbar">

@@ -378,7 +378,7 @@ async function _handleLogin(db, body) {
     }
   }
 
-  const safeUser = { ...userDoc, role };
+  const safeUser = { ...userDoc, role, phone: String(userDoc.phone || '') };
   delete safeUser.password_hash;
   return { status: 200, json: { ok: true, user: safeUser } };
 }
@@ -457,6 +457,79 @@ async function _handleChangeCustomId(db, body) {
   );
 
   return { status: 200, json: { ok: true, custom_id: newCustomId, message: '커스텀 ID가 변경되었습니다. 다음부터 새 ID로 로그인해 주세요.' } };
+}
+
+function _normalizePhoneNumber(raw) {
+  const trimmed = String(raw ?? '').trim();
+  if (!trimmed) return { ok: true, phone: '' };
+  if (/[^\d+\-\s()]/.test(trimmed)) {
+    return { ok: false, error: '올바른 휴대폰 번호 형식이 아닙니다. (숫자와 하이픈만 입력해 주세요)' };
+  }
+  let digits = trimmed.replace(/\D/g, '');
+  if (digits.startsWith('82') && (digits.length === 11 || digits.length === 12)) {
+    digits = '0' + digits.slice(2);
+  }
+  if (digits.length < 9 || digits.length > 11 || !digits.startsWith('0')) {
+    return { ok: false, error: '올바른 휴대폰 번호 형식이 아닙니다. (예: 010-1234-5678)' };
+  }
+  if (digits.startsWith('02')) {
+    if (digits.length === 9) {
+      return { ok: true, phone: digits.replace(/^(\d{2})(\d{3})(\d{4})$/, '$1-$2-$3') };
+    }
+    if (digits.length === 10) {
+      return { ok: true, phone: digits.replace(/^(\d{2})(\d{4})(\d{4})$/, '$1-$2-$3') };
+    }
+    return { ok: false, error: '올바른 전화번호 형식이 아닙니다.' };
+  }
+  if (digits.length === 10) {
+    return { ok: true, phone: digits.replace(/^(\d{3})(\d{3})(\d{4})$/, '$1-$2-$3') };
+  }
+  if (digits.length === 11) {
+    return { ok: true, phone: digits.replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3') };
+  }
+  return { ok: false, error: '올바른 휴대폰 번호 형식이 아닙니다. (예: 010-1234-5678)' };
+}
+
+async function _handleUpdateMyPhone(db, body) {
+  const role = String(body.role || 'student').trim().toLowerCase();
+  if (role !== 'student' && role !== 'parent') {
+    return { status: 400, json: { ok: false, error: '학생 또는 학부모 계정만 본인 연락처를 수정할 수 있습니다.' } };
+  }
+  const userId = String(body.user_id || body.student_id || body.parent_id || body.remote_id || '').trim();
+  if (!userId) {
+    return { status: 400, json: { ok: false, error: '계정 ID(user_id)가 필요합니다.' } };
+  }
+  const norm = _normalizePhoneNumber(body.phone ?? '');
+  if (!norm.ok) {
+    return { status: 400, json: { ok: false, error: norm.error } };
+  }
+
+  const { colRef, docId, userDoc } = await _findAccountDoc(db, role, userId);
+  if (!userDoc || !docId) {
+    return { status: 404, json: { ok: false, error: '계정을 찾을 수 없습니다.' } };
+  }
+  const accStatus = String(userDoc.status || 'active').trim().toLowerCase();
+  if (accStatus === 'rejected') {
+    return { status: 403, json: { ok: false, error: '반려된 계정은 연락처를 수정할 수 없습니다.' } };
+  }
+
+  const nowStr = _nowStr();
+  await colRef.doc(docId).set(
+    { phone: norm.phone, updated_at: nowStr },
+    { merge: true }
+  );
+
+  return {
+    status: 200,
+    json: {
+      ok: true,
+      remote_id: docId,
+      role,
+      phone: norm.phone,
+      updated_at: nowStr,
+      message: norm.phone ? '연락처가 저장되었습니다.' : '연락처가 삭제되었습니다.'
+    }
+  };
 }
 
 async function _handleRegisterAccount(db, body) {
@@ -946,6 +1019,11 @@ module.exports = async function handler(req, res) {
 
     if (action === 'change_custom_id') {
       const result = await _handleChangeCustomId(db, params);
+      return res.status(result.status).json(result.json);
+    }
+
+    if (action === 'update_my_phone') {
+      const result = await _handleUpdateMyPhone(db, params);
       return res.status(result.status).json(result.json);
     }
 
@@ -1713,6 +1791,7 @@ module.exports = async function handler(req, res) {
       'delete_board_notice',
       'admin_get_class_overview',
       'admin_reset_account_password',
+      'admin_update_account_phone',
       'upsert_budget',
       'delete_budget',
       'sync_subject_rosters_batch',
@@ -2192,7 +2271,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     const students = stuRowsRaw
       .filter((d) => _isStrictClassMember(d, auth))
       .map((d) => {
-        const safe = { ..._withInferredClass(d) };
+        const safe = { ..._withInferredClass(d), phone: String(d.phone || '') };
         delete safe.password_hash;
         return safe;
       })
@@ -2203,7 +2282,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     const parents = parRowsRaw
       .filter((d) => _isStrictClassMember(d, auth) || (d.student_id && classStudentIds.has(String(d.student_id).trim())))
       .map((d) => {
-        const safe = { ..._withInferredClass(d) };
+        const safe = { ..._withInferredClass(d), phone: String(d.phone || '') };
         delete safe.password_hash;
         return safe;
       })
@@ -2318,6 +2397,38 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     return {
       status: 200,
       json: { ok: true, remote_id: rid, target_role: targetRole, reset_at: nowStr },
+    };
+  }
+
+  if (action === 'admin_update_account_phone') {
+    const targetRole = String(params.target_role || 'student').trim().toLowerCase();
+    if (targetRole !== 'student' && targetRole !== 'parent') {
+      return { status: 400, json: { ok: false, error: '학생(student) 또는 학부모(parent) 계정의 연락처만 수정할 수 있습니다.' } };
+    }
+    const rid = String(params.remote_id || params.user_id || '').trim();
+    if (!rid) {
+      return { status: 400, json: { ok: false, error: '대상 계정 remote_id가 필요합니다.' } };
+    }
+    const norm = _normalizePhoneNumber(params.phone ?? '');
+    if (!norm.ok) {
+      return { status: 400, json: { ok: false, error: norm.error } };
+    }
+
+    const colName = targetRole === 'parent' ? '계정_학부모' : '계정_학생';
+    const docRef = db.collection(colName).doc(rid);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      return { status: 404, json: { ok: false, error: '대상 계정을 찾을 수 없습니다.' } };
+    }
+    const targetDoc = { remote_id: snap.id, ...(snap.data() || {}) };
+    if (!_isStrictClassMember(targetDoc, auth)) {
+      return { status: 403, json: { ok: false, error: '담당 학급의 학생·학부모 연락처만 수정할 수 있습니다.' } };
+    }
+    const nowStr = _nowStr();
+    await docRef.set({ phone: norm.phone, updated_at: nowStr }, { merge: true });
+    return {
+      status: 200,
+      json: { ok: true, remote_id: rid, target_role: targetRole, phone: norm.phone, updated_at: nowStr },
     };
   }
 
@@ -2798,6 +2909,9 @@ function _buildNoticeReplyLedger(students, notice, replies) {
 
 module.exports._testHelpers = {
   _handleGetMobileBundle,
+  _handleLogin,
+  _handleUpdateMyPhone,
+  _normalizePhoneNumber,
   _matchesTenant,
   _normalizeTeacherName,
   _verifyActiveTeacherAuth,

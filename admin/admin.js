@@ -926,7 +926,8 @@ function renderRosterTab() {
     return String(s.name || '').toLowerCase().includes(term) ||
       String(s.student_id || '').toLowerCase().includes(term) ||
       String(s.custom_id || '').toLowerCase().includes(term) ||
-      (p && String(p.name || '').toLowerCase().includes(term));
+      String(s.phone || '').toLowerCase().includes(term) ||
+      (p && (String(p.name || '').toLowerCase().includes(term) || String(p.phone || '').toLowerCase().includes(term)));
   });
 
   const statusPill = (st) => {
@@ -938,22 +939,36 @@ function renderRosterTab() {
 
   const tbody = document.getElementById('roster-tbody');
   tbody.innerHTML = filtered.length === 0
-    ? '<tr><td colspan="7" class="py-8 text-center text-slate-400">조회된 학생 계정이 없습니다.</td></tr>'
+    ? '<tr><td colspan="9" class="py-8 text-center text-slate-400">조회된 학생 계정이 없습니다.</td></tr>'
     : filtered.map((s) => {
         const sid = String(s.student_id || '').trim();
         const sRid = String(s.remote_id || sid);
         const sLogin = s.custom_id || s.student_id || sRid;
+        const sPhone = String(s.phone || '').trim();
         const p = parentBySid.get(sid);
         const pRid = p ? String(p.remote_id || p.parent_id || '') : '';
         const pLogin = p ? (p.custom_id || p.parent_id || p.login_id || pRid) : '-';
+        const pPhone = p ? String(p.phone || '').trim() : '';
 
         return `
           <tr class="hover:bg-slate-50">
             <td class="py-3 px-3 text-center font-mono text-slate-500 tabular-nums">${escapeHtml(sid || s.student_no || '-')}</td>
             <td class="py-3 px-4 font-bold text-slate-900">${escapeHtml(s.name || s.student_name || '-')}</td>
             <td class="py-3 px-3 font-mono text-slate-600">${escapeHtml(sLogin)}</td>
+            <td class="py-3 px-3 whitespace-nowrap">
+              <div class="flex items-center gap-1.5">
+                <span class="font-mono text-xs ${sPhone ? 'text-slate-800' : 'text-slate-300'}">${sPhone ? escapeHtml(sPhone) : '미등록'}</span>
+                <button type="button" onclick="openPhoneEditModal('student', '${escapeHtml(sRid)}', '${escapeHtml(s.name || sLogin)} (학생)', '${escapeHtml(sPhone)}')" class="px-2 py-0.5 bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 rounded text-[11px] font-semibold">연락처 수정</button>
+              </div>
+            </td>
             <td class="py-3 px-3 text-center">${statusPill(s.status)}</td>
             <td class="py-3 px-3 text-slate-700">${p ? `${escapeHtml(p.name || '학부모')} <span class="text-[11px] text-slate-400 font-mono">(${escapeHtml(pLogin)})</span>` : '<span class="text-slate-300">미연동</span>'}</td>
+            <td class="py-3 px-3 whitespace-nowrap">
+              ${p ? `<div class="flex items-center gap-1.5">
+                <span class="font-mono text-xs ${pPhone ? 'text-slate-800' : 'text-slate-300'}">${pPhone ? escapeHtml(pPhone) : '미등록'}</span>
+                <button type="button" onclick="openPhoneEditModal('parent', '${escapeHtml(pRid)}', '${escapeHtml(p.name || pLogin)} (학부모)', '${escapeHtml(pPhone)}')" class="px-2 py-0.5 bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 rounded text-[11px] font-semibold">연락처 수정</button>
+              </div>` : '<span class="text-slate-300">-</span>'}
+            </td>
             <td class="py-3 px-3 text-center">${p ? statusPill(p.status) : '<span class="text-slate-300">-</span>'}</td>
             <td class="py-3 px-4 text-center whitespace-nowrap space-x-1">
               <button type="button" onclick="openPwResetModal('student', '${escapeHtml(sRid)}', '${escapeHtml(s.name || sLogin)} (학생)')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">학생 비번초기화</button>
@@ -983,6 +998,18 @@ function openPwResetModal(role, remoteId, label) {
 function closePwResetModal() {
   adminState.pwResetTarget = null;
   document.getElementById('pw-reset-modal').classList.add('hidden');
+}
+
+function openPhoneEditModal(role, remoteId, label, currentPhone = '') {
+  adminState.phoneEditTarget = { role, remoteId, label };
+  document.getElementById('phone-edit-target-label').textContent = `대상 계정: ${label}`;
+  document.getElementById('phone-edit-input').value = currentPhone || '';
+  document.getElementById('phone-edit-modal').classList.remove('hidden');
+}
+
+function closePhoneEditModal() {
+  adminState.phoneEditTarget = null;
+  document.getElementById('phone-edit-modal').classList.add('hidden');
 }
 
 // =========================================================================
@@ -1973,6 +2000,42 @@ function bindEvents() {
       alert('비밀번호가 초기화되었습니다.');
     } catch (err) {
       alert(`비밀번호 초기화 실패: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Phone edit modal submit
+  document.getElementById('phone-edit-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!adminState.phoneEditTarget) return;
+    const { role, remoteId } = adminState.phoneEditTarget;
+    const phoneInput = document.getElementById('phone-edit-input').value.trim();
+    const btn = document.getElementById('phone-edit-submit-btn');
+    btn.disabled = true;
+    try {
+      const res = await callApi('admin_update_account_phone', {
+        target_role: role,
+        remote_id: remoteId,
+        phone: phoneInput,
+      }, true);
+      const savedPhone = res && res.phone !== undefined ? String(res.phone) : phoneInput;
+      if (adminState.overview) {
+        const listKey = role === 'parent' ? 'parents' : 'students';
+        const list = Array.isArray(adminState.overview[listKey]) ? adminState.overview[listKey] : [];
+        const target = list.find((item) =>
+          String(item.remote_id || '') === String(remoteId) ||
+          String(item.student_id || '') === String(remoteId) ||
+          String(item.parent_id || '') === String(remoteId)
+        );
+        if (target) {
+          target.phone = savedPhone;
+        }
+      }
+      renderRosterTab();
+      closePhoneEditModal();
+    } catch (err) {
+      alert(`연락처 수정 실패: ${err.message}`);
     } finally {
       btn.disabled = false;
     }
