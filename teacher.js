@@ -220,6 +220,41 @@ function renderTeacherHome() {
   if (elField) elField.innerText = `${fieldCnt}명`;
 
   const list = document.getElementById('teacherLiveAttList');
+  const todayStrForUnconf = typeof _getLocalTodayStr === 'function' ? _getLocalTodayStr() : new Date().toISOString().slice(0, 10);
+  const unconfirmedAll = Array.isArray(mockData.teacherUnconfirmedAttendance) ? mockData.teacherUnconfirmedAttendance : [];
+  const otherDateUnconfirmed = unconfirmedAll.filter(u => !u.confirmed && u.date && u.date !== todayStrForUnconf);
+  let unconfBanner = document.getElementById('teacherUnconfirmedAttBanner');
+  if (!unconfBanner && list && list.parentNode) {
+    unconfBanner = document.createElement('div');
+    unconfBanner.id = 'teacherUnconfirmedAttBanner';
+    list.parentNode.insertBefore(unconfBanner, list);
+  }
+  if (unconfBanner) {
+    if (otherDateUnconfirmed.length > 0) {
+      unconfBanner.className = 'mb-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-xl space-y-1.5';
+      unconfBanner.innerHTML = `
+        <div class="flex items-center justify-between text-[11px] font-bold text-amber-800">
+          <span>🔔 미확인 학생·학부모 출결 보고 (${otherDateUnconfirmed.length}건)</span>
+        </div>
+        ${otherDateUnconfirmed.map(u => `
+          <div class="flex items-center justify-between gap-2 bg-white px-2.5 py-2 rounded-lg border border-amber-100">
+            <div class="min-w-0">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-[10px] font-mono text-slate-400">${u.date}</span>
+                <span class="text-xs font-bold text-slate-800">${u.studentId} ${u.name}</span>
+                <span class="text-[10px] px-1.5 py-0.2 rounded font-bold bg-amber-100 text-amber-800">${u.periodInfo ? `${u.type}(${u.periodInfo})` : u.type}</span>
+              </div>
+              <p class="text-[10px] text-slate-500 truncate">${u.reason || '사유 미입력'}</p>
+            </div>
+            <button type="button" onclick="confirmTeacherAtt('${u.id}', this)" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded-lg shrink-0">교사 확인</button>
+          </div>
+        `).join('')}
+      `;
+    } else {
+      unconfBanner.className = 'hidden';
+      unconfBanner.innerHTML = '';
+    }
+  }
   if (activeAttList.length === 0) {
     list.innerHTML = `<div class="p-4 bg-slate-50 rounded-xl border border-slate-200/70 text-center text-xs text-slate-400">오늘 접수된 출결 변동 내역이 없습니다.</div>`;
   } else {
@@ -514,6 +549,9 @@ async function confirmTeacherAtt(id, btnEl) {
       }
     }
     if (item) item.confirmed = true;
+    if (Array.isArray(mockData.teacherUnconfirmedAttendance)) {
+      mockData.teacherUnconfirmedAttendance = mockData.teacherUnconfirmedAttendance.filter(x => x.id !== id);
+    }
     renderTeacherHome();
     showToast('출결 보고가 확인 처리되었습니다.');
   });
@@ -2048,7 +2086,137 @@ function _saveLessonRosterMapping(mapKey, rosterKey) {
 }
 
 function _normLessonToken(val) {
-  return String(val || '').trim().toLowerCase().replace(/\s+/g, '').replace(/학년|반/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  return String(val || '').trim().toLowerCase().replace(/\s+/g, '').replace(/[·ㆍ.,()\[\]]/g, '');
+}
+
+const SUBJECT_ABBREV_MAP = {
+  '통과': ['통합과학'],
+  '과탐': ['과학탐구실험'],
+  '물리': ['물리학'],
+  '화학': ['화학'],
+  '생명': ['생명과학'],
+  '지구': ['지구과학'],
+  '사문': ['사회문화'],
+  '생윤': ['생활과윤리'],
+  '한지': ['한국지리'],
+  '세지': ['세계지리'],
+  '동아': ['동아시아사'],
+  '확통': ['확률과통계'],
+  '미적': ['미적분'],
+  '기하': ['기하'],
+  '영독': ['영어독해와작문'],
+  '화작': ['화법과작문'],
+  '언매': ['언어와매체'],
+};
+
+function _extractClassTokens(raw) {
+  const str = String(raw || '').trim();
+  const gradeClassSet = new Set();
+  const movingSet = new Set();
+
+  // "1학년 13반", "1학년13반"
+  const korMatches = str.matchAll(/(\d+)\s*학년\s*(\d+)\s*반/g);
+  for (const m of korMatches) {
+    gradeClassSet.add(`${Number(m[1])}-${Number(m[2])}`);
+  }
+  // "1-13", "1-2"
+  const dashMatches = str.matchAll(/(?:^|[^\d])(\d{1,2})\s*-\s*(\d{1,2})(?:[^\d]|$)/g);
+  for (const m of dashMatches) {
+    gradeClassSet.add(`${Number(m[1])}-${Number(m[2])}`);
+  }
+  // 이동수업반 토큰 (예: F206, A101 등)
+  const movMatches = str.toUpperCase().matchAll(/\b([A-Z]\d{2,4})\b/g);
+  for (const m of movMatches) {
+    movingSet.add(m[1]);
+  }
+  return { gradeClassSet, movingSet };
+}
+
+function _expandSubjectTokens(raw) {
+  const base = _normLessonToken(raw);
+  const tokens = new Set();
+  if (!base) return tokens;
+  tokens.add(base);
+  Object.entries(SUBJECT_ABBREV_MAP).forEach(([abbr, fullList]) => {
+    if (base.includes(abbr)) {
+      fullList.forEach((full) => {
+        tokens.add(base.replace(abbr, full));
+        tokens.add(full);
+      });
+    }
+    fullList.forEach((full) => {
+      if (base.includes(full)) {
+        tokens.add(base.replace(full, abbr));
+        tokens.add(abbr);
+      }
+    });
+  });
+  return tokens;
+}
+
+function _findBestSubjectRoster(rosters, subject, classLabel) {
+  const list = Array.isArray(rosters) ? rosters : [];
+  if (list.length === 0) return null;
+
+  const targetCls = _extractClassTokens(classLabel);
+  const targetSubTokens = _expandSubjectTokens(subject);
+  const targetDigits = String(subject || '').match(/\d+/)?.[0] || '';
+
+  let bestRoster = null;
+  let bestScore = 0;
+
+  for (const r of list) {
+    const rText = `${r.subject || ''} ${r.class_label || ''}`.trim();
+    const rCls = _extractClassTokens(rText);
+
+    let classScore = 0;
+    if (targetCls.gradeClassSet.size > 0 && rCls.gradeClassSet.size > 0) {
+      const matched = Array.from(targetCls.gradeClassSet).some((t) => rCls.gradeClassSet.has(t));
+      if (!matched) continue; // 학년-반이 명시되어 있는데 다르면 제외
+      classScore = 100;
+    } else if (targetCls.movingSet.size > 0 && rCls.movingSet.size > 0) {
+      const matched = Array.from(targetCls.movingSet).some((t) => rCls.movingSet.has(t));
+      if (!matched) continue;
+      classScore = 90;
+    } else {
+      const normTargetCls = _normLessonToken(classLabel);
+      const normRCls = _normLessonToken(r.class_label || rText);
+      if (normTargetCls && normRCls && (normRCls === normTargetCls || normRCls.includes(normTargetCls))) {
+        classScore = 80;
+      }
+    }
+
+    if (classScore === 0) continue;
+
+    const rSubTokens = _expandSubjectTokens(r.subject || rText);
+    const rDigits = String(r.subject || rText).match(/\d+/)?.[0] || '';
+    let subScore = 0;
+    for (const ts of targetSubTokens) {
+      for (const rs of rSubTokens) {
+        if (ts === rs) subScore = Math.max(subScore, 60);
+        else if (ts.length >= 2 && rs.length >= 2 && (rs.includes(ts) || ts.includes(rs))) {
+          subScore = Math.max(subScore, 40);
+        }
+      }
+    }
+    if (subScore === 0) continue;
+    if (targetDigits && rDigits && targetDigits === rDigits) subScore += 10;
+
+    const total = classScore + subScore;
+    if (total > bestScore) {
+      bestScore = total;
+      bestRoster = r;
+    }
+  }
+  return bestRoster;
+}
+
+if (typeof globalThis !== 'undefined') {
+  globalThis._eduflowTeacherHelpers = {
+    _extractClassTokens,
+    _expandSubjectTokens,
+    _findBestSubjectRoster,
+  };
 }
 
 function switchTeacherLessonTab(tabKey) {
@@ -2192,20 +2360,13 @@ function openTeacherLessonModal(scheduleIndex) {
   let matchModeLabel = '저장된 연결';
 
   if (!matchedKey || (matchedKey !== '__homeroom__' && !rosters.some((r) => String(r.roster_key || r.remote_id || '') === matchedKey))) {
-    const normSub = _normLessonToken(subject);
-    const normCls = _normLessonToken(classLabel);
-    const autoFound = rosters.find((r) => {
-      const rs = _normLessonToken(r.subject);
-      const rc = _normLessonToken(r.class_label);
-      return (rs && normSub && (rs === normSub || rs.includes(normSub) || normSub.includes(rs))) &&
-        (rc && normCls && (rc === normCls || rc.includes(normCls) || normCls.includes(rc)));
-    });
+    const autoFound = _findBestSubjectRoster(rosters, subject, classLabel);
     if (autoFound) {
       matchedKey = String(autoFound.roster_key || autoFound.remote_id || '');
       matchModeLabel = '자동 매칭';
     } else {
       matchedKey = '__homeroom__';
-      matchModeLabel = '학급 명렬 폴백';
+      matchModeLabel = '일치하는 교과 명렬표 없음 — 수동 선택 또는 폴백';
     }
   }
 

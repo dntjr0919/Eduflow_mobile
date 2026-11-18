@@ -227,6 +227,7 @@ let mockData = {
   urgentDocuments: [],
   attendanceHistory: [],
   teacherTodayAttendance: [],
+  teacherUnconfirmedAttendance: [],
   timetable: [],
   teacherSchedule: [],
   homeroomSchedule: [],
@@ -1197,6 +1198,7 @@ function hydrateMockDataFromBundle(bundle) {
       .filter(a => (a.attendance_type || '').trim() !== '출석')
       .map(a => ({
         id: a.remote_id,
+        date: a.date || todayStr,
         studentId: String(a.student_id || ''),
         name: a.student_name || '',
         type: a.attendance_type || '출결',
@@ -1206,6 +1208,21 @@ function hydrateMockDataFromBundle(bundle) {
         reason: a.reason || '',
         confirmed: _isTruthyField(a.teacher_confirmed)
       }));
+    mockData.teacherUnconfirmedAttendance = bundle.attendance
+      .filter(a => (a.attendance_type || '').trim() !== '출석' && !_isTruthyField(a.teacher_confirmed))
+      .map(a => ({
+        id: a.remote_id,
+        date: a.date || '',
+        studentId: String(a.student_id || ''),
+        name: a.student_name || '',
+        type: a.attendance_type || '출결',
+        attCategory: a.att_category || '',
+        attSubType: a.att_sub_type || '',
+        periodInfo: a.period_info || '',
+        reason: a.reason || '',
+        confirmed: false
+      }))
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   }
 
   // 6. 시간표 (오늘 요일 필터 + period 기준 Union 병합)

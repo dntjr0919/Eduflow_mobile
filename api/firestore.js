@@ -776,7 +776,7 @@ async function _handleGetMobileBundle(db, params) {
     server_time: _nowStr(),
     teachers: teachersSnap,
     students: filteredStudents,
-    attendance: attendanceRows.filter((d) => _matchesTenant(d, tenant)),
+    attendance: attendanceRows.map(_withInferredClass).filter((d) => _matchesTenant(d, tenant)),
     doc_tracking: docTrackingRows
       .map(_withInferredClass)
       .filter((d) => _matchesTenant(d, tenant))
@@ -1087,14 +1087,39 @@ module.exports = async function handler(req, res) {
           }
         }
       }
+      let resolvedGrade = _toIntOrNull(params.grade);
+      let resolvedClassNo = _toIntOrNull(params.class_no);
+      let resolvedSchoolCode = String(params.school_code || params.neis_school_code || '').trim();
+      let resolvedSchoolName = String(params.school_name || '').trim();
+      if (sid && (resolvedGrade === null || resolvedClassNo === null || !resolvedSchoolCode)) {
+        const stuSnap = await db.collection('계정_학생').doc(sid).get();
+        let stuData = stuSnap.exists ? (stuSnap.data() || {}) : null;
+        if (!stuData) {
+          const qSnap = await db.collection('계정_학생').where('student_id', '==', sid).limit(1).get();
+          if (!qSnap.empty) qSnap.forEach((d) => { if (!stuData) stuData = d.data() || {}; });
+        }
+        if (stuData) {
+          if (resolvedGrade === null) resolvedGrade = _toIntOrNull(stuData.grade);
+          if (resolvedClassNo === null) resolvedClassNo = _toIntOrNull(stuData.class_no);
+          if (!resolvedSchoolCode) resolvedSchoolCode = String(stuData.school_code || stuData.neis_school_code || '').trim();
+          if (!resolvedSchoolName) resolvedSchoolName = String(stuData.school_name || '').trim();
+        }
+        if (resolvedGrade === null || resolvedClassNo === null) {
+          const inf = _inferGradeClassFromStudentId(sid);
+          if (resolvedGrade === null) resolvedGrade = inf.grade;
+          if (resolvedClassNo === null) resolvedClassNo = inf.class_no;
+        }
+      }
       await db.collection('일일_출결').doc(rid).set(
         {
           remote_id: rid,
           date: attDate,
           student_id: sid,
           student_name: String(params.student_name || ''),
-          grade: _toIntOrNull(params.grade),
-          class_no: _toIntOrNull(params.class_no),
+          school_code: resolvedSchoolCode,
+          school_name: resolvedSchoolName,
+          grade: resolvedGrade,
+          class_no: resolvedClassNo,
           attendance_type: String(params.attendance_type || ''),
           att_category: String(params.att_category || ''),
           att_sub_type: String(params.att_sub_type || ''),
@@ -2197,7 +2222,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       .sort((a, b) => String(b.submitted_at || b.updated_at || '').localeCompare(String(a.submitted_at || a.updated_at || '')));
 
     const attendance = attRowsRaw
-      .filter((d) => _isStrictClassMember(d, auth))
+      .filter((d) => _isStrictClassMember(d, auth) || (d.student_id && classStudentIds.has(String(d.student_id).trim())))
       .sort((a, b) => String(b.date || b.updated_at || '').localeCompare(String(a.date || a.updated_at || '')));
 
     const documents = docRowsRaw
@@ -2456,6 +2481,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       lesson_no: String(params.lesson_no || '').trim(),
       content: String(params.content || '').trim(),
       next_note: String(params.next_note || '').trim(),
+      status: String(params.status || (existing && existing.status) || '완료').trim(),
       created_at: String((existing && existing.created_at) || nowStr),
       updated_at: nowStr,
     };

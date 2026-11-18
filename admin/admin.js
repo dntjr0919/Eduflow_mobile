@@ -30,6 +30,7 @@ const adminState = {
   selectedCounselStudentId: '',
   pwResetTarget: null, // { role, remoteId, label }
   lessonCompareSubject: '',
+  lessonMatrixSubject: '',
   lessonProgSubject: '',
   lessonProgClass: '',
   lessonAttDate: '',
@@ -489,7 +490,44 @@ function buildDailyAttendanceRows(selectedDate) {
   });
 }
 
+function renderUnconfirmedAttendanceBanner() {
+  const ov = adminState.overview || {};
+  const card = document.getElementById('att-unconfirmed-card');
+  const countEl = document.getElementById('att-unconfirmed-count');
+  const listEl = document.getElementById('att-unconfirmed-list');
+  if (!card || !listEl) return;
+
+  const unconfirmed = (ov.attendance || []).filter((a) => {
+    const t = String(a.attendance_type || '').trim();
+    return t !== '출석' && !a.teacher_confirmed;
+  });
+
+  if (unconfirmed.length === 0) {
+    card.classList.add('hidden');
+    listEl.innerHTML = '';
+    return;
+  }
+
+  card.classList.remove('hidden');
+  if (countEl) countEl.textContent = String(unconfirmed.length);
+  listEl.innerHTML = unconfirmed.slice(0, 10).map((a) => {
+    const rid = String(a.remote_id || '');
+    return `
+      <div class="bg-white rounded-xl border border-amber-200 px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div class="text-xs">
+          <span class="font-mono text-[11px] text-slate-400 mr-2">${escapeHtml(a.date || '-')}</span>
+          <strong class="text-slate-900">${escapeHtml(a.student_name || a.student_id)}</strong>
+          <span class="ml-1.5 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold text-[11px]">${escapeHtml(a.attendance_type || '출결')}${a.period_info ? ` (${escapeHtml(a.period_info)})` : ''}</span>
+          <span class="text-slate-500 ml-2">${escapeHtml(a.reason || '사유 미입력')}</span>
+        </div>
+        <button type="button" onclick="confirmAttendanceRow('${escapeHtml(rid)}')" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 self-start sm:self-auto shrink-0">담임 확인</button>
+      </div>
+    `;
+  }).join('');
+}
+
 function renderDailyAttendancePanel() {
+  renderUnconfirmedAttendanceBanner();
   const selectedDate = adminState.attDailyDate || getLocalTodayStr();
   const dateInput = document.getElementById('att-daily-date');
   const dateLabel = document.getElementById('att-daily-date-label');
@@ -1027,10 +1065,135 @@ function _populateSelectOptions(selectEl, values, currentVal, defaultLabel) {
   selectEl.innerHTML = opts.join('');
 }
 
+function _naturalClassSort(a, b) {
+  const ma = String(a).match(/(\d+)\D+(\d+)/);
+  const mb = String(b).match(/(\d+)\D+(\d+)/);
+  if (ma && mb) {
+    const gDiff = Number(ma[1]) - Number(mb[1]);
+    if (gDiff !== 0) return gDiff;
+    return Number(ma[2]) - Number(mb[2]);
+  }
+  return String(a).localeCompare(String(b), 'ko');
+}
+
+function renderLessonProgressMatrix(progressList, rosterList) {
+  const subSelect = document.getElementById('lesson-matrix-subject-select');
+  const thead = document.getElementById('lesson-matrix-thead');
+  const tbody = document.getElementById('lesson-matrix-tbody');
+  if (!subSelect || !thead || !tbody) return;
+
+  const subjects = Array.from(new Set([
+    ...progressList.map((p) => String(p.subject || '').trim()),
+    ...rosterList.map((r) => String(r.subject || '').trim()),
+  ].filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko'));
+
+  if (!adminState.lessonMatrixSubject && subjects.length > 0) {
+    adminState.lessonMatrixSubject = subjects[0];
+  }
+  if (subjects.length === 0) {
+    subSelect.innerHTML = '<option value="">등록된 과목 없음</option>';
+    thead.innerHTML = '';
+    tbody.innerHTML = '<tr><td class="py-8 text-center text-slate-400">수업 진도 또는 교과 명렬표가 없습니다.</td></tr>';
+    return;
+  }
+
+  subSelect.innerHTML = subjects.map((s) => `<option value="${escapeHtml(s)}" ${s === adminState.lessonMatrixSubject ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
+
+  const targetSub = adminState.lessonMatrixSubject;
+  const subProgs = progressList.filter((p) => String(p.subject || '').trim() === targetSub);
+  const subRosters = rosterList.filter((r) => String(r.subject || '').trim() === targetSub);
+
+  const classLabels = Array.from(new Set([
+    ...subProgs.map((p) => String(p.class_label || '').trim()),
+    ...subRosters.map((r) => String(r.class_label || '').trim()),
+  ].filter(Boolean))).sort(_naturalClassSort);
+
+  if (classLabels.length === 0) {
+    thead.innerHTML = '';
+    tbody.innerHTML = '<tr><td class="py-8 text-center text-slate-400">해당 과목의 담당 학반 데이터가 없습니다.</td></tr>';
+    return;
+  }
+
+  // 행: 단원/차시 기준 (없으면 최신 진도 1행)
+  const rowMap = new Map();
+  subProgs.forEach((p) => {
+    const unit = String(p.unit || '').trim() || '진도 기록';
+    const lessonNo = String(p.lesson_no || '').trim();
+    const rowKey = `${unit}__${lessonNo}`;
+    if (!rowMap.has(rowKey)) rowMap.set(rowKey, { unit, lessonNo, byClass: new Map() });
+    const cls = String(p.class_label || '').trim();
+    if (cls && !rowMap.get(rowKey).byClass.has(cls)) {
+      rowMap.get(rowKey).byClass.set(cls, p);
+    }
+  });
+  if (rowMap.size === 0) {
+    rowMap.set('진도 기록__', { unit: '진도 기록', lessonNo: '', byClass: new Map() });
+  }
+
+  thead.innerHTML = `
+    <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold text-[11px] whitespace-nowrap">
+      <th class="py-2.5 px-4 table-cell-sticky bg-slate-100 min-w-[160px]">단원 / 차시</th>
+      ${classLabels.map((c) => `<th class="py-2.5 px-3 text-center min-w-[130px] border-l border-slate-200/80">${escapeHtml(c)}</th>`).join('')}
+    </tr>
+  `;
+
+  tbody.innerHTML = Array.from(rowMap.values()).map((row) => {
+    const cells = classLabels.map((cls) => {
+      const p = row.byClass.get(cls) || null;
+      if (!p) {
+        return `
+          <td class="p-2 border-l border-slate-100 text-center align-middle">
+            <button type="button" onclick="openLessonMatrixCellModal('', '${escapeHtml(targetSub)}', '${escapeHtml(cls)}', '${escapeHtml(row.unit)}', '${escapeHtml(row.lessonNo)}')" class="w-full py-2 px-2 rounded-lg border border-dashed border-slate-200 text-[11px] text-slate-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/40 transition">+ 입력</button>
+          </td>
+        `;
+      }
+      const st = String(p.status || '완료').trim();
+      let stCls = 'bg-emerald-100 text-emerald-700';
+      if (st === '진행중') stCls = 'bg-amber-100 text-amber-800';
+      else if (st === '예정') stCls = 'bg-slate-100 text-slate-600';
+      return `
+        <td class="p-2 border-l border-slate-100 align-top">
+          <button type="button" onclick="openLessonMatrixCellModal('${escapeHtml(p.remote_id || '')}', '${escapeHtml(targetSub)}', '${escapeHtml(cls)}', '${escapeHtml(row.unit)}', '${escapeHtml(row.lessonNo)}')" class="w-full text-left p-2 rounded-lg bg-slate-50/80 hover:bg-indigo-50/60 border border-slate-200/70 hover:border-indigo-300 transition space-y-1">
+            <div class="flex items-center justify-between gap-1">
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${stCls}">${escapeHtml(st)}</span>
+              <span class="text-[10px] font-mono text-slate-400">${escapeHtml((p.date || '').slice(5) || '-')}</span>
+            </div>
+            <div class="text-[11px] text-slate-700 line-clamp-2">${escapeHtml(p.content || p.unit || '-')}</div>
+          </button>
+        </td>
+      `;
+    }).join('');
+
+    return `
+      <tr class="hover:bg-slate-50/40">
+        <td class="py-2.5 px-4 table-cell-sticky bg-white font-semibold text-slate-800 align-top">
+          <div>${escapeHtml(row.unit)}</div>
+          ${row.lessonNo ? `<div class="text-[11px] text-indigo-600 font-medium">${escapeHtml(row.lessonNo)}</div>` : ''}
+        </td>
+        ${cells}
+      </tr>
+    `;
+  }).join('');
+}
+
+function openLessonMatrixCellModal(remoteId, subject, classLabel, unit, lessonNo) {
+  openLessonProgressModal(remoteId);
+  if (!remoteId) {
+    document.getElementById('lp-subject').value = subject || '';
+    document.getElementById('lp-class-label').value = classLabel || '';
+    document.getElementById('lp-unit').value = unit === '진도 기록' ? '' : (unit || '');
+    document.getElementById('lp-lesson-no').value = lessonNo || '';
+    document.getElementById('lp-status').value = '완료';
+  }
+}
+
 function renderLessonsTab() {
   const ov = adminState.overview || {};
   const progressList = ov.lesson_progress || [];
   const subAttList = ov.subject_attendance || [];
+  const rosterList = ov.subject_rosters || [];
+
+  renderLessonProgressMatrix(progressList, rosterList);
 
   const allSubjects = [
     ...progressList.map((p) => String(p.subject || '').trim()),
@@ -1161,6 +1324,7 @@ function openLessonProgressModal(remoteId = '') {
   document.getElementById('lp-remote-id').value = item ? String(item.remote_id || '') : '';
   document.getElementById('lp-date').value = item ? String(item.date || '').slice(0, 10) || getLocalTodayStr() : getLocalTodayStr();
   document.getElementById('lp-period').value = item ? String(item.period || '') : '';
+  document.getElementById('lp-status').value = item ? String(item.status || '완료') : '완료';
   document.getElementById('lp-subject').value = item ? String(item.subject || '') : '';
   document.getElementById('lp-class-label').value = item ? String(item.class_label || '') : '';
   document.getElementById('lp-unit').value = item ? String(item.unit || '') : '';
@@ -1583,6 +1747,10 @@ function bindEvents() {
   });
 
   // Tab 6 lessons & subject attendance filters + modal submit
+  document.getElementById('lesson-matrix-subject-select')?.addEventListener('change', (e) => {
+    adminState.lessonMatrixSubject = e.target.value;
+    renderLessonsTab();
+  });
   document.getElementById('lesson-compare-subject-filter')?.addEventListener('change', (e) => {
     adminState.lessonCompareSubject = e.target.value;
     renderLessonsTab();
@@ -1621,6 +1789,7 @@ function bindEvents() {
       remote_id: document.getElementById('lp-remote-id').value.trim(),
       date: document.getElementById('lp-date').value,
       period: document.getElementById('lp-period').value.trim(),
+      status: document.getElementById('lp-status').value,
       subject: document.getElementById('lp-subject').value.trim(),
       class_label: document.getElementById('lp-class-label').value.trim(),
       unit: document.getElementById('lp-unit').value.trim(),
