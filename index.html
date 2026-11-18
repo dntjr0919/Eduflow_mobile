@@ -1340,6 +1340,69 @@
 </div>
 </div>
 
+<!-- Modal: Teacher Lesson Attendance & Progress -->
+<div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end sm:justify-center p-3" id="teacherLessonModal" onclick="if (event.target === this) closeModal('teacherLessonModal')">
+  <div class="bg-white rounded-3xl p-4 shadow-2xl max-h-[88vh] flex flex-col space-y-3">
+    <div class="flex items-center justify-between pb-2 border-b border-slate-100 shrink-0">
+      <div>
+        <h4 class="font-bold text-slate-800 text-sm" id="teacherLessonTitle">수업 출석부 · 진도</h4>
+        <p class="text-[11px] text-slate-400 mt-0.5" id="teacherLessonSub">-</p>
+      </div>
+      <button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeModal('teacherLessonModal')" type="button">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+      </button>
+    </div>
+
+    <!-- 2 Tabs -->
+    <div class="flex bg-slate-100 p-1 rounded-xl shrink-0">
+      <button type="button" id="lessonTabBtn-att" onclick="switchTeacherLessonTab('att')" class="flex-1 py-2 text-xs font-bold rounded-lg bg-white text-indigo-700 shadow-xs transition">📋 교과 출석체크</button>
+      <button type="button" id="lessonTabBtn-prog" onclick="switchTeacherLessonTab('prog')" class="flex-1 py-2 text-xs font-semibold rounded-lg text-slate-500 hover:text-slate-800 transition">📖 수업 진도 기록</button>
+    </div>
+
+    <!-- Panel 1: 교과 출석체크 -->
+    <div id="lessonPanel-att" class="flex-1 flex flex-col min-h-0 space-y-2.5 overflow-hidden">
+      <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 space-y-1.5 shrink-0">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-bold text-slate-600">적용 명렬표</span>
+          <span id="lessonRosterMatchBadge" class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">자동 매칭</span>
+        </div>
+        <select id="lessonRosterSelect" onchange="onLessonRosterSelectChange(this.value)" class="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-800"></select>
+      </div>
+      <div id="lessonAttStudentList" class="flex-1 overflow-y-auto space-y-1.5 pr-0.5 min-h-[180px] max-h-[42vh]"></div>
+      <button type="button" onclick="saveTeacherLessonAttendance(this)" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm shrink-0">교과 출결 저장</button>
+    </div>
+
+    <!-- Panel 2: 수업 진도 기록 -->
+    <div id="lessonPanel-prog" class="hidden flex-1 flex flex-col min-h-0 space-y-2.5 overflow-y-auto">
+      <div id="lessonPrevProgressBox" class="bg-indigo-50/70 border border-indigo-100 rounded-xl p-3 text-xs space-y-1 shrink-0">
+        <div class="font-bold text-indigo-900">직전 수업 진도</div>
+        <p class="text-slate-500">기록된 직전 진도가 없습니다.</p>
+      </div>
+      <div class="space-y-2">
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-[11px] font-bold text-slate-600 mb-1" for="lessonProgUnit">단원명</label>
+            <input id="lessonProgUnit" type="text" placeholder="예: Ⅱ. 물질과 전자기장" class="w-full px-2.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl">
+          </div>
+          <div>
+            <label class="block text-[11px] font-bold text-slate-600 mb-1" for="lessonProgNo">차시 / 페이지</label>
+            <input id="lessonProgNo" type="text" placeholder="예: 12차시 (p.84~87)" class="w-full px-2.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl">
+          </div>
+        </div>
+        <div>
+          <label class="block text-[11px] font-bold text-slate-600 mb-1" for="lessonProgContent">수업 내용</label>
+          <textarea id="lessonProgContent" rows="2" placeholder="오늘 수업에서 다룬 핵심 내용을 입력하세요." class="w-full px-2.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"></textarea>
+        </div>
+        <div>
+          <label class="block text-[11px] font-bold text-slate-600 mb-1" for="lessonProgNext">다음 시간 안내 / 메모</label>
+          <input id="lessonProgNext" type="text" placeholder="예: 실험 보고서 제출, 형성평가 예고" class="w-full px-2.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl">
+        </div>
+      </div>
+      <button type="button" onclick="saveTeacherLessonProgress(this)" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm shrink-0">수업 진도 저장</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: Avatar Account Menu -->
 <div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="accountMenuModal" onclick="if (event.target === this) closeModal('accountMenuModal')">
 <div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3">

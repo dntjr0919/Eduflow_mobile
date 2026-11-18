@@ -304,15 +304,15 @@ function renderTeacherHome() {
   if (mockData.teacherSchedule.length === 0) {
     sched.innerHTML = `<div class="col-span-4 py-4 text-center text-xs text-slate-400">오늘 등록된 수업이 없습니다.</div>`;
   } else {
-    sched.innerHTML = mockData.teacherSchedule.map(s => `
-      <div class="p-2 rounded-xl border text-center ${s.changed ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200/70'}">
+    sched.innerHTML = mockData.teacherSchedule.map((s, idx) => `
+      <button type="button" onclick="openTeacherLessonModal(${idx})" class="p-2 rounded-xl border text-center transition-all hover:border-indigo-400 hover:shadow-xs active:scale-[0.98] cursor-pointer ${s.changed ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200/70'}">
         <div class="flex items-center justify-center gap-1">
           <span class="text-[10px] font-semibold ${s.changed ? 'text-amber-700' : 'text-slate-400'}">${s.period}</span>
           ${s.changed ? `<span class="text-[9px] font-bold px-1 py-0.2 rounded bg-amber-500 text-white">변경</span>` : ''}
         </div>
         <p class="text-xs font-bold text-slate-800 mt-0.5">${s.target}</p>
         <p class="text-[10px] ${s.changed ? 'text-amber-800 font-bold' : 'text-slate-500'}">${s.subject}</p>
-      </div>
+      </button>
     `).join('');
   }
 
@@ -2003,4 +2003,329 @@ async function quickRegisterAttFromChat() {
     }
   }
   showToast(`${room.studentName} 학생의 채팅 내용이 출결 시트에 즉시 등록되었습니다.`, '⚡');
+}
+
+// =========================================================================
+// 교사 시간표 터치 기반 교과 출석부 · 수업 진도 관리 모달
+// =========================================================================
+const LESSON_ROSTER_MAP_KEY = 'eduflow_lesson_roster_map_v1';
+const _lessonModalState = {
+  scheduleItem: null,
+  dateStr: '',
+  periodNum: '',
+  subject: '',
+  classLabel: '',
+  rosterKey: '',
+  students: [], // [{ student_id, student_name, status, memo }]
+  progressRemoteId: '',
+};
+
+function _getTeacherAuthParams() {
+  const saved = typeof _loadAutoLoginAuth === 'function' ? _loadAutoLoginAuth() : null;
+  const cu = mockData.currentUser || {};
+  return {
+    auth_teacher_id: (saved && saved.userId) || cu.userId || '',
+    auth_password: (saved && saved.password) || '',
+    auth_password_hash: (saved && saved.passwordHash) || '',
+  };
+}
+
+function _loadLessonRosterMap() {
+  try {
+    const raw = localStorage.getItem(LESSON_ROSTER_MAP_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function _saveLessonRosterMapping(mapKey, rosterKey) {
+  try {
+    const map = _loadLessonRosterMap();
+    map[mapKey] = rosterKey;
+    localStorage.setItem(LESSON_ROSTER_MAP_KEY, JSON.stringify(map));
+  } catch (_) {}
+}
+
+function _normLessonToken(val) {
+  return String(val || '').trim().toLowerCase().replace(/\s+/g, '').replace(/학년|반/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+function switchTeacherLessonTab(tabKey) {
+  const isAtt = tabKey !== 'prog';
+  document.getElementById('lessonPanel-att')?.classList.toggle('hidden', !isAtt);
+  document.getElementById('lessonPanel-prog')?.classList.toggle('hidden', isAtt);
+  const btnAtt = document.getElementById('lessonTabBtn-att');
+  const btnProg = document.getElementById('lessonTabBtn-prog');
+  if (btnAtt) {
+    btnAtt.className = isAtt
+      ? 'flex-1 py-2 text-xs font-bold rounded-lg bg-white text-indigo-700 shadow-xs transition'
+      : 'flex-1 py-2 text-xs font-semibold rounded-lg text-slate-500 hover:text-slate-800 transition';
+  }
+  if (btnProg) {
+    btnProg.className = !isAtt
+      ? 'flex-1 py-2 text-xs font-bold rounded-lg bg-white text-indigo-700 shadow-xs transition'
+      : 'flex-1 py-2 text-xs font-semibold rounded-lg text-slate-500 hover:text-slate-800 transition';
+  }
+}
+
+function _resolveLessonRosterStudents(rosterKey) {
+  const rosters = Array.isArray(mockData.subjectRosters) ? mockData.subjectRosters : [];
+  if (rosterKey && rosterKey !== '__homeroom__') {
+    const found = rosters.find((r) => String(r.roster_key || r.remote_id || '') === rosterKey);
+    if (found && Array.isArray(found.students) && found.students.length > 0) {
+      return found.students.map((s) => ({
+        student_id: String(s.student_id || s.id || '').trim(),
+        student_name: String(s.student_name || s.name || s.student_id || '').trim(),
+      })).filter((s) => s.student_id);
+    }
+  }
+  // 폴백: 담임 학급 명렬표 (mockData.students)
+  return (mockData.students || []).map((s) => ({
+    student_id: String(s.student_id || s.remote_id || '').trim(),
+    student_name: String(s.name || s.student_name || s.student_id || '').trim(),
+  })).filter((s) => s.student_id);
+}
+
+function _renderLessonAttStudentList() {
+  const listEl = document.getElementById('lessonAttStudentList');
+  if (!listEl) return;
+  const students = _lessonModalState.students || [];
+  if (students.length === 0) {
+    listEl.innerHTML = `<div class="py-8 text-center text-xs text-slate-400">표시할 학생 명렬표가 없습니다. 상단 드롭다운에서 교과 명렬표를 선택해 주세요.</div>`;
+    return;
+  }
+  const statuses = ['출석', '결석', '지각', '조퇴', '공결'];
+  listEl.innerHTML = students.map((st, idx) => {
+    const btns = statuses.map((label) => {
+      const active = st.status === label;
+      let activeCls = 'bg-emerald-600 text-white border-emerald-600';
+      if (label === '결석') activeCls = 'bg-rose-600 text-white border-rose-600';
+      else if (label === '지각' || label === '조퇴') activeCls = 'bg-amber-500 text-white border-amber-500';
+      else if (label === '공결') activeCls = 'bg-indigo-600 text-white border-indigo-600';
+      return `<button type="button" onclick="setLessonStudentStatus(${idx}, '${label}')" class="px-2 py-1 rounded-lg text-[10px] font-bold border transition ${active ? activeCls : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">${label}</button>`;
+    }).join('');
+    return `
+      <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200/70 space-y-1.5">
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-xs font-bold text-slate-800 truncate">${st.student_name} <span class="text-[10px] font-mono text-slate-400 font-normal">${st.student_id}</span></div>
+          <div class="flex items-center gap-1 shrink-0">${btns}</div>
+        </div>
+        <input type="text" value="${String(st.memo || '').replace(/"/g, '&quot;')}" oninput="setLessonStudentMemo(${idx}, this.value)" placeholder="비고/메모 (선택)" class="w-full px-2 py-1 text-[11px] bg-white border border-slate-200 rounded-lg text-slate-700">
+      </div>
+    `;
+  }).join('');
+}
+
+function setLessonStudentStatus(idx, status) {
+  if (_lessonModalState.students[idx]) {
+    _lessonModalState.students[idx].status = status;
+    _renderLessonAttStudentList();
+  }
+}
+
+function setLessonStudentMemo(idx, memo) {
+  if (_lessonModalState.students[idx]) {
+    _lessonModalState.students[idx].memo = memo;
+  }
+}
+
+function _hydrateLessonAttendanceStudents(rosterKey) {
+  const baseStudents = _resolveLessonRosterStudents(rosterKey);
+  const existing = (mockData.subjectAttendance || []).filter((a) =>
+    String(a.date || '').slice(0, 10) === _lessonModalState.dateStr &&
+    String(a.period || '') === String(_lessonModalState.periodNum) &&
+    String(a.subject || '') === _lessonModalState.subject &&
+    String(a.class_label || '') === _lessonModalState.classLabel
+  );
+  const existingMap = new Map();
+  existing.forEach((a) => existingMap.set(String(a.student_id || '').trim(), a));
+
+  _lessonModalState.students = baseStudents.map((s) => {
+    const prev = existingMap.get(s.student_id);
+    return {
+      student_id: s.student_id,
+      student_name: s.student_name,
+      status: prev ? String(prev.status || '출석') : '출석',
+      memo: prev ? String(prev.memo || '') : '',
+    };
+  });
+  _renderLessonAttStudentList();
+}
+
+function onLessonRosterSelectChange(rosterKey) {
+  _lessonModalState.rosterKey = rosterKey;
+  const mapKey = `${_lessonModalState.subject}__${_lessonModalState.classLabel}`;
+  _saveLessonRosterMapping(mapKey, rosterKey);
+  const badge = document.getElementById('lessonRosterMatchBadge');
+  if (badge) {
+    badge.textContent = rosterKey === '__homeroom__' ? '학급 명렬 폴백' : '수동 연결 저장됨';
+  }
+  _hydrateLessonAttendanceStudents(rosterKey);
+}
+
+function openTeacherLessonModal(scheduleIndex) {
+  const item = (mockData.teacherSchedule || [])[scheduleIndex];
+  if (!item) return;
+
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const periodNum = String(item.period || '').replace(/[^0-9]/g, '') || String(item.period || '');
+  const subject = String(item.subject || '').trim();
+  const classLabel = String(item.target || '').trim();
+
+  _lessonModalState.scheduleItem = item;
+  _lessonModalState.dateStr = todayStr;
+  _lessonModalState.periodNum = periodNum;
+  _lessonModalState.subject = subject;
+  _lessonModalState.classLabel = classLabel;
+
+  document.getElementById('teacherLessonTitle').innerText = `${item.period} · ${classLabel} · ${subject}`;
+  document.getElementById('teacherLessonSub').innerText = `${todayStr} 수업 출결 및 진도 관리`;
+
+  // 1) 명렬표 자동 매칭 또는 localStorage 기억 매핑
+  const rosters = Array.isArray(mockData.subjectRosters) ? mockData.subjectRosters : [];
+  const mapKey = `${subject}__${classLabel}`;
+  const savedMap = _loadLessonRosterMap();
+  let matchedKey = savedMap[mapKey] || '';
+  let matchModeLabel = '저장된 연결';
+
+  if (!matchedKey || (matchedKey !== '__homeroom__' && !rosters.some((r) => String(r.roster_key || r.remote_id || '') === matchedKey))) {
+    const normSub = _normLessonToken(subject);
+    const normCls = _normLessonToken(classLabel);
+    const autoFound = rosters.find((r) => {
+      const rs = _normLessonToken(r.subject);
+      const rc = _normLessonToken(r.class_label);
+      return (rs && normSub && (rs === normSub || rs.includes(normSub) || normSub.includes(rs))) &&
+        (rc && normCls && (rc === normCls || rc.includes(normCls) || normCls.includes(rc)));
+    });
+    if (autoFound) {
+      matchedKey = String(autoFound.roster_key || autoFound.remote_id || '');
+      matchModeLabel = '자동 매칭';
+    } else {
+      matchedKey = '__homeroom__';
+      matchModeLabel = '학급 명렬 폴백';
+    }
+  }
+
+  _lessonModalState.rosterKey = matchedKey;
+  const badge = document.getElementById('lessonRosterMatchBadge');
+  if (badge) badge.textContent = matchModeLabel;
+
+  const sel = document.getElementById('lessonRosterSelect');
+  if (sel) {
+    const opts = rosters.map((r) => {
+      const k = String(r.roster_key || r.remote_id || '');
+      const label = `${r.subject || '교과'} · ${r.class_label || '-'} (${Array.isArray(r.students) ? r.students.length : 0}명)`;
+      return `<option value="${k}" ${k === matchedKey ? 'selected' : ''}>${label}</option>`;
+    });
+    opts.push(`<option value="__homeroom__" ${matchedKey === '__homeroom__' ? 'selected' : ''}>우리 반 학급 명렬표 (폴백 · ${(mockData.students || []).length}명)</option>`);
+    sel.innerHTML = opts.join('');
+  }
+
+  _hydrateLessonAttendanceStudents(matchedKey);
+
+  // 2) 수업 진도 탭 채우기 (직전 진도 + 당일 기존 진도)
+  const allProg = (mockData.lessonProgress || []).filter((p) =>
+    _normLessonToken(p.subject) === _normLessonToken(subject) &&
+    _normLessonToken(p.class_label) === _normLessonToken(classLabel)
+  );
+  const todayProg = allProg.find((p) => String(p.date || '').slice(0, 10) === todayStr && String(p.period || '') === periodNum) || null;
+  const prevProg = allProg.find((p) => !todayProg || p.remote_id !== todayProg.remote_id) || null;
+
+  _lessonModalState.progressRemoteId = todayProg ? String(todayProg.remote_id || '') : '';
+  const prevBox = document.getElementById('lessonPrevProgressBox');
+  if (prevBox) {
+    if (prevProg) {
+      prevBox.innerHTML = `
+        <div class="flex items-center justify-between">
+          <span class="font-bold text-indigo-900">직전 수업 진도 (${prevProg.date || '-'} · ${prevProg.period ? prevProg.period + '교시' : '-'})</span>
+          <span class="text-[10px] font-semibold text-indigo-700 bg-white px-2 py-0.5 rounded-full border border-indigo-100">${prevProg.lesson_no || '-'}</span>
+        </div>
+        <div class="text-slate-700 font-semibold mt-1">${prevProg.unit || '-'}</div>
+        <div class="text-slate-600 text-[11px]">${prevProg.content || '-'}</div>
+        ${prevProg.next_note ? `<div class="text-[11px] text-indigo-700 mt-1">💡 다음 안내: ${prevProg.next_note}</div>` : ''}
+      `;
+    } else {
+      prevBox.innerHTML = `<div class="font-bold text-indigo-900">직전 수업 진도</div><p class="text-slate-500">기록된 직전 진도가 없습니다.</p>`;
+    }
+  }
+
+  document.getElementById('lessonProgUnit').value = todayProg ? (todayProg.unit || '') : '';
+  document.getElementById('lessonProgNo').value = todayProg ? (todayProg.lesson_no || '') : '';
+  document.getElementById('lessonProgContent').value = todayProg ? (todayProg.content || '') : '';
+  document.getElementById('lessonProgNext').value = todayProg ? (todayProg.next_note || '') : '';
+
+  switchTeacherLessonTab('att');
+  openModal('teacherLessonModal');
+}
+
+async function saveTeacherLessonAttendance(btnEl) {
+  if (!_lessonModalState.students || _lessonModalState.students.length === 0) {
+    showToast('저장할 학생 명렬이 없습니다.', '⚠️');
+    return;
+  }
+  await withButtonLoading(btnEl, '저장 중...', async () => {
+    const payload = {
+      ..._getTeacherAuthParams(),
+      date: _lessonModalState.dateStr,
+      period: _lessonModalState.periodNum,
+      subject: _lessonModalState.subject,
+      class_label: _lessonModalState.classLabel,
+      roster_key: _lessonModalState.rosterKey,
+      records: _lessonModalState.students,
+    };
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      const res = await gasApi.post('save_subject_attendance_batch', payload);
+      if (Array.isArray(res.items)) {
+        const rest = (mockData.subjectAttendance || []).filter((a) => !(
+          String(a.date || '').slice(0, 10) === _lessonModalState.dateStr &&
+          String(a.period || '') === String(_lessonModalState.periodNum) &&
+          String(a.subject || '') === _lessonModalState.subject &&
+          String(a.class_label || '') === _lessonModalState.classLabel
+        ));
+        mockData.subjectAttendance = [...res.items, ...rest];
+      }
+    }
+    showToast(`${_lessonModalState.classLabel} ${_lessonModalState.subject} 출결이 저장되었습니다.`, '✅');
+  });
+}
+
+async function saveTeacherLessonProgress(btnEl) {
+  const unit = (document.getElementById('lessonProgUnit')?.value || '').trim();
+  const lessonNo = (document.getElementById('lessonProgNo')?.value || '').trim();
+  const content = (document.getElementById('lessonProgContent')?.value || '').trim();
+  const nextNote = (document.getElementById('lessonProgNext')?.value || '').trim();
+  if (!unit && !content) {
+    showToast('단원명 또는 수업 내용을 입력해 주세요.', '⚠️');
+    return;
+  }
+  await withButtonLoading(btnEl, '저장 중...', async () => {
+    const payload = {
+      ..._getTeacherAuthParams(),
+      remote_id: _lessonModalState.progressRemoteId,
+      date: _lessonModalState.dateStr,
+      period: _lessonModalState.periodNum,
+      subject: _lessonModalState.subject,
+      class_label: _lessonModalState.classLabel,
+      roster_key: _lessonModalState.rosterKey,
+      unit,
+      lesson_no: lessonNo,
+      content,
+      next_note: nextNote,
+    };
+    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      const res = await gasApi.post('upsert_lesson_progress', payload);
+      if (res.item) {
+        _lessonModalState.progressRemoteId = res.remote_id;
+        const list = Array.isArray(mockData.lessonProgress) ? mockData.lessonProgress : [];
+        const idx = list.findIndex((p) => String(p.remote_id || '') === res.remote_id);
+        if (idx >= 0) list[idx] = res.item;
+        else list.unshift(res.item);
+        mockData.lessonProgress = list;
+      }
+    }
+    showToast(`${_lessonModalState.classLabel} ${_lessonModalState.subject} 수업 진도가 저장되었습니다.`, '📖');
+  });
 }

@@ -29,6 +29,12 @@ const adminState = {
   counselSearch: '',
   selectedCounselStudentId: '',
   pwResetTarget: null, // { role, remoteId, label }
+  lessonCompareSubject: '',
+  lessonProgSubject: '',
+  lessonProgClass: '',
+  lessonAttDate: '',
+  lessonAttSubject: '',
+  lessonAttClass: '',
 };
 
 function escapeHtml(val) {
@@ -189,6 +195,9 @@ function renderSidebarProfile() {
 
   const chatStudents = new Set((ov.chats || []).map((c) => String(c.student_id || '').trim()).filter(Boolean));
   if (counselBadge) counselBadge.textContent = String(chatStudents.size);
+
+  const lessonsBadge = document.getElementById('badge-lessons-count');
+  if (lessonsBadge) lessonsBadge.textContent = String((ov.lesson_progress || []).length);
 }
 
 // =========================================================================
@@ -1006,6 +1015,221 @@ function selectCounselStudent(sid) {
 }
 
 // =========================================================================
+// TAB 6: 교과 출결 · 수업 진도
+// =========================================================================
+function _populateSelectOptions(selectEl, values, currentVal, defaultLabel) {
+  if (!selectEl) return;
+  const unique = Array.from(new Set(values.filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b), 'ko'));
+  const opts = [`<option value="">${escapeHtml(defaultLabel)}</option>`];
+  unique.forEach((v) => {
+    opts.push(`<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${escapeHtml(v)}</option>`);
+  });
+  selectEl.innerHTML = opts.join('');
+}
+
+function renderLessonsTab() {
+  const ov = adminState.overview || {};
+  const progressList = ov.lesson_progress || [];
+  const subAttList = ov.subject_attendance || [];
+
+  const allSubjects = [
+    ...progressList.map((p) => String(p.subject || '').trim()),
+    ...subAttList.map((a) => String(a.subject || '').trim()),
+  ];
+  const allClasses = [
+    ...progressList.map((p) => String(p.class_label || '').trim()),
+    ...subAttList.map((a) => String(a.class_label || '').trim()),
+  ];
+
+  _populateSelectOptions(document.getElementById('lesson-compare-subject-filter'), allSubjects, adminState.lessonCompareSubject, '전체 교과');
+  _populateSelectOptions(document.getElementById('lesson-prog-subject-filter'), allSubjects, adminState.lessonProgSubject, '전체 과목');
+  _populateSelectOptions(document.getElementById('lesson-prog-class-filter'), allClasses, adminState.lessonProgClass, '전체 반');
+  _populateSelectOptions(document.getElementById('lesson-att-subject-filter'), allSubjects, adminState.lessonAttSubject, '전체 과목');
+  _populateSelectOptions(document.getElementById('lesson-att-class-filter'), allClasses, adminState.lessonAttClass, '전체 반');
+
+  // 1) 반별/교과별 최신 진도 비교표
+  const latestByGroup = new Map();
+  progressList.forEach((p) => {
+    const sub = String(p.subject || '').trim();
+    const cls = String(p.class_label || '').trim();
+    if (!sub) return;
+    if (adminState.lessonCompareSubject && sub !== adminState.lessonCompareSubject) return;
+    const key = `${sub}__${cls}`;
+    if (!latestByGroup.has(key)) {
+      latestByGroup.set(key, p);
+    }
+  });
+
+  const compareGrid = document.getElementById('lesson-latest-compare-grid');
+  if (compareGrid) {
+    const groups = Array.from(latestByGroup.values()).sort((a, b) =>
+      String(a.subject || '').localeCompare(String(b.subject || ''), 'ko') ||
+      String(a.class_label || '').localeCompare(String(b.class_label || ''), 'ko')
+    );
+    compareGrid.innerHTML = groups.length === 0
+      ? '<div class="col-span-full py-8 text-center text-xs text-slate-400">기록된 수업 진도가 없습니다.</div>'
+      : groups.map((g) => `
+        <div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 space-y-1.5">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs font-bold text-indigo-700">${escapeHtml(g.subject)} · ${escapeHtml(g.class_label || '-')}</span>
+            <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600">${escapeHtml(g.lesson_no || '-')}</span>
+          </div>
+          <div class="text-xs font-semibold text-slate-900 truncate">${escapeHtml(g.unit || '-')}</div>
+          <p class="text-[11px] text-slate-600 line-clamp-2">${escapeHtml(g.content || '-')}</p>
+          <div class="flex items-center justify-between pt-1 text-[10px] text-slate-400">
+            <span>${escapeHtml(g.date || '-')} ${g.period ? `${escapeHtml(g.period)}교시` : ''}</span>
+            <button type="button" onclick="openLessonProgressModal('${escapeHtml(g.remote_id || '')}')" class="text-indigo-600 font-semibold hover:underline">수정</button>
+          </div>
+        </div>
+      `).join('');
+  }
+
+  // 2) 진도 누적 이력 표
+  const filteredProg = progressList.filter((p) => {
+    if (adminState.lessonProgSubject && String(p.subject || '').trim() !== adminState.lessonProgSubject) return false;
+    if (adminState.lessonProgClass && String(p.class_label || '').trim() !== adminState.lessonProgClass) return false;
+    return true;
+  });
+
+  const progTbody = document.getElementById('lesson-progress-tbody');
+  if (progTbody) {
+    progTbody.innerHTML = filteredProg.length === 0
+      ? '<tr><td colspan="8" class="py-8 text-center text-slate-400">조회된 수업 진도 이력이 없습니다.</td></tr>'
+      : filteredProg.map((p) => {
+          const rid = String(p.remote_id || '');
+          return `
+            <tr class="hover:bg-slate-50">
+              <td class="py-2.5 px-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">${escapeHtml(p.date || '-')}</td>
+              <td class="py-2.5 px-3 text-center whitespace-nowrap">${p.period ? `${escapeHtml(p.period)}교시` : '-'}</td>
+              <td class="py-2.5 px-3 font-bold text-slate-800 whitespace-nowrap">${escapeHtml(p.subject || '-')}</td>
+              <td class="py-2.5 px-3 whitespace-nowrap">${escapeHtml(p.class_label || '-')}</td>
+              <td class="py-2.5 px-3 text-indigo-700 font-semibold whitespace-nowrap">${escapeHtml(p.lesson_no || '-')}</td>
+              <td class="py-2.5 px-4">
+                <div class="font-semibold text-slate-800">${escapeHtml(p.unit || '-')}</div>
+                <div class="text-[11px] text-slate-500">${escapeHtml(p.content || '')}</div>
+              </td>
+              <td class="py-2.5 px-4 text-slate-500">${escapeHtml(p.next_note || '-')}</td>
+              <td class="py-2.5 px-3 text-center whitespace-nowrap space-x-1">
+                <button type="button" onclick="openLessonProgressModal('${escapeHtml(rid)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
+                <button type="button" onclick="deleteLessonProgressRow('${escapeHtml(rid)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+  }
+
+  // 3) 교과 출결 조회 표
+  const filteredAtt = subAttList.filter((a) => {
+    if (adminState.lessonAttDate && String(a.date || '').slice(0, 10) !== adminState.lessonAttDate) return false;
+    if (adminState.lessonAttSubject && String(a.subject || '').trim() !== adminState.lessonAttSubject) return false;
+    if (adminState.lessonAttClass && String(a.class_label || '').trim() !== adminState.lessonAttClass) return false;
+    return true;
+  });
+
+  const attTbody = document.getElementById('lesson-att-tbody');
+  if (attTbody) {
+    attTbody.innerHTML = filteredAtt.length === 0
+      ? '<tr><td colspan="8" class="py-8 text-center text-slate-400">조회된 교과 출결 기록이 없습니다.</td></tr>'
+      : filteredAtt.map((a) => {
+          const st = String(a.status || '출석');
+          let badgeCls = 'bg-emerald-100 text-emerald-700';
+          if (st.includes('결석')) badgeCls = 'bg-rose-100 text-rose-700';
+          else if (st.includes('지각') || st.includes('조퇴')) badgeCls = 'bg-amber-100 text-amber-800';
+          else if (st.includes('공결')) badgeCls = 'bg-indigo-100 text-indigo-700';
+          return `
+            <tr class="hover:bg-slate-50">
+              <td class="py-2.5 px-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">${escapeHtml(a.date || '-')}</td>
+              <td class="py-2.5 px-3 text-center whitespace-nowrap">${a.period ? `${escapeHtml(a.period)}교시` : '-'}</td>
+              <td class="py-2.5 px-3 font-semibold text-slate-800 whitespace-nowrap">${escapeHtml(a.subject || '-')}</td>
+              <td class="py-2.5 px-3 whitespace-nowrap">${escapeHtml(a.class_label || '-')}</td>
+              <td class="py-2.5 px-3 text-center font-mono text-slate-500 tabular-nums">${escapeHtml(a.student_id || '-')}</td>
+              <td class="py-2.5 px-4 font-bold text-slate-900">${escapeHtml(a.student_name || '-')}</td>
+              <td class="py-2.5 px-3 text-center whitespace-nowrap"><span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${badgeCls}">${escapeHtml(st)}</span></td>
+              <td class="py-2.5 px-4 text-slate-500">${escapeHtml(a.memo || '-')}</td>
+            </tr>
+          `;
+        }).join('');
+  }
+}
+
+function openLessonProgressModal(remoteId = '') {
+  const ov = adminState.overview || {};
+  const list = ov.lesson_progress || [];
+  const item = remoteId ? list.find((p) => String(p.remote_id || '') === remoteId) : null;
+
+  document.getElementById('lesson-prog-modal-title').textContent = item ? '수업 진도 수정' : '수업 진도 추가';
+  document.getElementById('lp-remote-id').value = item ? String(item.remote_id || '') : '';
+  document.getElementById('lp-date').value = item ? String(item.date || '').slice(0, 10) || getLocalTodayStr() : getLocalTodayStr();
+  document.getElementById('lp-period').value = item ? String(item.period || '') : '';
+  document.getElementById('lp-subject').value = item ? String(item.subject || '') : '';
+  document.getElementById('lp-class-label').value = item ? String(item.class_label || '') : '';
+  document.getElementById('lp-unit').value = item ? String(item.unit || '') : '';
+  document.getElementById('lp-lesson-no').value = item ? String(item.lesson_no || '') : '';
+  document.getElementById('lp-content').value = item ? String(item.content || '') : '';
+  document.getElementById('lp-next-note').value = item ? String(item.next_note || '') : '';
+  document.getElementById('lesson-progress-modal').classList.remove('hidden');
+}
+
+function closeLessonProgressModal() {
+  document.getElementById('lesson-progress-modal').classList.add('hidden');
+}
+
+async function deleteLessonProgressRow(remoteId) {
+  if (!remoteId) return;
+  if (!confirm('이 수업 진도 기록을 삭제하시겠습니까?')) return;
+  try {
+    await callApi('delete_lesson_progress', { remote_id: remoteId }, true);
+    if (adminState.overview && Array.isArray(adminState.overview.lesson_progress)) {
+      adminState.overview.lesson_progress = adminState.overview.lesson_progress.filter((p) => String(p.remote_id || '') !== remoteId);
+    }
+    renderSidebarProfile();
+    renderLessonsTab();
+  } catch (err) {
+    alert(`삭제 실패: ${err.message}`);
+  }
+}
+
+function exportLessonProgressCsv() {
+  const ov = adminState.overview || {};
+  const list = ov.lesson_progress || [];
+  const headers = ['일자', '교시', '과목', '반', '차시/페이지', '단원명', '수업내용', '다음안내'];
+  const lines = [headers.map(csvEscape).join(',')];
+  list.forEach((p) => {
+    lines.push([
+      p.date || '',
+      p.period || '',
+      p.subject || '',
+      p.class_label || '',
+      p.lesson_no || '',
+      p.unit || '',
+      p.content || '',
+      p.next_note || '',
+    ].map(csvEscape).join(','));
+  });
+  downloadFileWithBom('수업진도_누적이력.csv', lines.join('\r\n'));
+}
+
+function exportSubjectAttendanceCsv() {
+  const ov = adminState.overview || {};
+  const list = ov.subject_attendance || [];
+  const headers = ['일자', '교시', '과목', '반', '학번', '이름', '출결상태', '비고'];
+  const lines = [headers.map(csvEscape).join(',')];
+  list.forEach((a) => {
+    lines.push([
+      a.date || '',
+      a.period || '',
+      a.subject || '',
+      a.class_label || '',
+      a.student_id || '',
+      a.student_name || '',
+      a.status || '',
+      a.memo || '',
+    ].map(csvEscape).join(','));
+  });
+  downloadFileWithBom('교과_출결_조회.csv', lines.join('\r\n'));
+}
+
+// =========================================================================
 // CSV & TXT 내보내기 (UTF-8 BOM)
 // =========================================================================
 function downloadFileWithBom(filename, content, mimeType = 'text/csv;charset=utf-8;') {
@@ -1165,6 +1389,7 @@ const TAB_LIST = [
   { tabId: 'tab-roster', navId: 'nav-item-roster', mobId: 'mobile-tab-btn-roster' },
   { tabId: 'tab-ledger', navId: 'nav-item-ledger', mobId: 'mobile-tab-btn-ledger' },
   { tabId: 'tab-counsel', navId: 'nav-item-counsel', mobId: 'mobile-tab-btn-counsel' },
+  { tabId: 'tab-lessons', navId: 'nav-item-lessons', mobId: 'mobile-tab-btn-lessons' },
 ];
 
 function toggleMobileSidebar(forceClose = false) {
@@ -1210,6 +1435,7 @@ function renderAll() {
   renderRosterTab();
   renderLedgerTab();
   renderCounselTab();
+  renderLessonsTab();
 }
 
 function bindEvents() {
@@ -1354,6 +1580,74 @@ function bindEvents() {
   document.getElementById('roster-search-input')?.addEventListener('input', (e) => {
     adminState.rosterSearch = e.target.value;
     renderRosterTab();
+  });
+
+  // Tab 6 lessons & subject attendance filters + modal submit
+  document.getElementById('lesson-compare-subject-filter')?.addEventListener('change', (e) => {
+    adminState.lessonCompareSubject = e.target.value;
+    renderLessonsTab();
+  });
+  document.getElementById('lesson-prog-subject-filter')?.addEventListener('change', (e) => {
+    adminState.lessonProgSubject = e.target.value;
+    renderLessonsTab();
+  });
+  document.getElementById('lesson-prog-class-filter')?.addEventListener('change', (e) => {
+    adminState.lessonProgClass = e.target.value;
+    renderLessonsTab();
+  });
+  document.getElementById('lesson-att-date-filter')?.addEventListener('change', (e) => {
+    adminState.lessonAttDate = e.target.value;
+    renderLessonsTab();
+  });
+  document.getElementById('lesson-att-clear-date')?.addEventListener('click', () => {
+    adminState.lessonAttDate = '';
+    const el = document.getElementById('lesson-att-date-filter');
+    if (el) el.value = '';
+    renderLessonsTab();
+  });
+  document.getElementById('lesson-att-subject-filter')?.addEventListener('change', (e) => {
+    adminState.lessonAttSubject = e.target.value;
+    renderLessonsTab();
+  });
+  document.getElementById('lesson-att-class-filter')?.addEventListener('change', (e) => {
+    adminState.lessonAttClass = e.target.value;
+    renderLessonsTab();
+  });
+
+  document.getElementById('lesson-progress-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('lp-submit-btn');
+    const payload = {
+      remote_id: document.getElementById('lp-remote-id').value.trim(),
+      date: document.getElementById('lp-date').value,
+      period: document.getElementById('lp-period').value.trim(),
+      subject: document.getElementById('lp-subject').value.trim(),
+      class_label: document.getElementById('lp-class-label').value.trim(),
+      unit: document.getElementById('lp-unit').value.trim(),
+      lesson_no: document.getElementById('lp-lesson-no').value.trim(),
+      content: document.getElementById('lp-content').value.trim(),
+      next_note: document.getElementById('lp-next-note').value.trim(),
+    };
+    if (!payload.subject) return;
+    btn.disabled = true;
+    try {
+      const res = await callApi('upsert_lesson_progress', payload, true);
+      if (adminState.overview) {
+        const list = Array.isArray(adminState.overview.lesson_progress) ? adminState.overview.lesson_progress : [];
+        const idx = list.findIndex((p) => String(p.remote_id || '') === res.remote_id);
+        if (idx >= 0) list[idx] = res.item;
+        else list.unshift(res.item);
+        list.sort((a, b) => String(b.date || b.updated_at || '').localeCompare(String(a.date || a.updated_at || '')));
+        adminState.overview.lesson_progress = list;
+      }
+      closeLessonProgressModal();
+      renderSidebarProfile();
+      renderLessonsTab();
+    } catch (err) {
+      alert(`저장 실패: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   // Tab 5 search

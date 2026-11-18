@@ -246,7 +246,10 @@ let mockData = {
   },
   chatRooms: [],
   remoteTasks: [],
-  notifications: []
+  notifications: [],
+  subjectRosters: [],
+  subjectAttendance: [],
+  lessonProgress: []
 };
 
 // Global Application State
@@ -1350,6 +1353,17 @@ function hydrateMockDataFromBundle(bundle) {
       expense,
       transactions
     };
+  }
+
+  // 9-2. 교과 명렬표 / 교과 출결 / 수업 진도 (교사 전용)
+  if (Array.isArray(bundle.subject_rosters)) {
+    mockData.subjectRosters = bundle.subject_rosters;
+  }
+  if (Array.isArray(bundle.subject_attendance)) {
+    mockData.subjectAttendance = bundle.subject_attendance;
+  }
+  if (Array.isArray(bundle.lesson_progress)) {
+    mockData.lessonProgress = bundle.lesson_progress;
   }
 
   // 10. 1:1 상담 채팅

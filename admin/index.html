@@ -191,6 +191,9 @@
       <button type="button" data-tab="tab-counsel" id="mobile-tab-btn-counsel" class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:bg-slate-100 whitespace-nowrap flex items-center space-x-1.5">
         <i class="fa-solid fa-comments text-xs"></i><span>1:1 상담</span>
       </button>
+      <button type="button" data-tab="tab-lessons" id="mobile-tab-btn-lessons" class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:bg-slate-100 whitespace-nowrap flex items-center space-x-1.5">
+        <i class="fa-solid fa-book-open text-xs"></i><span>교과·진도</span>
+      </button>
     </div>
 
     <!-- Mobile Sidebar Backdrop -->
@@ -272,6 +275,14 @@
                 <span>1:1 상담 기록</span>
               </div>
               <span id="badge-counsel-count" class="bg-indigo-100 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded-full font-bold">0</span>
+            </a>
+
+            <a href="#lessons" data-tab="tab-lessons" id="nav-item-lessons" class="group flex items-center justify-between px-3 py-2.5 text-xs font-medium rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-all">
+              <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-book-open text-sm w-4 text-center text-slate-400 group-hover:text-slate-700"></i>
+                <span>교과 출결 · 수업 진도</span>
+              </div>
+              <span id="badge-lessons-count" class="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded-full font-bold">0</span>
             </a>
           </nav>
         </div>
@@ -766,6 +777,109 @@
         </div>
       </div>
 
+      <!-- ================================================================= -->
+      <!-- TAB 6: 교과 출결 · 수업 진도                                       -->
+      <!-- ================================================================= -->
+      <div id="tab-lessons" class="tab-content hidden flex-1 p-4 lg:p-7 max-w-7xl w-full mx-auto space-y-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h2 class="text-xl lg:text-2xl font-bold text-slate-900">교과 출결 · 수업 진도</h2>
+            <p class="text-xs text-slate-500 mt-1">반별/교과별 최신 진도 비교 및 교과 출결 조회</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" onclick="openLessonProgressModal()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition">
+              <i class="fa-solid fa-plus text-xs"></i><span>진도 직접 추가</span>
+            </button>
+            <button type="button" onclick="refreshAdminData()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
+              <i class="fa-solid fa-rotate text-slate-500 text-xs refresh-spin-icon"></i><span>새로고침</span>
+            </button>
+            <button type="button" onclick="exportLessonProgressCsv()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 transition">
+              <i class="fa-solid fa-file-excel text-xs"></i><span>진도 CSV</span>
+            </button>
+            <button type="button" onclick="exportSubjectAttendanceCsv()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-slate-800 text-white rounded-xl text-xs font-semibold hover:bg-slate-900 transition">
+              <i class="fa-solid fa-file-excel text-xs"></i><span>교과 출결 CSV</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 반별/교과별 최신 진도 비교표 -->
+        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+          <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span class="font-bold text-xs text-slate-800">반별 / 교과별 최신 진도 비교</span>
+            <select id="lesson-compare-subject-filter" class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-semibold text-slate-700">
+              <option value="">전체 교과</option>
+            </select>
+          </div>
+          <div id="lesson-latest-compare-grid" class="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+        </div>
+
+        <!-- 진도 누적 이력 표 -->
+        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+          <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span class="font-bold text-xs text-slate-800">수업 진도 누적 이력</span>
+            <div class="flex flex-wrap items-center gap-2">
+              <select id="lesson-prog-subject-filter" class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-semibold text-slate-700">
+                <option value="">전체 과목</option>
+              </select>
+              <select id="lesson-prog-class-filter" class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-semibold text-slate-700">
+                <option value="">전체 반</option>
+              </select>
+            </div>
+          </div>
+          <div class="overflow-x-auto max-h-[380px]">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold text-[11px] whitespace-nowrap">
+                  <th class="py-2.5 px-3">일자</th>
+                  <th class="py-2.5 px-3 text-center">교시</th>
+                  <th class="py-2.5 px-3">과목</th>
+                  <th class="py-2.5 px-3">반</th>
+                  <th class="py-2.5 px-3">차시 / 페이지</th>
+                  <th class="py-2.5 px-4">단원 · 수업 내용</th>
+                  <th class="py-2.5 px-4">다음 안내</th>
+                  <th class="py-2.5 px-3 text-center">관리</th>
+                </tr>
+              </thead>
+              <tbody id="lesson-progress-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 교과 출결 조회 표 -->
+        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+          <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span class="font-bold text-xs text-slate-800">교과 출결 조회 (`교과_출결`)</span>
+            <div class="flex flex-wrap items-center gap-2">
+              <input type="date" id="lesson-att-date-filter" class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-semibold text-slate-700">
+              <select id="lesson-att-subject-filter" class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-semibold text-slate-700">
+                <option value="">전체 과목</option>
+              </select>
+              <select id="lesson-att-class-filter" class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-semibold text-slate-700">
+                <option value="">전체 반</option>
+              </select>
+              <button type="button" id="lesson-att-clear-date" class="px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-lg font-semibold text-slate-600">전체 날짜</button>
+            </div>
+          </div>
+          <div class="overflow-x-auto max-h-[380px]">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold text-[11px] whitespace-nowrap">
+                  <th class="py-2.5 px-3">일자</th>
+                  <th class="py-2.5 px-3 text-center">교시</th>
+                  <th class="py-2.5 px-3">과목</th>
+                  <th class="py-2.5 px-3">반</th>
+                  <th class="py-2.5 px-3 text-center">학번</th>
+                  <th class="py-2.5 px-4">이름</th>
+                  <th class="py-2.5 px-3 text-center">출결상태</th>
+                  <th class="py-2.5 px-4">비고</th>
+                </tr>
+              </thead>
+              <tbody id="lesson-att-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </main>
   </div>
 
@@ -868,6 +982,61 @@
         <div class="flex justify-end gap-2 pt-2">
           <button type="button" onclick="closeBudgetModal()" class="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">취소</button>
           <button type="submit" id="budget-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Lesson Progress Add/Edit Modal -->
+  <div id="lesson-progress-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        <h3 id="lesson-prog-modal-title" class="text-sm font-bold text-slate-900">수업 진도 추가</h3>
+        <button type="button" onclick="closeLessonProgressModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="lesson-progress-form" class="p-5 space-y-3.5">
+        <input type="hidden" id="lp-remote-id" value="">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="lp-date" class="block text-xs font-semibold text-slate-700 mb-1">일자</label>
+            <input id="lp-date" type="date" required class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl">
+          </div>
+          <div>
+            <label for="lp-period" class="block text-xs font-semibold text-slate-700 mb-1">교시</label>
+            <input id="lp-period" type="text" placeholder="예: 3" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="lp-subject" class="block text-xs font-semibold text-slate-700 mb-1">과목명</label>
+            <input id="lp-subject" type="text" required placeholder="예: 통과2" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl">
+          </div>
+          <div>
+            <label for="lp-class-label" class="block text-xs font-semibold text-slate-700 mb-1">반</label>
+            <input id="lp-class-label" type="text" required placeholder="예: 1학년 5반" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="lp-unit" class="block text-xs font-semibold text-slate-700 mb-1">단원명</label>
+            <input id="lp-unit" type="text" placeholder="예: Ⅱ. 전자기장" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl">
+          </div>
+          <div>
+            <label for="lp-lesson-no" class="block text-xs font-semibold text-slate-700 mb-1">차시 / 페이지</label>
+            <input id="lp-lesson-no" type="text" placeholder="예: 12차시 (p.84)" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl">
+          </div>
+        </div>
+        <div>
+          <label for="lp-content" class="block text-xs font-semibold text-slate-700 mb-1">수업 내용</label>
+          <textarea id="lp-content" rows="2" placeholder="수업 내용을 입력하세요" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"></textarea>
+        </div>
+        <div>
+          <label for="lp-next-note" class="block text-xs font-semibold text-slate-700 mb-1">다음 안내</label>
+          <input id="lp-next-note" type="text" placeholder="예: 형성평가 안내" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl">
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeLessonProgressModal()" class="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">취소</button>
+          <button type="submit" id="lp-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">저장</button>
         </div>
       </form>
     </div>
