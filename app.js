@@ -454,6 +454,52 @@ function _escapeNoticeHtml(val) {
     .replace(/'/g, '&#39;');
 }
 
+function normalizeCircularAttachmentUrl(input) {
+  const _normalizeUrl = (raw) => {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    if (/^https?:\/\/drive\.google\.com\/(?:uc|open)\b/i.test(s)) {
+      const match = s.match(/[?&]id=([A-Za-z0-9_-]{10,128})/);
+      if (match) return `https://drive.google.com/file/d/${match[1]}/view`;
+    }
+    if (/^https?:\/\//i.test(s)) return s;
+    return '';
+  };
+
+  if (typeof input === 'string') return _normalizeUrl(input);
+  if (!input || typeof input !== 'object') return '';
+
+  const candidates = [
+    input.attachmentUrl,
+    input.attachment_url,
+    input.file_url,
+    input.fileUrl,
+    input.drive_url,
+    input.driveUrl,
+    input.pdf_url,
+    input.pdfUrl,
+    input.original_url,
+    input.originalUrl,
+    input.web_view_link,
+    input.webViewLink,
+    input.download_url,
+    input.downloadUrl,
+    input.attachment_link,
+    input.link_url,
+    input.url,
+  ];
+  for (const val of candidates) {
+    const normalized = _normalizeUrl(val);
+    if (normalized) return normalized;
+  }
+
+  const rawFileId = String(input.drive_file_id || input.file_id || '').trim();
+  if (/^[A-Za-z0-9_-]{10,128}$/.test(rawFileId)) {
+    return `https://drive.google.com/file/d/${rawFileId}/view`;
+  }
+  return '';
+}
+
 function _parseNoticeReplySchema(rawSchema, fallbackFields) {
   let parsed = null;
   if (Array.isArray(rawSchema)) {
@@ -1299,6 +1345,7 @@ function hydrateMockDataFromBundle(bundle) {
     mockData.circulars = bundle.notices.map(n => {
       const nReplies = replies.filter(r => r.notice_id === n.remote_id);
       const myReply = cuId ? nReplies.find(r => String(r.student_id) === cuId) : null;
+      const attachmentUrl = normalizeCircularAttachmentUrl(n);
       return {
         id: n.remote_id,
         docNum: n.category || '가정통신문',
@@ -1310,7 +1357,7 @@ function hydrateMockDataFromBundle(bundle) {
         signatureMode: String(n.signature_mode || 'single').trim().toLowerCase() === 'both' ? 'both' : 'single',
         replySchemaJson: n.reply_schema_json || '',
         replyFields: Array.isArray(n.reply_fields) ? n.reply_fields : null,
-        attachmentUrl: n.attachment_url || '',
+        attachmentUrl,
         authorName: n.author_name || '담임교사',
         targetGrade: n.target_grade ?? '',
         targetClass: n.target_class ?? '',
@@ -1321,7 +1368,7 @@ function hydrateMockDataFromBundle(bundle) {
         totalCount: classTotal > 0 ? classTotal : nReplies.length,
         submittedStudentIds: nReplies.map(r => String(r.student_id || '')),
         content: n.content || '',
-        meta: n.attachment_url ? [`첨부: ${n.attachment_url}`] : [`작성: ${n.author_name || '담임교사'}`],
+        meta: [`작성: ${n.author_name || '담임교사'}`],
         myReply: myReply ? {
           consent: myReply.consent || myReply.reply_choice || '',
           replyDataJson: myReply.reply_data_json || '',
@@ -2708,5 +2755,6 @@ if (typeof module !== 'undefined' && module.exports) {
     resolvePwaPushGateDecision,
     computeScheduleDday,
     getUpcomingSchedules,
+    normalizeCircularAttachmentUrl,
   };
 }

@@ -2096,10 +2096,16 @@ function renderTeacherCirculars() {
           ? _parseNoticeReplySchema(c.replySchemaJson, c.replyFields)
           : [];
         const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
+        const attachmentUrl = typeof normalizeCircularAttachmentUrl === 'function'
+          ? normalizeCircularAttachmentUrl(c)
+          : '';
         return `
           <div onclick="openCandidateNoticeModal('${esc(c.id)}')" class="bg-white p-3.5 rounded-2xl border border-amber-200 hover:border-amber-400 shadow-xs cursor-pointer transition-all space-y-1.5">
             <div class="flex items-center justify-between gap-2">
-              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">게시 대기</span>
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">게시 대기</span>
+                ${attachmentUrl ? `<a href="${esc(attachmentUrl)}" onclick="return (typeof openCircularAttachment === 'function' ? openCircularAttachment(event, this.href) : (event.stopPropagation(), true))" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-0.5 text-[10px] font-bold text-indigo-600 hover:underline bg-indigo-50 px-2 py-0.5 rounded-lg">📄 원본 PDF ↗</a>` : ''}
+              </div>
               <span class="text-[10px] text-slate-400">${esc(c.deadline || '상시')}</span>
             </div>
             <h4 class="text-xs font-bold text-slate-800">${esc(c.title || '제목 없음')}</h4>
@@ -2123,10 +2129,16 @@ function renderTeacherCirculars() {
     const pct = c.totalCount > 0 ? Math.round((c.submittedCount / c.totalCount) * 100) : 0;
     const unsubmittedCount = Math.max(0, c.totalCount - c.submittedCount);
     const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
+    const attachmentUrl = typeof normalizeCircularAttachmentUrl === 'function'
+      ? normalizeCircularAttachmentUrl(c)
+      : '';
     return `
       <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-2.5">
         <div class="flex items-center justify-between">
-          <span class="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">${esc(c.deadline)}</span>
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span class="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">${esc(c.deadline)}</span>
+            ${attachmentUrl ? `<a href="${esc(attachmentUrl)}" onclick="return (typeof openCircularAttachment === 'function' ? openCircularAttachment(event, this.href) : (event.stopPropagation(), true))" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-0.5 text-[10px] font-bold text-indigo-600 hover:underline bg-indigo-50 px-2 py-0.5 rounded-lg">📄 원본 PDF ↗</a>` : ''}
+          </div>
           <span class="text-xs font-bold text-slate-800">${c.submittedCount}/${c.totalCount}명 제출 (${pct}%)</span>
         </div>
         <h4 class="text-xs font-bold text-slate-800">${esc(c.title)}</h4>
@@ -2412,6 +2424,7 @@ async function publishCandidateNotice(btnEl) {
             due_date: dueDate,
             content,
             category: c.docNum || '가정통신문',
+            attachment_url: c.attachmentUrl || '',
             reply_schema_json: replySchemaJson,
             signature_mode: signatureMode,
             requires_reply: c.requiresReply ? 1 : 0,

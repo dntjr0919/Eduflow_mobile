@@ -996,6 +996,27 @@ function closeBoardNoticeModal() {
   if (modal) modal.classList.add('hidden');
 }
 
+function openCircularAttachment(event, rawUrl) {
+  if (event) event.stopPropagation();
+  const safeUrl = typeof normalizeCircularAttachmentUrl === 'function'
+    ? normalizeCircularAttachmentUrl(rawUrl)
+    : _safeHttpUrl(rawUrl);
+  if (!safeUrl) {
+    if (event) event.preventDefault();
+    return false;
+  }
+  try {
+    const opened = window.open(safeUrl, '_blank', 'noopener,noreferrer');
+    if (opened) {
+      if (event) event.preventDefault();
+      return false;
+    }
+  } catch (_) {
+    // Fallback to native <a target="_blank"> navigation
+  }
+  return true;
+}
+
 function renderCirculars() {
   const list = document.getElementById('circularsList');
   if (!list) return;
@@ -1012,12 +1033,16 @@ function renderCirculars() {
       : (c.requiresReply === false ? 'bg-slate-100 text-slate-600' : 'bg-red-100 text-red-600');
     const badgeText = isSubmitted ? '제출 완료' : (c.requiresReply === false ? '안내' : '미제출');
     const actionText = isSubmitted ? '열람 →' : (c.requiresReply === false ? '확인 →' : '회신·서명 →');
+    const attachmentUrl = typeof normalizeCircularAttachmentUrl === 'function'
+      ? normalizeCircularAttachmentUrl(c)
+      : _safeHttpUrl(c.attachmentUrl);
     return `
       <div onclick="openCircularModal('${esc(c.id)}')" class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-indigo-300 transition-all cursor-pointer flex items-center justify-between gap-3">
-        <div class="space-y-1">
-          <div class="flex items-center gap-1.5">
+        <div class="space-y-1 min-w-0">
+          <div class="flex items-center gap-1.5 flex-wrap">
             <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeClass}">${badgeText}</span>
             <span class="text-[10px] text-slate-400">${esc(c.deadline)}</span>
+            ${attachmentUrl ? `<a href="${esc(attachmentUrl)}" onclick="return openCircularAttachment(event, this.href)" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-0.5 text-[10px] font-bold text-indigo-600 hover:underline bg-indigo-50 px-2 py-0.5 rounded-lg">📄 원본 PDF ↗</a>` : ''}
           </div>
           <h4 class="text-xs font-bold text-slate-800">${esc(c.title)}</h4>
         </div>
@@ -1128,6 +1153,24 @@ function openCircularModal(id) {
   document.getElementById('modalCircularTitle').innerText = c.title;
   document.getElementById('modalCircularContent').innerText = c.content;
   document.getElementById('modalCircularMeta').innerHTML = (c.meta || []).map(m => `<p>• ${_escapeNoticeHtml ? _escapeNoticeHtml(m) : m}</p>`).join('');
+
+  const attachmentUrl = typeof normalizeCircularAttachmentUrl === 'function'
+    ? normalizeCircularAttachmentUrl(c)
+    : _safeHttpUrl(c.attachmentUrl);
+  const attachLinkEl = document.getElementById('modalCircularAttachmentLink');
+  const attachEmptyEl = document.getElementById('modalCircularAttachmentEmpty');
+  if (attachLinkEl) {
+    if (attachmentUrl) {
+      attachLinkEl.href = attachmentUrl;
+      attachLinkEl.classList.remove('hidden');
+    } else {
+      attachLinkEl.removeAttribute('href');
+      attachLinkEl.classList.add('hidden');
+    }
+  }
+  if (attachEmptyEl) {
+    attachEmptyEl.classList.toggle('hidden', Boolean(attachmentUrl));
+  }
 
   const submittedView = document.getElementById('modalCircularSubmittedView');
   const formView = document.getElementById('modalCircularFormView');

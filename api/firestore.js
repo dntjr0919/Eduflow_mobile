@@ -64,6 +64,56 @@ function _toBool(val) {
   return s === '1' || s === 'true' || s === 'yes' || s === 'y' || s === '예';
 }
 
+function _normalizeNoticeDriveUrl(rawUrl) {
+  const s = String(rawUrl || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\/drive\.google\.com\/(?:uc|open)\b/i.test(s)) {
+    const match = s.match(/[?&]id=([A-Za-z0-9_-]{10,128})/);
+    if (match) return `https://drive.google.com/file/d/${match[1]}/view`;
+  }
+  if (/^https?:\/\//i.test(s)) return s;
+  return '';
+}
+
+function _resolveNoticeAttachmentUrl(row) {
+  if (!row || typeof row !== 'object') return '';
+  const candidates = [
+    row.attachment_url,
+    row.attachmentUrl,
+    row.file_url,
+    row.fileUrl,
+    row.drive_url,
+    row.driveUrl,
+    row.pdf_url,
+    row.pdfUrl,
+    row.original_url,
+    row.originalUrl,
+    row.web_view_link,
+    row.webViewLink,
+    row.download_url,
+    row.downloadUrl,
+    row.attachment_link,
+    row.link_url,
+    row.url,
+  ];
+  for (const val of candidates) {
+    const normalized = _normalizeNoticeDriveUrl(val);
+    if (normalized) return normalized;
+  }
+  const rawFileId = String(row.drive_file_id || row.file_id || '').trim();
+  if (/^[A-Za-z0-9_-]{10,128}$/.test(rawFileId)) {
+    return `https://drive.google.com/file/d/${rawFileId}/view`;
+  }
+  return '';
+}
+
+function _withNormalizedNoticeAttachment(row) {
+  if (!row || typeof row !== 'object') return row;
+  const resolved = _resolveNoticeAttachmentUrl(row);
+  if (row.attachment_url === resolved) return row;
+  return { ...row, attachment_url: resolved };
+}
+
 function _addBusinessDays(baseDateStr, businessDays) {
   const parts = String(baseDateStr || '').trim().split('-');
   let d;
@@ -874,14 +924,16 @@ async function _handleGetMobileBundle(db, params) {
   const filteredStudents = studentsRows.filter((d) => _matchesTenant(d, tenant));
   const studentIdSet = new Set(filteredStudents.map((s) => String(s.student_id || s.remote_id || '')).filter(Boolean));
   const isTeacherRole = role === 'teacher';
-  const filteredNotices = noticesRaw.filter((d) => {
-    if (!_matchesTenant(d, tenant)) return false;
-    if (!isTeacherRole) {
-      const isPub = d.is_published === undefined ? true : _toBool(d.is_published);
-      if (!isPub) return false;
-    }
-    return true;
-  });
+  const filteredNotices = noticesRaw
+    .filter((d) => {
+      if (!_matchesTenant(d, tenant)) return false;
+      if (!isTeacherRole) {
+        const isPub = d.is_published === undefined ? true : _toBool(d.is_published);
+        if (!isPub) return false;
+      }
+      return true;
+    })
+    .map(_withNormalizedNoticeAttachment);
   const noticeIdSet = new Set(filteredNotices.map((n) => String(n.remote_id || '')).filter(Boolean));
 
   const bundle = {
@@ -1467,7 +1519,7 @@ module.exports = async function handler(req, res) {
 
     if (action === 'upsert_notice') {
       const rid = String(params.remote_id || `noti_doc_${Date.now()}`);
-      let attachmentUrl = String(params.attachment_url || '');
+      let attachmentUrl = _resolveNoticeAttachmentUrl(params);
       if (!attachmentUrl && params.attachment_base64) {
         const driveRes = await uploadBase64ToDrive({
           base64Data: params.attachment_base64,
@@ -1475,7 +1527,9 @@ module.exports = async function handler(req, res) {
           mimeType: String(params.attachment_mime || 'application/pdf'),
           folderName: 'EduFlow_Notices'
         });
-        if (driveRes.ok) attachmentUrl = driveRes.downloadUrl;
+        if (driveRes.ok) {
+          attachmentUrl = _normalizeNoticeDriveUrl(driveRes.webViewLink || driveRes.downloadUrl);
+        }
       }
       const isPublished = params.is_published === undefined ? true : _toBool(params.is_published);
       const signatureMode = String(params.signature_mode || '').trim().toLowerCase() === 'both' ? 'both' : 'single';
@@ -1534,6 +1588,7 @@ module.exports = async function handler(req, res) {
         school_code: String(params.school_code !== undefined ? params.school_code : (existing.school_code || '')).trim(),
         school_name: String(params.school_name !== undefined ? params.school_name : (existing.school_name || '')).trim(),
         author_name: String(params.author_name !== undefined ? params.author_name : (existing.author_name || '담임교사')).trim(),
+        attachment_url: _resolveNoticeAttachmentUrl(params) || _resolveNoticeAttachmentUrl(existing) || '',
         requires_reply: params.requires_reply !== undefined
           ? _toBool(params.requires_reply)
           : (existing.requires_reply === undefined ? true : _toBool(existing.requires_reply)),
@@ -3680,4 +3735,5 @@ module.exports._testHelpers = {
   _extractDriveFileId,
   _evaluatePcAgentOnline,
   _isPublicAcademicSchedule,
+  _resolveNoticeAttachmentUrl,
 };
