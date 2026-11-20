@@ -818,12 +818,15 @@ function openTeacherAttendanceCheck() {
       period,
       cameraVerified: false,
       cameraMatchPct: 0,
+      cameraVerifiedAt: 0,
       existingId: existing ? existing.id : '',
       existingReason: existing ? (existing.reason || '') : '',
       existingType: existing ? (existing.type || '') : ''
     };
   });
 
+  _attFaceState.minMatchPct = _loadFaceMinMatchPct();
+  _syncAttFaceMinMatchSelect();
   renderAttCheckStudentList();
   view.classList.remove('hidden');
 }
@@ -853,11 +856,14 @@ function updateAttCheckSummary() {
   const elL = document.getElementById('attCheckCntLate');
   const elE = document.getElementById('attCheckCntEarly');
   const elCam = document.getElementById('attFaceRecognizedSummary');
+  const elBadge = document.getElementById('attFaceVerifiedCountBadge');
   if (elP) elP.innerText = `${present}명`;
   if (elA) elA.innerText = `${absent}명`;
   if (elL) elL.innerText = `${late}명`;
   if (elE) elE.innerText = `${early}명`;
   if (elCam) elCam.innerText = `카메라 확인: ${cameraVerifiedCount}명`;
+  if (elBadge) elBadge.innerText = `${cameraVerifiedCount}/${_attCheckRows.length}명 확인`;
+  _renderAttFaceVerifiedChips();
 }
 
 function renderAttCheckStudentList() {
@@ -919,6 +925,7 @@ function onAttCheckToggle(idx, isChecked) {
   _attCheckRows[idx].period = '';
   if (_attCheckRows[idx].checked) {
     _attCheckRows[idx].cameraVerified = false;
+    _attCheckRows[idx].cameraVerifiedAt = 0;
   }
   renderAttCheckStudentList();
 }
@@ -928,6 +935,7 @@ function onAttCheckPeriodChange(idx, periodVal) {
   _attCheckRows[idx].period = periodVal || '';
   if (_attCheckRows[idx].checked || _attCheckRows[idx].period) {
     _attCheckRows[idx].cameraVerified = false;
+    _attCheckRows[idx].cameraVerifiedAt = 0;
   }
   renderAttCheckStudentList();
 }
@@ -941,25 +949,111 @@ const FACE_API_MODEL_URLS = [
   'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model',
   'https://unpkg.com/@vladmandic/face-api@1.7.15/model'
 ];
-const FACE_MATCH_THRESHOLD = 0.52;
+const FACE_MIN_MATCH_STORAGE_KEY = 'eduflow_face_min_match_pct_v1';
+const DEFAULT_FACE_MIN_MATCH_PCT = 70;
 
 const _attFaceState = {
   isOpen: false,
+  isFullscreen: false,
   sessionId: 0,
   modelsLoaded: false,
   loadingPromise: null,
   stream: null,
   loopTimer: null,
   facingMode: 'environment',
+  minMatchPct: DEFAULT_FACE_MIN_MATCH_PCT,
   matcher: null,
+  labeledDescriptors: [],
   studentMap: new Map(),
   enrolledCount: 0,
+  resizeHandler: null,
 };
 
 function _computeFaceMatchPercent(distance) {
   const d = Number(distance);
   if (!Number.isFinite(d)) return 0;
   return Math.max(0, Math.min(100, Math.round((1 - d) * 100)));
+}
+
+function _normalizeFaceMinMatchPct(val) {
+  if (val === null || val === undefined || val === '' || typeof val === 'boolean') {
+    return DEFAULT_FACE_MIN_MATCH_PCT;
+  }
+  const num = Math.round(Number(val));
+  if (!Number.isFinite(num) || num < 50 || num > 99) {
+    return DEFAULT_FACE_MIN_MATCH_PCT;
+  }
+  return num;
+}
+
+function _computeFaceDistanceThreshold(minMatchPct) {
+  const pct = _normalizeFaceMinMatchPct(minMatchPct);
+  return Number(((100 - pct) / 100).toFixed(4));
+}
+
+function _computeFaceMatcherThreshold(minMatchPct) {
+  const pct = _normalizeFaceMinMatchPct(minMatchPct);
+  return Math.min(1, Number((((100 - pct) + 0.5) / 100).toFixed(4)));
+}
+
+function _loadFaceMinMatchPct() {
+  try {
+    if (typeof localStorage === 'undefined') return DEFAULT_FACE_MIN_MATCH_PCT;
+    const saved = localStorage.getItem(FACE_MIN_MATCH_STORAGE_KEY);
+    return _normalizeFaceMinMatchPct(saved);
+  } catch (_) {
+    return DEFAULT_FACE_MIN_MATCH_PCT;
+  }
+}
+
+function _saveFaceMinMatchPct(pct) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(FACE_MIN_MATCH_STORAGE_KEY, String(_normalizeFaceMinMatchPct(pct)));
+  } catch (_) {}
+}
+
+function _syncAttFaceMinMatchSelect() {
+  if (typeof document === 'undefined') return;
+  const sel = document.getElementById('attFaceMinMatchSelect');
+  if (sel) sel.value = String(_attFaceState.minMatchPct);
+}
+
+function evaluateFaceMatchDecision(bestMatch, minMatchPct = _attFaceState.minMatchPct) {
+  const thresholdPct = _normalizeFaceMinMatchPct(minMatchPct);
+  const matchPct = bestMatch ? _computeFaceMatchPercent(bestMatch.distance) : 0;
+  const rawLabel = bestMatch && bestMatch.label ? String(bestMatch.label).trim() : '';
+  const hasKnownLabel = Boolean(rawLabel && rawLabel.toLowerCase() !== 'unknown');
+  const isMatched = hasKnownLabel && matchPct >= thresholdPct;
+  return {
+    isMatched,
+    studentId: isMatched ? rawLabel : '',
+    matchPct,
+    minMatchPct: thresholdPct,
+    unknownLabel: `미등록 (${matchPct}%)`,
+  };
+}
+
+function onAttFaceMinMatchChange(val) {
+  const pct = _normalizeFaceMinMatchPct(val);
+  _attFaceState.minMatchPct = pct;
+  _saveFaceMinMatchPct(pct);
+  _syncAttFaceMinMatchSelect();
+  if (
+    Array.isArray(_attFaceState.labeledDescriptors) &&
+    _attFaceState.labeledDescriptors.length > 0 &&
+    typeof window !== 'undefined' &&
+    window.faceapi
+  ) {
+    _attFaceState.matcher = new window.faceapi.FaceMatcher(
+      _attFaceState.labeledDescriptors,
+      _computeFaceMatcherThreshold(pct)
+    );
+  }
+  if (typeof showToast === 'function') {
+    showToast(`최소 일치율 기준이 ${pct}%로 설정되었습니다.`, '🎯');
+  }
+  return pct;
 }
 
 function _mapVideoBoxToOverlay(box, videoWidth, videoHeight, canvasWidth, canvasHeight) {
@@ -979,14 +1073,45 @@ function _mapVideoBoxToOverlay(box, videoWidth, videoHeight, canvasWidth, canvas
   };
 }
 
-function applyCameraFaceRecognitionToAttRows(rows, studentId, matchPct = 100) {
+function applyCameraFaceRecognitionToAttRows(rows, studentId, matchPct = 100, minMatchPct = _attFaceState.minMatchPct) {
   const list = Array.isArray(rows) ? rows : [];
   const sid = String(studentId || '').trim();
-  if (!sid) return { matched: false, changed: false, row: null };
-  const row = list.find((r) => r && String(r.studentId || '').trim() === sid);
-  if (!row) return { matched: false, changed: false, row: null };
-
   const pct = Math.max(0, Math.min(100, Math.round(Number(matchPct) || 0)));
+  const thresholdPct = _normalizeFaceMinMatchPct(minMatchPct);
+
+  if (pct < thresholdPct) {
+    return {
+      matched: false,
+      changed: false,
+      rejectedBelowThreshold: true,
+      matchPct: pct,
+      minMatchPct: thresholdPct,
+      row: null,
+    };
+  }
+  if (!sid) {
+    return {
+      matched: false,
+      changed: false,
+      rejectedBelowThreshold: false,
+      matchPct: pct,
+      minMatchPct: thresholdPct,
+      row: null,
+    };
+  }
+
+  const row = list.find((r) => r && String(r.studentId || '').trim() === sid);
+  if (!row) {
+    return {
+      matched: false,
+      changed: false,
+      rejectedBelowThreshold: false,
+      matchPct: pct,
+      minMatchPct: thresholdPct,
+      row: null,
+    };
+  }
+
   const prevPct = Number(row.cameraMatchPct || 0);
   const changed = Boolean(row.checked) || Boolean(row.period) || !row.cameraVerified;
 
@@ -994,11 +1119,156 @@ function applyCameraFaceRecognitionToAttRows(rows, studentId, matchPct = 100) {
   row.period = '';
   row.cameraVerified = true;
   row.cameraMatchPct = Math.max(prevPct, pct);
+  if (changed || !row.cameraVerifiedAt) {
+    row.cameraVerifiedAt = Date.now();
+  }
 
-  return { matched: true, changed, row };
+  return {
+    matched: true,
+    changed,
+    rejectedBelowThreshold: false,
+    matchPct: pct,
+    minMatchPct: thresholdPct,
+    row,
+  };
+}
+
+function _buildRecentCameraVerifiedList(rows, maxItems = 12) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list
+    .filter((r) => r && !r.checked && !r.period && Boolean(r.cameraVerified))
+    .slice()
+    .sort((a, b) => Number(b.cameraVerifiedAt || 0) - Number(a.cameraVerifiedAt || 0))
+    .slice(0, maxItems);
+}
+
+function _escapeAttFaceHtml(val) {
+  return String(val ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function _renderAttFaceVerifiedChips() {
+  if (typeof document === 'undefined') return;
+  const chipsEl = document.getElementById('attFaceRecentChips');
+  if (!chipsEl) return;
+
+  const recent = _buildRecentCameraVerifiedList(_attCheckRows, 12);
+  if (recent.length > 0) {
+    if (chipsEl.classList) chipsEl.classList.remove('hidden');
+    chipsEl.innerHTML = recent.map((r) => {
+      const noPrefix = r.studentNo ? `${_escapeAttFaceHtml(r.studentNo)}번 ` : '';
+      const pctText = r.cameraMatchPct ? ` (${_escapeAttFaceHtml(r.cameraMatchPct)}%)` : '';
+      return `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-200 text-[11px] font-bold whitespace-nowrap shrink-0">✓ ${noPrefix}${_escapeAttFaceHtml(r.name || r.studentId)}${pctText}</span>`;
+    }).join('');
+    return;
+  }
+
+  if (_attFaceState.isFullscreen) {
+    if (chipsEl.classList) chipsEl.classList.remove('hidden');
+    chipsEl.innerHTML = `<span class="text-[11px] text-slate-300/80">카메라에 얼굴을 비추면 출석 확인된 학생 이름이 여기에 표시됩니다.</span>`;
+  } else {
+    if (chipsEl.classList) chipsEl.classList.add('hidden');
+    chipsEl.innerHTML = '';
+  }
+}
+
+function getAttFaceFullscreenClasses(isFullscreen) {
+  if (isFullscreen) {
+    return {
+      panelClass: 'fixed inset-0 z-50 bg-slate-950 flex flex-col',
+      topBarClass: 'bg-slate-950/80 backdrop-blur-md border-b border-white/10 px-3 py-2.5 space-y-2 shrink-0 z-10',
+      stageClass: 'relative flex-1 min-h-0 w-full bg-black overflow-hidden',
+      bottomBarClass: 'absolute inset-x-0 bottom-0 z-10 bg-slate-950/75 backdrop-blur-md border-t border-white/10 px-3 py-2.5 space-y-1.5',
+      buttonLabel: '원래 크기로',
+    };
+  }
+  return {
+    panelClass: 'bg-slate-900 border-b border-slate-800 px-3 py-2.5 space-y-2 shrink-0',
+    topBarClass: 'space-y-2',
+    stageClass: 'relative w-full aspect-[4/3] max-h-[240px] bg-black rounded-xl overflow-hidden border border-slate-700/80',
+    bottomBarClass: 'space-y-1.5',
+    buttonLabel: '⛶ 전체화면',
+  };
+}
+
+function _isMobileFaceViewport() {
+  return typeof window !== 'undefined' && typeof window.innerWidth === 'number' && window.innerWidth <= 640;
+}
+
+function _syncAttFaceOverlayCanvasSize(clearFrame = false) {
+  if (typeof document === 'undefined') return;
+  const canvas = document.getElementById('attFaceOverlay');
+  if (!canvas || typeof canvas.getBoundingClientRect !== 'function') return;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) {
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    const targetW = Math.round(rect.width * dpr);
+    const targetH = Math.round(rect.height * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
+  }
+  if (clearFrame && typeof canvas.getContext === 'function') {
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+function setAttFaceCameraFullscreen(enabled) {
+  _attFaceState.isFullscreen = Boolean(enabled);
+  const classes = getAttFaceFullscreenClasses(_attFaceState.isFullscreen);
+
+  if (typeof document !== 'undefined') {
+    const panelEl = document.getElementById('attFaceCameraPanel');
+    const topBarEl = document.getElementById('attFaceTopBar');
+    const stageEl = document.getElementById('attFaceStage');
+    const bottomBarEl = document.getElementById('attFaceBottomBar');
+    const fsBtnEl = document.getElementById('attFaceFullscreenBtn');
+
+    if (panelEl) {
+      panelEl.className = _attFaceState.isOpen ? classes.panelClass : `${classes.panelClass} hidden`;
+    }
+    if (topBarEl) topBarEl.className = classes.topBarClass;
+    if (stageEl) stageEl.className = classes.stageClass;
+    if (bottomBarEl) bottomBarEl.className = classes.bottomBarClass;
+    if (fsBtnEl) {
+      fsBtnEl.innerText = classes.buttonLabel;
+      fsBtnEl.textContent = classes.buttonLabel;
+      if (typeof fsBtnEl.setAttribute === 'function') {
+        fsBtnEl.setAttribute('aria-pressed', _attFaceState.isFullscreen ? 'true' : 'false');
+      }
+    }
+    _renderAttFaceVerifiedChips();
+    _syncAttFaceOverlayCanvasSize(true);
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => _syncAttFaceOverlayCanvasSize(true));
+    }
+  }
+
+  return _attFaceState.isFullscreen;
+}
+
+function toggleAttFaceCameraFullscreen() {
+  return setAttFaceCameraFullscreen(!_attFaceState.isFullscreen);
+}
+
+function _getAttFaceState() {
+  return {
+    isOpen: _attFaceState.isOpen,
+    isFullscreen: _attFaceState.isFullscreen,
+    minMatchPct: _attFaceState.minMatchPct,
+    enrolledCount: _attFaceState.enrolledCount,
+    facingMode: _attFaceState.facingMode,
+  };
 }
 
 function _setAttFaceStatus(text, tone = 'emerald') {
+  if (typeof document === 'undefined') return;
   const statusEl = document.getElementById('attFaceStatusText');
   const dotEl = document.getElementById('attFaceCamDot');
   if (statusEl) statusEl.innerText = text || '';
@@ -1011,10 +1281,11 @@ function _setAttFaceStatus(text, tone = 'emerald') {
 }
 
 function _setAttFaceLoading(visible, text = '') {
+  if (typeof document === 'undefined') return;
   const overlay = document.getElementById('attFaceLoadingOverlay');
   const textEl = document.getElementById('attFaceLoadingText');
   if (textEl && text) textEl.innerText = text;
-  if (overlay) overlay.classList.toggle('hidden', !visible);
+  if (overlay && overlay.classList) overlay.classList.toggle('hidden', !visible);
 }
 
 function _loadExternalScriptOnce(urls) {
@@ -1232,12 +1503,13 @@ async function _prepareClassFaceMatcher(sessionId) {
   });
 
   _attFaceState.studentMap = studentMap;
+  _attFaceState.labeledDescriptors = labeledDescriptors;
   _attFaceState.enrolledCount = labeledDescriptors.length;
   const enrolledEl = document.getElementById('attFaceEnrolledSummary');
   if (enrolledEl) enrolledEl.innerText = `등록 얼굴: ${labeledDescriptors.length}명`;
 
   if (labeledDescriptors.length === 0) return null;
-  return new faceapi.FaceMatcher(labeledDescriptors, FACE_MATCH_THRESHOLD);
+  return new faceapi.FaceMatcher(labeledDescriptors, _computeFaceMatcherThreshold(_attFaceState.minMatchPct));
 }
 
 function _stopCurrentVideoStream() {
@@ -1247,7 +1519,7 @@ function _stopCurrentVideoStream() {
     } catch (_) {}
     _attFaceState.stream = null;
   }
-  const video = document.getElementById('attFaceVideo');
+  const video = typeof document !== 'undefined' ? document.getElementById('attFaceVideo') : null;
   if (video) {
     try { video.srcObject = null; } catch (_) {}
   }
@@ -1270,7 +1542,7 @@ async function _startAttFaceVideoStream(facingMode, sessionId) {
     try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     return false;
   }
-  const video = document.getElementById('attFaceVideo');
+  const video = typeof document !== 'undefined' ? document.getElementById('attFaceVideo') : null;
   if (!video) {
     try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     return false;
@@ -1284,8 +1556,8 @@ async function _startAttFaceVideoStream(facingMode, sessionId) {
 function _drawFaceDetectionBox(ctx, overlayBox, labelText, isMatched) {
   const { x, y, width, height } = overlayBox;
   ctx.save();
-  ctx.lineWidth = isMatched ? 2.5 : 1.5;
-  ctx.strokeStyle = isMatched ? '#10b981' : 'rgba(148, 163, 184, 0.85)';
+  ctx.lineWidth = isMatched ? 2.5 : 2;
+  ctx.strokeStyle = isMatched ? '#10b981' : '#f59e0b';
   ctx.strokeRect(x, y, width, height);
 
   ctx.font = 'bold 12px Pretendard, sans-serif';
@@ -1296,7 +1568,7 @@ function _drawFaceDetectionBox(ctx, overlayBox, labelText, isMatched) {
   const labelX = Math.max(2, x);
   const labelY = y >= boxH + 4 ? y - boxH - 2 : y + 2;
 
-  ctx.fillStyle = isMatched ? '#10b981' : 'rgba(51, 65, 85, 0.85)';
+  ctx.fillStyle = isMatched ? '#10b981' : 'rgba(180, 83, 9, 0.9)';
   ctx.fillRect(labelX, labelY, boxW, boxH);
 
   ctx.fillStyle = '#ffffff';
@@ -1313,7 +1585,7 @@ function _scheduleAttFaceDetectionLoop(sessionId) {
 
   const runTick = async () => {
     if (sessionId !== _attFaceState.sessionId || !_attFaceState.isOpen) return;
-    const video = document.getElementById('attFaceVideo');
+    const video = typeof document !== 'undefined' ? document.getElementById('attFaceVideo') : null;
     const canvas = document.getElementById('attFaceOverlay');
     const faceapi = typeof window !== 'undefined' ? window.faceapi : null;
 
@@ -1353,23 +1625,23 @@ function _scheduleAttFaceDetectionLoop(sessionId) {
             if (!box) return;
             const overlayBox = _mapVideoBoxToOverlay(box, video.videoWidth, video.videoHeight, rect.width, rect.height);
             const best = _attFaceState.matcher.findBestMatch(det.descriptor);
-            const isMatched = Boolean(best && best.label && best.label !== 'unknown');
+            const decision = evaluateFaceMatchDecision(best, _attFaceState.minMatchPct);
 
-            if (isMatched) {
-              const sid = String(best.label).trim();
-              const pct = _computeFaceMatchPercent(best.distance);
+            if (decision.isMatched) {
+              const sid = decision.studentId;
+              const pct = decision.matchPct;
               const meta = _attFaceState.studentMap.get(sid) || {};
               const stuName = meta.name || sid;
               const labelText = `${sid} ${stuName} (${pct}%)`;
               _drawFaceDetectionBox(ctx, overlayBox, labelText, true);
 
-              const updateRes = applyCameraFaceRecognitionToAttRows(_attCheckRows, sid, pct);
+              const updateRes = applyCameraFaceRecognitionToAttRows(_attCheckRows, sid, pct, _attFaceState.minMatchPct);
               if (updateRes.changed) {
                 anyRowChanged = true;
                 showToast(`${stuName} 출석 확인 (${pct}%)`, '📸');
               }
             } else {
-              _drawFaceDetectionBox(ctx, overlayBox, '미등록', false);
+              _drawFaceDetectionBox(ctx, overlayBox, decision.unknownLabel, false);
             }
           });
 
@@ -1406,8 +1678,21 @@ async function startAttFaceCameraPanel() {
   _attFaceState.isOpen = true;
   _attFaceState.sessionId += 1;
   const sessionId = _attFaceState.sessionId;
+  _attFaceState.minMatchPct = _loadFaceMinMatchPct();
+  _syncAttFaceMinMatchSelect();
+  setAttFaceCameraFullscreen(_isMobileFaceViewport());
+  updateAttCheckSummary();
 
-  panel.classList.remove('hidden');
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    if (_attFaceState.resizeHandler && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('resize', _attFaceState.resizeHandler);
+      window.removeEventListener('orientationchange', _attFaceState.resizeHandler);
+    }
+    _attFaceState.resizeHandler = () => _syncAttFaceOverlayCanvasSize(true);
+    window.addEventListener('resize', _attFaceState.resizeHandler);
+    window.addEventListener('orientationchange', _attFaceState.resizeHandler);
+  }
+
   if (toggleBtn) {
     toggleBtn.innerText = '📷 카메라 끄기';
     toggleBtn.className = 'text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 border border-emerald-600 px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition-colors';
@@ -1437,38 +1722,53 @@ async function startAttFaceCameraPanel() {
 
     _setAttFaceLoading(false);
     _setAttFaceStatus('실시간 안면 인식 중 (카메라에 얼굴을 비춰주세요)', 'emerald');
+    _syncAttFaceOverlayCanvasSize(true);
     _scheduleAttFaceDetectionLoop(sessionId);
   } catch (err) {
     if (sessionId !== _attFaceState.sessionId) return;
     _setAttFaceLoading(false);
     const msg = (err && err.message) || '카메라 안면 인식을 시작하지 못했습니다.';
     _setAttFaceStatus(msg, 'rose');
-    showToast(msg, '⚠️');
+    if (typeof showToast === 'function') showToast(msg, '⚠️');
   }
 }
 
 function stopAttFaceCameraPanel() {
   _attFaceState.isOpen = false;
   _attFaceState.sessionId += 1;
+  _attFaceState.matcher = null;
+  _attFaceState.labeledDescriptors = [];
   if (_attFaceState.loopTimer) {
     clearTimeout(_attFaceState.loopTimer);
     _attFaceState.loopTimer = null;
   }
-  _stopCurrentVideoStream();
-
-  const canvas = document.getElementById('attFaceOverlay');
-  if (canvas) {
-    const ctx = canvas.getContext && canvas.getContext('2d');
-    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (
+    _attFaceState.resizeHandler &&
+    typeof window !== 'undefined' &&
+    typeof window.removeEventListener === 'function'
+  ) {
+    window.removeEventListener('resize', _attFaceState.resizeHandler);
+    window.removeEventListener('orientationchange', _attFaceState.resizeHandler);
+    _attFaceState.resizeHandler = null;
   }
-  const panel = document.getElementById('attFaceCameraPanel');
-  if (panel) panel.classList.add('hidden');
-  _setAttFaceLoading(false);
+  _stopCurrentVideoStream();
+  setAttFaceCameraFullscreen(false);
 
-  const toggleBtn = document.getElementById('attFaceCamToggleBtn');
-  if (toggleBtn) {
-    toggleBtn.innerText = '📷 카메라 출석';
-    toggleBtn.className = 'text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition-colors';
+  if (typeof document !== 'undefined') {
+    const canvas = document.getElementById('attFaceOverlay');
+    if (canvas) {
+      const ctx = canvas.getContext && canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    const panel = document.getElementById('attFaceCameraPanel');
+    if (panel && panel.classList) panel.classList.add('hidden');
+    _setAttFaceLoading(false);
+
+    const toggleBtn = document.getElementById('attFaceCamToggleBtn');
+    if (toggleBtn) {
+      toggleBtn.innerText = '📷 카메라 출석';
+      toggleBtn.className = 'text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition-colors';
+    }
   }
 }
 
@@ -2798,8 +3098,19 @@ if (typeof globalThis !== 'undefined') {
   globalThis._eduflowTeacherHelpers = {
     _deriveAttCheckStatus,
     _computeFaceMatchPercent,
+    _normalizeFaceMinMatchPct,
+    _computeFaceDistanceThreshold,
+    _computeFaceMatcherThreshold,
+    evaluateFaceMatchDecision,
     _mapVideoBoxToOverlay,
     applyCameraFaceRecognitionToAttRows,
+    _buildRecentCameraVerifiedList,
+    getAttFaceFullscreenClasses,
+    setAttFaceCameraFullscreen,
+    toggleAttFaceCameraFullscreen,
+    onAttFaceMinMatchChange,
+    _getAttFaceState,
+    stopAttFaceCameraPanel,
     _resolveFaceItemImageDataUrl,
     _extractClassTokens,
     _expandSubjectTokens,
@@ -3083,8 +3394,19 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     _deriveAttCheckStatus,
     _computeFaceMatchPercent,
+    _normalizeFaceMinMatchPct,
+    _computeFaceDistanceThreshold,
+    _computeFaceMatcherThreshold,
+    evaluateFaceMatchDecision,
     _mapVideoBoxToOverlay,
     applyCameraFaceRecognitionToAttRows,
+    _buildRecentCameraVerifiedList,
+    getAttFaceFullscreenClasses,
+    setAttFaceCameraFullscreen,
+    toggleAttFaceCameraFullscreen,
+    onAttFaceMinMatchChange,
+    _getAttFaceState,
+    stopAttFaceCameraPanel,
     _resolveFaceItemImageDataUrl,
     _extractClassTokens,
     _expandSubjectTokens,

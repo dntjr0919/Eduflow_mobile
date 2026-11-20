@@ -48,8 +48,19 @@ const { _handleDesktopApiAction, _normalizeFaceDescriptor, _buildStudentFaceDocI
 const {
   _deriveAttCheckStatus,
   _computeFaceMatchPercent,
+  _normalizeFaceMinMatchPct,
+  _computeFaceDistanceThreshold,
+  _computeFaceMatcherThreshold,
+  evaluateFaceMatchDecision,
   _mapVideoBoxToOverlay,
   applyCameraFaceRecognitionToAttRows,
+  _buildRecentCameraVerifiedList,
+  getAttFaceFullscreenClasses,
+  setAttFaceCameraFullscreen,
+  toggleAttFaceCameraFullscreen,
+  onAttFaceMinMatchChange,
+  _getAttFaceState,
+  stopAttFaceCameraPanel,
   _resolveFaceItemImageDataUrl,
 } = require('../teacher.js');
 
@@ -553,4 +564,195 @@ test('index.html #teacherAttendanceCheckView contains camera button and video/ca
   assert.ok(snippet.includes('id="attFaceOverlay"'));
   assert.ok(snippet.includes('id="attFaceSwitchCamBtn"'));
   assert.ok(snippet.includes('id="attFaceCloseCamBtn"'));
+  assert.ok(snippet.includes('id="attFaceFullscreenBtn"'));
+  assert.ok(snippet.includes('onclick="toggleAttFaceCameraFullscreen()"'));
+  assert.ok(snippet.includes('id="attFaceMinMatchSelect"'));
+  assert.ok(snippet.includes('onchange="onAttFaceMinMatchChange(this.value)"'));
+  assert.ok(snippet.includes('value="60"'));
+  assert.ok(snippet.includes('value="65"'));
+  assert.ok(snippet.includes('selected="" value="70"'));
+  assert.ok(snippet.includes('value="75"'));
+  assert.ok(snippet.includes('value="80"'));
+  assert.ok(snippet.includes('id="attFaceVerifiedCountBadge"'));
+  assert.ok(snippet.includes('id="attFaceStage"'));
+  assert.ok(snippet.includes('id="attFaceBottomBar"'));
+  assert.ok(snippet.includes('id="attFaceRecentChips"'));
+});
+
+test('minimum match threshold blocks below-threshold false positives and allows at/above threshold', () => {
+  assert.equal(_normalizeFaceMinMatchPct(undefined), 70);
+  assert.equal(_normalizeFaceMinMatchPct('75'), 75);
+  assert.equal(_normalizeFaceMinMatchPct('120'), 70);
+
+  assert.equal(_computeFaceDistanceThreshold(60), 0.4);
+  assert.equal(_computeFaceDistanceThreshold(65), 0.35);
+  assert.equal(_computeFaceDistanceThreshold(70), 0.3);
+  assert.equal(_computeFaceDistanceThreshold(75), 0.25);
+  assert.equal(_computeFaceDistanceThreshold(80), 0.2);
+
+  // Exact boundary check: distance=0.30 -> 70%, must be < FaceMatcher threshold (0.305)
+  assert.equal(_computeFaceMatchPercent(0.30), 70);
+  assert.ok(0.30 < _computeFaceMatcherThreshold(70));
+  assert.ok(0.31 > _computeFaceMatcherThreshold(70)); // 69% rejected
+
+  // Below threshold (65% < 70%): NEVER show student name, returns 미등록 (65%)
+  const below = evaluateFaceMatchDecision({ label: '10401', distance: 0.35 }, 70);
+  assert.equal(below.isMatched, false);
+  assert.equal(below.studentId, '');
+  assert.equal(below.matchPct, 65);
+  assert.equal(below.unknownLabel, '미등록 (65%)');
+
+  // Unknown label from FaceMatcher -> 미등록 (58%)
+  const unknown = evaluateFaceMatchDecision({ label: 'unknown', distance: 0.42 }, 70);
+  assert.equal(unknown.isMatched, false);
+  assert.equal(unknown.studentId, '');
+  assert.equal(unknown.unknownLabel, '미등록 (58%)');
+
+  // At/above threshold (70% >= 70%, 78% >= 70%) -> matched
+  const atBoundary = evaluateFaceMatchDecision({ label: '10401', distance: 0.30 }, 70);
+  assert.equal(atBoundary.isMatched, true);
+  assert.equal(atBoundary.studentId, '10401');
+  assert.equal(atBoundary.matchPct, 70);
+
+  const above = evaluateFaceMatchDecision({ label: '10402', distance: 0.22 }, 75);
+  assert.equal(above.isMatched, true);
+  assert.equal(above.studentId, '10402');
+  assert.equal(above.matchPct, 78);
+
+  // Row gating: below threshold does NOT modify absent row
+  const rows = [
+    { studentId: '10401', studentNo: 1, name: '김철수', checked: true, period: '', cameraVerified: false, cameraMatchPct: 0, cameraVerifiedAt: 0 },
+    { studentId: '10402', studentNo: 2, name: '이영희', checked: true, period: '', cameraVerified: false, cameraMatchPct: 0, cameraVerifiedAt: 0 },
+  ];
+  const blockedRes = applyCameraFaceRecognitionToAttRows(rows, '10401', 69, 70);
+  assert.equal(blockedRes.matched, false);
+  assert.equal(blockedRes.changed, false);
+  assert.equal(blockedRes.rejectedBelowThreshold, true);
+  assert.equal(rows[0].checked, true);
+  assert.equal(rows[0].cameraVerified, false);
+  assert.equal(_deriveAttCheckStatus(rows[0]).type, '결석');
+
+  const blocked75Res = applyCameraFaceRecognitionToAttRows(rows, '10402', 74, 75);
+  assert.equal(blocked75Res.matched, false);
+  assert.equal(blocked75Res.rejectedBelowThreshold, true);
+  assert.equal(rows[1].checked, true);
+  assert.equal(_deriveAttCheckStatus(rows[1]).type, '결석');
+
+  // At/above threshold marks present + cameraVerified & updates recent verified chips list
+  const okRes = applyCameraFaceRecognitionToAttRows(rows, '10401', 70, 70);
+  assert.equal(okRes.matched, true);
+  assert.equal(okRes.changed, true);
+  assert.equal(okRes.rejectedBelowThreshold, false);
+  assert.equal(rows[0].checked, false);
+  assert.equal(rows[0].period, '');
+  assert.equal(rows[0].cameraVerified, true);
+  assert.equal(rows[0].cameraMatchPct, 70);
+  assert.equal(_deriveAttCheckStatus(rows[0]).type, '출석');
+
+  const ok75Res = applyCameraFaceRecognitionToAttRows(rows, '10402', 80, 75);
+  assert.equal(ok75Res.matched, true);
+  assert.equal(rows[1].checked, false);
+  assert.equal(rows[1].cameraVerified, true);
+
+  const recent = _buildRecentCameraVerifiedList(rows, 5);
+  assert.equal(recent.length, 2);
+});
+
+test('onAttFaceMinMatchChange persists to localStorage and fullscreen toggle updates DOM & state', () => {
+  const prevStorage = globalThis.localStorage;
+  const prevDoc = globalThis.document;
+  const storageMap = new Map();
+
+  const makeMockEl = (initial = {}) => {
+    const attrs = {};
+    const classSet = new Set(String(initial.className || '').split(/\s+/).filter(Boolean));
+    return {
+      className: initial.className || '',
+      value: initial.value || '',
+      innerText: initial.innerText || '',
+      textContent: initial.textContent || '',
+      innerHTML: '',
+      width: 0,
+      height: 0,
+      setAttribute(k, v) { attrs[k] = String(v); },
+      getAttribute(k) { return attrs[k]; },
+      classList: {
+        add(c) { classSet.add(c); },
+        remove(c) { classSet.delete(c); },
+        toggle(c, force) {
+          if (force === undefined) {
+            if (classSet.has(c)) classSet.delete(c);
+            else classSet.add(c);
+          } else if (force) classSet.add(c);
+          else classSet.delete(c);
+        },
+        contains(c) { return classSet.has(c); },
+      },
+    };
+  };
+
+  const mockEls = {
+    attFaceCameraPanel: makeMockEl({ className: 'hidden' }),
+    attFaceTopBar: makeMockEl(),
+    attFaceStage: makeMockEl(),
+    attFaceBottomBar: makeMockEl(),
+    attFaceFullscreenBtn: makeMockEl({ innerText: '⛶ 전체화면' }),
+    attFaceMinMatchSelect: makeMockEl({ value: '70' }),
+    attFaceRecentChips: makeMockEl({ className: 'hidden' }),
+    attFaceCamToggleBtn: makeMockEl(),
+    attFaceLoadingOverlay: makeMockEl(),
+    attFaceOverlay: makeMockEl(),
+    attFaceVideo: makeMockEl(),
+  };
+
+  globalThis.localStorage = {
+    getItem: (k) => (storageMap.has(k) ? storageMap.get(k) : null),
+    setItem: (k, v) => { storageMap.set(k, String(v)); },
+  };
+  globalThis.document = {
+    getElementById: (id) => mockEls[id] || null,
+  };
+
+  try {
+    // Persist minimum match setting
+    const savedPct = onAttFaceMinMatchChange('80');
+    assert.equal(savedPct, 80);
+    assert.equal(_getAttFaceState().minMatchPct, 80);
+    assert.equal(mockEls.attFaceMinMatchSelect.value, '80');
+    assert.equal(storageMap.get('eduflow_face_min_match_pct_v1'), '80');
+
+    // Reset back to default 70
+    onAttFaceMinMatchChange('70');
+    assert.equal(_getAttFaceState().minMatchPct, 70);
+
+    // Fullscreen toggle: false -> true -> false
+    assert.equal(_getAttFaceState().isFullscreen, false);
+    const fsOn = toggleAttFaceCameraFullscreen();
+    assert.equal(fsOn, true);
+    assert.equal(_getAttFaceState().isFullscreen, true);
+    assert.ok(mockEls.attFaceCameraPanel.className.includes('fixed inset-0 z-50 bg-slate-950 flex flex-col'));
+    assert.ok(mockEls.attFaceStage.className.includes('flex-1'));
+    assert.equal(mockEls.attFaceFullscreenBtn.innerText, '원래 크기로');
+    assert.equal(mockEls.attFaceFullscreenBtn.getAttribute('aria-pressed'), 'true');
+    assert.ok(mockEls.attFaceRecentChips.innerHTML.includes('출석 확인된 학생 이름이 여기에 표시됩니다'));
+
+    const fsOff = toggleAttFaceCameraFullscreen();
+    assert.equal(fsOff, false);
+    assert.equal(_getAttFaceState().isFullscreen, false);
+    assert.equal(mockEls.attFaceFullscreenBtn.innerText, '⛶ 전체화면');
+    assert.equal(mockEls.attFaceFullscreenBtn.getAttribute('aria-pressed'), 'false');
+
+    // stopAttFaceCameraPanel resets fullscreen & hides panel
+    setAttFaceCameraFullscreen(true);
+    assert.equal(_getAttFaceState().isFullscreen, true);
+    stopAttFaceCameraPanel();
+    assert.equal(_getAttFaceState().isFullscreen, false);
+    assert.equal(_getAttFaceState().isOpen, false);
+    assert.ok(mockEls.attFaceCameraPanel.className.includes('hidden'));
+  } finally {
+    if (prevStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = prevStorage;
+    if (prevDoc === undefined) delete globalThis.document;
+    else globalThis.document = prevDoc;
+  }
 });
