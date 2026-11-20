@@ -882,8 +882,11 @@ function renderRosterTab() {
     if (String(p.status || '').toLowerCase() === 'pending') pendingItems.push({ role: 'parent', doc: p });
   });
 
+  const pushEnabledCount = students.filter((s) => Boolean(s.push_enabled)).length;
   document.getElementById('kpi-roster-students').textContent = `${students.length}명`;
   document.getElementById('kpi-roster-parents').textContent = `${parents.length}명`;
+  const pushKpiEl = document.getElementById('kpi-roster-push');
+  if (pushKpiEl) pushKpiEl.textContent = `${pushEnabledCount}/${students.length}명`;
   document.getElementById('kpi-roster-pending').textContent = `${pendingItems.length}건`;
 
   const pendingCard = document.getElementById('roster-pending-card');
@@ -937,9 +940,13 @@ function renderRosterTab() {
     return '<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">활성</span>';
   };
 
+  const pushBadge = (enabled) => enabled
+    ? '<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">알림 ON</span>'
+    : '<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-500">미설정</span>';
+
   const tbody = document.getElementById('roster-tbody');
   tbody.innerHTML = filtered.length === 0
-    ? '<tr><td colspan="9" class="py-8 text-center text-slate-400">조회된 학생 계정이 없습니다.</td></tr>'
+    ? '<tr><td colspan="10" class="py-8 text-center text-slate-400">조회된 학생 계정이 없습니다.</td></tr>'
     : filtered.map((s) => {
         const sid = String(s.student_id || '').trim();
         const sRid = String(s.remote_id || sid);
@@ -962,6 +969,12 @@ function renderRosterTab() {
               </div>
             </td>
             <td class="py-3 px-3 text-center">${statusPill(s.status)}</td>
+            <td class="py-3 px-3 text-center whitespace-nowrap">
+              <div class="flex flex-col items-center gap-1">
+                ${pushBadge(Boolean(s.push_enabled))}
+                ${p ? `<span class="text-[10px] ${p.push_enabled ? 'text-emerald-600 font-semibold' : 'text-slate-400'}">학부모 ${p.push_enabled ? 'ON' : '미설정'}</span>` : ''}
+              </div>
+            </td>
             <td class="py-3 px-3 text-slate-700">${p ? `${escapeHtml(p.name || '학부모')} <span class="text-[11px] text-slate-400 font-mono">(${escapeHtml(pLogin)})</span>` : '<span class="text-slate-300">미연동</span>'}</td>
             <td class="py-3 px-3 whitespace-nowrap">
               ${p ? `<div class="flex items-center gap-1.5">

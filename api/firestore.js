@@ -660,6 +660,26 @@ async function _handleRegisterAccount(db, body) {
   return { status: 200, json: { ok: true, status: 'pending', message: '학생 가입 신청이 접수되었습니다. 담임 교사 승인 후 로그인할 수 있습니다.' } };
 }
 
+const PC_AGENT_ONLINE_TTL_MS = 3 * 60 * 1000;
+
+function _parseTimestampMs(raw) {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  const s = String(raw || '').trim();
+  if (!s) return NaN;
+  const normalized = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(s) ? s.replace(' ', 'T') : s;
+  const ms = Date.parse(normalized);
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+function _evaluatePcAgentOnline(statusDoc, nowMs = Date.now()) {
+  if (!statusDoc || typeof statusDoc !== 'object') return false;
+  if (!_toBool(statusDoc.pc_online)) return false;
+  const seenMs = _parseTimestampMs(statusDoc.pc_last_seen_at);
+  if (!Number.isFinite(seenMs)) return false;
+  const diff = nowMs - seenMs;
+  return diff >= -60 * 1000 && diff <= PC_AGENT_ONLINE_TTL_MS;
+}
+
 async function _handleGetMobileBundle(db, params) {
   const role = String(params.role || 'student').trim().toLowerCase();
   const studentId = String(params.student_id || '').trim();
@@ -703,7 +723,9 @@ async function _handleGetMobileBundle(db, params) {
     boardNoticesRows,
     subjectRostersRaw,
     subjectAttRaw,
-    lessonProgressRaw
+    lessonProgressRaw,
+    pcAgentStatusDoc,
+    remoteTasksRaw
   ] = await Promise.all([
     _getCachedOrFetch(teacherCacheKey, forceRefresh, () => (
       role === 'teacher' && userId
@@ -769,6 +791,12 @@ async function _handleGetMobileBundle(db, params) {
       : Promise.resolve([]),
     role === 'teacher' && userId
       ? db.collection('수업_진도').where('teacher_id', '==', userId).limit(300).get().then(_snapToRows).catch(() => [])
+      : Promise.resolve([]),
+    role === 'teacher' && userId
+      ? db.collection('PC_Agent_Status').doc(userId).get().then((d) => (d.exists ? { remote_id: d.id, ...d.data() } : null)).catch(() => null)
+      : Promise.resolve(null),
+    role === 'teacher' && userId
+      ? db.collection('Tasks').where('teacher_id', '==', userId).limit(100).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
   ]);
 
@@ -901,6 +929,22 @@ async function _handleGetMobileBundle(db, params) {
     bundle.lesson_progress = (lessonProgressRaw || [])
       .filter((d) => _belongsToTeacher(d, teacherScope))
       .sort((a, b) => String(b.date || b.updated_at || '').localeCompare(String(a.date || a.updated_at || '')));
+    const rawPcStatus = pcAgentStatusDoc || (teachersRaw[0] ? {
+      pc_online: teachersRaw[0].pc_online,
+      pc_last_seen_at: teachersRaw[0].pc_last_seen_at,
+      pc_hostname: teachersRaw[0].pc_hostname,
+      pc_app_version: teachersRaw[0].pc_app_version,
+    } : null);
+    bundle.pc_agent_status = {
+      pc_online: Boolean(rawPcStatus && _toBool(rawPcStatus.pc_online)),
+      pc_last_seen_at: String((rawPcStatus && rawPcStatus.pc_last_seen_at) || ''),
+      pc_hostname: String((rawPcStatus && rawPcStatus.pc_hostname) || ''),
+      pc_app_version: String((rawPcStatus && rawPcStatus.pc_app_version) || ''),
+      is_online: _evaluatePcAgentOnline(rawPcStatus),
+    };
+    bundle.remote_tasks = (remoteTasksRaw || [])
+      .filter((t) => _toBool(t.is_mobile_task) && String(t.teacher_id || '').trim() === userId)
+      .sort((a, b) => String(b.created_at || b.updated_at || '').localeCompare(String(a.created_at || a.updated_at || '')));
   }
 
   return { status: 200, json: bundle };
@@ -1730,9 +1774,18 @@ module.exports = async function handler(req, res) {
 
     if (action === 'enqueue_remote_task') {
       const rid = String(params.remote_id || `mob_${Date.now()}`);
+      const nowStr = _nowStr();
+      const teacherId = String(params.teacher_id || params.auth_teacher_id || params.user_id || '').trim();
+      const schoolCode = String(params.school_code || params.neis_school_code || '').trim();
+      const grade = _toIntOrNull(params.grade);
+      const classNo = _toIntOrNull(params.class_no);
       await db.collection('Tasks').doc(rid).set(
         {
           remote_id: rid,
+          teacher_id: teacherId,
+          school_code: schoolCode,
+          grade,
+          class_no: classNo,
           title: String(params.title || ''),
           task_type: String(params.task_type || 'general'),
           scheduled_time: String(params.scheduled_time || ''),
@@ -1742,7 +1795,8 @@ module.exports = async function handler(req, res) {
           is_done: false,
           is_mobile_task: true,
           memo: String(params.memo || ''),
-          updated_at: _nowStr()
+          created_at: String(params.created_at || nowStr),
+          updated_at: nowStr
         },
         { merge: true }
       );
@@ -1804,6 +1858,9 @@ module.exports = async function handler(req, res) {
       'get_student_face_data',
       'save_student_face_descriptors_batch',
       'proxy_drive_photo',
+      'update_pc_agent_status',
+      'fetch_pending_remote_tasks',
+      'update_remote_task_status',
     ]);
 
     if (desktopActions.has(action)) {
@@ -2530,6 +2587,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       subjectRostersRaw,
       subjectAttRaw,
       lessonProgressRaw,
+      pushSubRowsRaw,
     ] = await Promise.all([
       hasAssignedClass
         ? db.collection('계정_학생').where('grade', 'in', gradeIn).limit(250).get().then(_snapToRows).catch(() => [])
@@ -2559,13 +2617,46 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       db.collection('교과_명렬표').where('teacher_id', '==', auth.teacherId).limit(200).get().then(_snapToRows).catch(() => []),
       db.collection('교과_출결').where('teacher_id', '==', auth.teacherId).limit(500).get().then(_snapToRows).catch(() => []),
       db.collection('수업_진도').where('teacher_id', '==', auth.teacherId).limit(300).get().then(_snapToRows).catch(() => []),
+      hasAssignedClass
+        ? db.collection('Push_Subscriptions').where('grade', 'in', gradeIn).limit(500).get().then(_snapToRows).catch(() => [])
+        : Promise.resolve([]),
     ]);
+
+    const pushSubscribedUserIds = new Set();
+    const pushSubscribedStudentKeys = new Set();
+    const pushSubscribedParentKeys = new Set();
+    const pushSubscribedParentSids = new Set();
+
+    (pushSubRowsRaw || []).forEach((ps) => {
+      if (!ps || typeof ps !== 'object') return;
+      const psG = _toIntOrNull(ps.grade);
+      const psC = _toIntOrNull(ps.class_no);
+      if (g !== null && psG !== null && psG !== g) return;
+      if (c !== null && psC !== null && psC !== c) return;
+      const psRole = String(ps.role || '').trim().toLowerCase();
+      if (psRole === 'teacher') return;
+      const uid = String(ps.user_id || '').trim();
+      const sid = String(ps.student_id || '').trim();
+      if (uid) pushSubscribedUserIds.add(uid);
+      if (sid && psRole !== 'parent') pushSubscribedUserIds.add(sid);
+      if (psRole === 'parent') {
+        if (uid) pushSubscribedParentKeys.add(uid);
+        if (sid) pushSubscribedParentSids.add(sid);
+      } else {
+        if (uid) pushSubscribedStudentKeys.add(uid);
+        if (sid) pushSubscribedStudentKeys.add(sid);
+      }
+    });
 
     const students = stuRowsRaw
       .filter((d) => _isStrictClassMember(d, auth))
       .map((d) => {
         const safe = { ..._withInferredClass(d), phone: String(d.phone || '') };
         delete safe.password_hash;
+        const keys = [safe.student_id, safe.login_id, safe.custom_id, safe.remote_id]
+          .map((v) => String(v || '').trim())
+          .filter(Boolean);
+        safe.push_enabled = keys.some((k) => pushSubscribedStudentKeys.has(k));
         return safe;
       })
       .sort((a, b) => Number(a.student_no || 9999) - Number(b.student_no || 9999) || String(a.student_id || '').localeCompare(String(b.student_id || '')));
@@ -2577,6 +2668,11 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       .map((d) => {
         const safe = { ..._withInferredClass(d), phone: String(d.phone || '') };
         delete safe.password_hash;
+        const keys = [safe.parent_id, safe.login_id, safe.custom_id, safe.remote_id]
+          .map((v) => String(v || '').trim())
+          .filter(Boolean);
+        const pSid = String(safe.student_id || '').trim();
+        safe.push_enabled = keys.some((k) => pushSubscribedParentKeys.has(k)) || Boolean(pSid && pushSubscribedParentSids.has(pSid));
         return safe;
       })
       .sort((a, b) => Number(a.student_no || 9999) - Number(b.student_no || 9999));
@@ -2646,6 +2742,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
         },
         students,
         parents,
+        push_subscribed_user_ids: Array.from(pushSubscribedUserIds),
         notices,
         replies,
         attendance,
@@ -3188,6 +3285,100 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     return { status: 200, json: { ok: true, file_id: fileId, mime_type: dl.mimeType, data_url: dl.dataUrl } };
   }
 
+  if (action === 'update_pc_agent_status') {
+    const pcOnline = params.pc_online === undefined ? true : _toBool(params.pc_online);
+    const nowIso = new Date().toISOString();
+    const lastSeenAt = String(params.pc_last_seen_at || nowIso).trim();
+    const hostname = String(params.pc_hostname || params.hostname || '').trim();
+    const appVersion = String(params.pc_app_version || params.app_version || '').trim();
+    const nowStr = _nowStr();
+
+    const statusPayload = {
+      remote_id: auth.teacherId,
+      teacher_id: auth.teacherId,
+      school_code: auth.schoolCode,
+      school_name: auth.schoolName,
+      pc_online: pcOnline,
+      pc_last_seen_at: lastSeenAt,
+      pc_hostname: hostname,
+      pc_app_version: appVersion,
+      updated_at: nowStr,
+    };
+
+    await Promise.all([
+      db.collection('PC_Agent_Status').doc(auth.teacherId).set(statusPayload, { merge: true }),
+      db.collection('계정_교사').doc(auth.teacherId).set({
+        pc_online: pcOnline,
+        pc_last_seen_at: lastSeenAt,
+        pc_hostname: hostname,
+        pc_app_version: appVersion,
+        updated_at: nowStr,
+      }, { merge: true }).catch(() => {}),
+    ]);
+
+    return {
+      status: 200,
+      json: {
+        ok: true,
+        status: {
+          ...statusPayload,
+          is_online: _evaluatePcAgentOnline(statusPayload),
+        },
+      },
+    };
+  }
+
+  if (action === 'fetch_pending_remote_tasks') {
+    const snap = await db.collection('Tasks').where('teacher_id', '==', auth.teacherId).limit(100).get();
+    const rows = _snapToRows(snap);
+    const tasks = rows
+      .filter((t) => (
+        _toBool(t.is_mobile_task) &&
+        String(t.exec_status || '').trim().toLowerCase() === 'pending' &&
+        String(t.teacher_id || '').trim() === auth.teacherId
+      ))
+      .sort((a, b) => String(a.created_at || a.updated_at || '').localeCompare(String(b.created_at || b.updated_at || '')));
+    return { status: 200, json: { ok: true, tasks } };
+  }
+
+  if (action === 'update_remote_task_status') {
+    const rid = String(params.remote_id || params.id || '').trim();
+    if (!rid) {
+      return { status: 400, json: { ok: false, error: '원격 작업의 remote_id가 필요합니다.' } };
+    }
+    const execStatus = String(params.exec_status || '').trim().toLowerCase();
+    if (!['running', 'done', 'error'].includes(execStatus)) {
+      return { status: 400, json: { ok: false, error: '유효한 exec_status(running, done, error)가 필요합니다.' } };
+    }
+    const docRef = db.collection('Tasks').doc(rid);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      return { status: 404, json: { ok: false, error: '해당 원격 작업을 찾을 수 없습니다.' } };
+    }
+    const existing = snap.data() || {};
+    if (String(existing.teacher_id || '').trim() !== auth.teacherId) {
+      return { status: 403, json: { ok: false, error: '본인의 원격 작업 상태만 수정할 수 있습니다.' } };
+    }
+    const isDone = params.is_done !== undefined ? _toBool(params.is_done) : (execStatus === 'done');
+    const updateData = {
+      exec_status: execStatus,
+      is_done: isDone,
+      updated_at: _nowStr(),
+    };
+    if (params.memo !== undefined) {
+      updateData.memo = String(params.memo || '').trim();
+    }
+    await docRef.set(updateData, { merge: true });
+    return {
+      status: 200,
+      json: {
+        ok: true,
+        remote_id: rid,
+        task: { ...existing, ...updateData, remote_id: rid },
+      },
+    };
+  }
+
   return { status: 400, json: { ok: false, error: `지원하지 않는 데스크톱 action입니다: ${action}` } };
 }
 
@@ -3471,4 +3662,5 @@ module.exports._testHelpers = {
   _normalizeFaceDescriptor,
   _buildStudentFaceDocId,
   _extractDriveFileId,
+  _evaluatePcAgentOnline,
 };

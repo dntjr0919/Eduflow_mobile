@@ -246,6 +246,7 @@ let mockData = {
     transactions: []
   },
   chatRooms: [],
+  pcAgentStatus: null,
   remoteTasks: [],
   notifications: [],
   subjectRosters: [],
@@ -1417,16 +1418,31 @@ function hydrateMockDataFromBundle(bundle) {
     }
   }
 
-  // 11. PC 원격 예약 작업 (Tasks 시트)
+  // 11. PC 에이전트 상태 & PC 원격 예약 작업 (Tasks 시트)
+  if (bundle.pc_agent_status && typeof bundle.pc_agent_status === 'object') {
+    mockData.pcAgentStatus = bundle.pc_agent_status;
+  }
   if (Array.isArray(bundle.remote_tasks)) {
-    mockData.remoteTasks = bundle.remote_tasks.map(t => ({
-      id: t.remote_id,
-      type: t.title || t.task_type || '원격 작업',
-      timing: t.scheduled_time || '즉시 실행',
-      prompt: t.target_info || t.action_payload || '',
-      status: t.exec_status === 'done' ? 'done' : (t.exec_status === 'running' ? 'running' : 'pending'),
-      log: t.memo || (t.exec_status === 'done' ? 'PC 작업 완료' : 'PC EduFlow 워커 대기 중')
-    }));
+    mockData.remoteTasks = bundle.remote_tasks.map(t => {
+      const execStatus = String(t.exec_status || 'pending').trim().toLowerCase();
+      let status = 'pending';
+      if (execStatus === 'done') status = 'done';
+      else if (execStatus === 'running') status = 'running';
+      else if (execStatus === 'error') status = 'error';
+      let defaultLog = 'PC EduFlow 워커 대기 중';
+      if (status === 'done') defaultLog = 'PC 작업 완료';
+      else if (status === 'running') defaultLog = 'PC EduFlow 워커에서 실행 중...';
+      else if (status === 'error') defaultLog = 'PC 작업 실행 중 오류가 발생했습니다.';
+      return {
+        id: t.remote_id,
+        taskType: t.task_type || 'general',
+        type: t.title || t.task_type || '원격 작업',
+        timing: t.scheduled_time || '즉시 실행',
+        prompt: t.target_info || '',
+        status,
+        log: t.memo || defaultLog
+      };
+    });
   }
 
   // 12. 알림 (Notifications 시트)
@@ -1904,6 +1920,7 @@ function renderAll() {
   if (typeof renderTeacherDocs === 'function') renderTeacherDocs();
   if (typeof renderTeacherCirculars === 'function') renderTeacherCirculars();
   if (typeof renderTeacherBoardNotices === 'function') renderTeacherBoardNotices();
+  if (typeof renderPcAgentStatusBanner === 'function') renderPcAgentStatusBanner();
   if (typeof renderRemoteTasks === 'function') renderRemoteTasks();
   if (typeof renderTeacherChatRooms === 'function') renderTeacherChatRooms();
 }
@@ -1981,37 +1998,113 @@ function dismissPwaPushBanner() {
   }
 }
 
+function resolvePwaPushGateDecision({
+  isLoggedIn,
+  hasNotificationApi,
+  permission,
+  platform,
+  isStandalone,
+  role,
+  guideDismissed,
+  openGuideOnDenied,
+}) {
+  if (!isLoggedIn) {
+    return { action: 'hide_all', shouldOpenModal: false, showBanner: false, emphasize: false };
+  }
+
+  if (platform === 'ios' && !isStandalone) {
+    return {
+      action: 'show_ios_install',
+      shouldOpenModal: !guideDismissed,
+      showBanner: true,
+      emphasize: role === 'student' || role === 'parent',
+    };
+  }
+
+  if (!hasNotificationApi) {
+    return { action: 'hide_all', shouldOpenModal: false, showBanner: false, emphasize: false };
+  }
+
+  if (permission === 'granted') {
+    return { action: 'granted_sync', shouldOpenModal: false, showBanner: false, emphasize: false };
+  }
+
+  if (permission === 'default') {
+    const isStudentOrParent = role === 'student' || role === 'parent';
+    return {
+      action: 'default_prompt',
+      shouldOpenModal: !guideDismissed,
+      showBanner: true,
+      emphasize: isStudentOrParent,
+    };
+  }
+
+  // permission === 'denied'
+  return {
+    action: 'denied_prompt',
+    shouldOpenModal: Boolean(openGuideOnDenied && !guideDismissed),
+    showBanner: true,
+    emphasize: role === 'student' || role === 'parent',
+  };
+}
+
 function openPwaPushGuide() {
   const guideModal = document.getElementById('pwaPushGuideModal');
-  if (!guideModal || !('Notification' in window)) return;
+  if (!guideModal) return;
 
-  const isDenied = Notification.permission === 'denied';
+  const isIosBrowserTab = getPwaDevicePlatform() === 'ios' && !isStandalonePwa();
+  const hasNotificationApi = typeof window !== 'undefined' && 'Notification' in window;
+  if (!isIosBrowserTab && !hasNotificationApi) return;
+
+  const isDenied = !isIosBrowserTab && hasNotificationApi && Notification.permission === 'denied';
+  const isStudentOrParent = state.activeRole === 'student' || state.activeRole === 'parent';
   const titleEl = document.getElementById('pwaPushGuideTitle');
   const descEl = document.getElementById('pwaPushDesc');
   const deniedGuide = document.getElementById('pwaPushDeniedGuide');
+  const iosGuide = document.getElementById('pwaPushIosGuide');
   const stepsEl = document.getElementById('pwaPushDeviceSteps');
   const enableBtn = document.getElementById('pwaPushEnableBtn');
   const recheckBtn = document.getElementById('pwaPushRecheckBtn');
+  const dismissBtn = document.getElementById('pwaPushDismissBtn');
 
-  if (titleEl) {
-    titleEl.innerText = isDenied ? '알림 권한이 차단되어 있어요' : '실시간 학사 알림 켜기';
-  }
-  if (descEl) {
-    descEl.innerHTML = isDenied
-      ? '웹앱 보안 정책상 설정 화면으로 자동 이동할 수 없습니다. 아래 기기별 안내에 따라 허용해 주세요.'
-      : '출결·서류 마감 독촉, 가정통신문, 긴급 공지를 실시간으로 받으려면 알림을 허용해 주세요.';
-  }
-  if (deniedGuide) {
-    deniedGuide.classList.toggle('hidden', !isDenied);
-  }
-  if (isDenied && stepsEl) {
-    stepsEl.innerHTML = _getDeviceDeniedStepsHtml();
-  }
-  if (enableBtn) {
-    enableBtn.classList.toggle('hidden', isDenied);
-  }
-  if (recheckBtn) {
-    recheckBtn.classList.toggle('hidden', !isDenied);
+  if (isIosBrowserTab) {
+    if (titleEl) titleEl.innerText = '홈 화면에 앱을 추가해 주세요';
+    if (descEl) {
+      descEl.innerHTML = 'iPhone/iPad Safari에서는 <strong>홈 화면에 추가한 앱</strong>으로 실행해야 출결·가정통신문 실시간 푸시 알림을 받을 수 있습니다.';
+    }
+    if (iosGuide) iosGuide.classList.remove('hidden');
+    if (deniedGuide) deniedGuide.classList.add('hidden');
+    if (enableBtn) enableBtn.classList.add('hidden');
+    if (recheckBtn) recheckBtn.classList.add('hidden');
+    if (dismissBtn) dismissBtn.innerText = '나중에 하기';
+  } else if (isDenied) {
+    if (titleEl) titleEl.innerText = '알림 권한이 차단되어 있어요';
+    if (descEl) {
+      descEl.innerHTML = '웹앱 보안 정책상 설정 화면으로 자동 이동할 수 없습니다. 아래 기기별 안내에 따라 허용해 주세요.';
+    }
+    if (iosGuide) iosGuide.classList.add('hidden');
+    if (deniedGuide) deniedGuide.classList.remove('hidden');
+    if (stepsEl) stepsEl.innerHTML = _getDeviceDeniedStepsHtml();
+    if (enableBtn) enableBtn.classList.add('hidden');
+    if (recheckBtn) recheckBtn.classList.remove('hidden');
+    if (dismissBtn) dismissBtn.innerText = '나중에 하기';
+  } else {
+    if (titleEl) {
+      titleEl.innerText = isStudentOrParent ? '실시간 학사 알림을 꼭 켜주세요' : '실시간 학사 알림 켜기';
+    }
+    if (descEl) {
+      descEl.innerHTML = isStudentOrParent
+        ? '출결 확인, 서류 마감 독촉, 가정통신문 및 1:1 상담 알림을 놓치지 않으려면 아래 버튼을 눌러 알림을 허용해 주세요.'
+        : '출결·서류 마감 독촉, 가정통신문, 긴급 공지를 실시간으로 받으려면 알림을 허용해 주세요.';
+    }
+    if (iosGuide) iosGuide.classList.add('hidden');
+    if (deniedGuide) deniedGuide.classList.add('hidden');
+    if (enableBtn) {
+      enableBtn.classList.remove('hidden');
+      enableBtn.innerText = '알림 허용하고 시작하기';
+    }
+    if (recheckBtn) recheckBtn.classList.add('hidden');
+    if (dismissBtn) dismissBtn.innerText = '나중에 하기';
   }
 
   guideModal.classList.remove('hidden');
@@ -2026,18 +2119,31 @@ function dismissPwaPushGuide() {
 
 function checkAndEnforcePwaPushGate(options = {}) {
   const dash = document.getElementById('dashboardScreen');
-  const isLoggedIn = dash && !dash.classList.contains('hidden');
-  if (!isLoggedIn || !('Notification' in window)) {
+  const isLoggedIn = Boolean(dash && !dash.classList.contains('hidden'));
+  const hasNotificationApi = typeof window !== 'undefined' && 'Notification' in window;
+  const decision = resolvePwaPushGateDecision({
+    isLoggedIn,
+    hasNotificationApi,
+    permission: hasNotificationApi ? Notification.permission : 'unsupported',
+    platform: getPwaDevicePlatform(),
+    isStandalone: isStandalonePwa(),
+    role: state.activeRole,
+    guideDismissed: Boolean(state.pwaPushGuideDismissed),
+    openGuideOnDenied: Boolean(options && options.openGuideOnDenied),
+  });
+
+  const banner = document.getElementById('pwaPushBanner');
+  const bannerDefault = document.getElementById('pwaPushBannerDefault');
+  const bannerDenied = document.getElementById('pwaPushBannerDenied');
+  const guideModal = document.getElementById('pwaPushGuideModal');
+  const isGuideOpen = Boolean(guideModal && !guideModal.classList.contains('hidden'));
+
+  if (decision.action === 'hide_all') {
     _hideAllPwaPushUI();
     return;
   }
 
-  const perm = Notification.permission;
-  const banner = document.getElementById('pwaPushBanner');
-  const bannerDefault = document.getElementById('pwaPushBannerDefault');
-  const bannerDenied = document.getElementById('pwaPushBannerDenied');
-
-  if (perm === 'granted') {
+  if (decision.action === 'granted_sync') {
     _hideAllPwaPushUI();
     if (!_pwaPushSyncedThisSession) {
       _pwaPushSyncedThisSession = true;
@@ -2046,21 +2152,21 @@ function checkAndEnforcePwaPushGate(options = {}) {
     return;
   }
 
-  if (perm === 'default') {
+  if (decision.action === 'show_ios_install' || decision.action === 'default_prompt') {
     if (bannerDenied) bannerDenied.classList.add('hidden');
     if (banner) banner.classList.remove('hidden');
     if (bannerDefault) bannerDefault.classList.remove('hidden');
+    if (isGuideOpen || decision.shouldOpenModal) {
+      openPwaPushGuide();
+    }
     return;
   }
 
-  // perm === 'denied'
+  // decision.action === 'denied_prompt'
   if (bannerDefault) bannerDefault.classList.add('hidden');
   if (banner) banner.classList.remove('hidden');
   if (bannerDenied) bannerDenied.classList.remove('hidden');
-
-  const guideModal = document.getElementById('pwaPushGuideModal');
-  const isGuideOpen = guideModal && !guideModal.classList.contains('hidden');
-  if (isGuideOpen || (options && options.openGuideOnDenied && !state.pwaPushGuideDismissed)) {
+  if (isGuideOpen || decision.shouldOpenModal) {
     openPwaPushGuide();
   }
 }
@@ -2414,5 +2520,6 @@ if (typeof module !== 'undefined' && module.exports) {
     buildHomeroomSchedule,
     _getLocalTodayStr,
     _getKoreanTodayDayChar,
+    resolvePwaPushGateDecision,
   };
 }

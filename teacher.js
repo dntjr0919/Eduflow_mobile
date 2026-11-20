@@ -2688,42 +2688,145 @@ async function handleSendNotification(e) {
 }
 
 // --- TEACHER TAB 4: PC Remote Task Queue ---
-function _inferRemoteTaskType(label) {
-  const s = (label || '').toLowerCase();
+const REMOTE_TASK_LABELS = {
+  comcigan_sync: '컴시간 시간표 즉시 동기화',
+  schoolbell_sync: '학교종이 최근 공지 수집',
+  file_sort: '스마트 파일 자동 분류 실행',
+  homeroom_report: '학급 출결·가정통신문 요약 보고서 생성',
+};
+
+function isPcAgentOnline(statusObj, nowMs = Date.now()) {
+  if (!statusObj || typeof statusObj !== 'object') return false;
+  if (statusObj.pc_online !== true && statusObj.pc_online !== 'true' && statusObj.pc_online !== 1) return false;
+  const raw = statusObj.pc_last_seen_at;
+  if (!raw) return false;
+  let seenMs = NaN;
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    seenMs = raw;
+  } else {
+    const s = String(raw).trim();
+    const normalized = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(s) ? s.replace(' ', 'T') : s;
+    seenMs = Date.parse(normalized);
+  }
+  if (!Number.isFinite(seenMs)) return false;
+  const diff = nowMs - seenMs;
+  return diff >= -60 * 1000 && diff <= 3 * 60 * 1000;
+}
+
+function formatPcLastSeenRelative(tsStr, nowMs = Date.now()) {
+  if (!tsStr) return '기록 없음';
+  const s = String(tsStr).trim();
+  const normalized = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(s) ? s.replace(' ', 'T') : s;
+  const seenMs = Date.parse(normalized);
+  if (!Number.isFinite(seenMs)) return s;
+  const diffSec = Math.max(0, Math.floor((nowMs - seenMs) / 1000));
+  if (diffSec < 60) return '방금 전';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}분 전`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}시간 전`;
+  return s.slice(0, 16).replace('T', ' ');
+}
+
+function renderPcAgentStatusBanner() {
+  if (typeof document === 'undefined') return;
+  const banner = document.getElementById('pcAgentStatusBanner');
+  const dot = document.getElementById('pcAgentStatusDot');
+  const titleEl = document.getElementById('pcAgentStatusTitle');
+  const subEl = document.getElementById('pcAgentStatusSub');
+  const verEl = document.getElementById('pcAgentStatusVersion');
+  if (!banner || !titleEl || !subEl) return;
+
+  const statusObj = typeof mockData !== 'undefined' ? mockData.pcAgentStatus : null;
+  const online = isPcAgentOnline(statusObj);
+
+  if (online) {
+    const host = _escapeAttFaceHtml((statusObj && statusObj.pc_hostname) || '교사 PC');
+    const rel = _escapeAttFaceHtml(formatPcLastSeenRelative(statusObj && statusObj.pc_last_seen_at));
+    const ver = (statusObj && statusObj.pc_app_version) ? String(statusObj.pc_app_version) : '연결됨';
+    banner.className = 'bg-gradient-to-r from-slate-900 to-indigo-950 text-white rounded-2xl p-4 shadow-lg transition-colors';
+    if (dot) dot.className = 'absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full ring-2 ring-slate-900 animate-ping';
+    titleEl.innerHTML = `온라인 · 연결됨 <span class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-normal">${host} · ${rel}</span>`;
+    subEl.innerText = `EduFlow 데스크톱 워커 · 마지막 하트비트: ${formatPcLastSeenRelative(statusObj && statusObj.pc_last_seen_at)}`;
+    if (verEl) {
+      verEl.innerText = ver;
+      verEl.className = 'text-[10px] text-indigo-200 font-mono shrink-0';
+    }
+  } else {
+    banner.className = 'bg-gradient-to-r from-slate-800 to-slate-900 text-white rounded-2xl p-4 shadow-lg transition-colors';
+    if (dot) dot.className = 'absolute -top-1 -right-1 w-2.5 h-2.5 bg-slate-400 rounded-full ring-2 ring-slate-900';
+    titleEl.innerHTML = `오프라인 <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 font-normal">미연결</span>`;
+    subEl.innerText = 'PC 앱 미실행 또는 미로그인 — 예약 시 PC 실행 후 자동 처리';
+    if (verEl) {
+      verEl.innerText = '-';
+      verEl.className = 'text-[10px] text-slate-400 font-mono shrink-0';
+    }
+  }
+}
+
+function onRemoteTaskTimingChange() {
+  if (typeof document === 'undefined') return;
+  const checked = document.querySelector('input[name="taskTiming"]:checked');
+  const wrap = document.getElementById('remoteTaskTimeWrap');
+  if (wrap) {
+    wrap.classList.toggle('hidden', !checked || checked.value !== 'scheduled');
+  }
+}
+
+function _inferRemoteTaskType(val) {
+  if (REMOTE_TASK_LABELS[val]) return val;
+  const s = (val || '').toLowerCase();
+  if (s.includes('컴시간') || s.includes('시간표')) return 'comcigan_sync';
+  if (s.includes('학교종이') || s.includes('공지')) return 'schoolbell_sync';
   if (s.includes('분류') || s.includes('정리')) return 'file_sort';
-  if (s.includes('엑셀') || s.includes('병합')) return 'excel_merge';
-  if (s.includes('서명') || s.includes('pdf')) return 'signature_pdf';
-  if (s.includes('가정통신문') || s.includes('추출')) return 'notice_extract';
-  return 'web_llm';
+  if (s.includes('보고서') || s.includes('출결') || s.includes('요약')) return 'homeroom_report';
+  return 'comcigan_sync';
 }
 
 async function handleCreateRemoteTask(e) {
   e.preventDefault();
   const submitBtn = e.submitter || (e.target && e.target.querySelector('button[type="submit"]'));
-  const typeLabel = document.getElementById('remoteTaskType').value;
-  const timingVal = document.querySelector('input[name="taskTiming"]:checked').value;
+  const rawTypeVal = document.getElementById('remoteTaskType').value;
+  const taskType = _inferRemoteTaskType(rawTypeVal);
+  const typeLabel = REMOTE_TASK_LABELS[taskType] || rawTypeVal;
+  const timingVal = document.querySelector('input[name="taskTiming"]:checked')?.value || 'now';
+  const timeInputVal = (document.getElementById('remoteTaskTime')?.value || '17:30').trim() || '17:30';
   const prompt = document.getElementById('remoteTaskPrompt').value.trim() || '기본 설정값으로 자동 실행';
   const jobId = 'mob_' + Date.now();
+  const todayDate = typeof getLocalTodayStr === 'function' ? getLocalTodayStr() : new Date().toISOString().split('T')[0];
+  const nowTime = new Date().toTimeString().slice(0, 5);
   const scheduledStr = timingVal === 'now'
-    ? new Date().toISOString().slice(0, 16).replace('T', ' ')
-    : `${new Date().toISOString().split('T')[0]} 17:30`;
+    ? `${todayDate} ${nowTime}`
+    : `${todayDate} ${timeInputVal}`;
+
+  const cu = mockData.currentUser || {};
+  const authParams = typeof _getTeacherAuthParams === 'function' ? _getTeacherAuthParams() : {};
 
   await withButtonLoading(submitBtn, '예약 중...', async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
         await gasApi.post('enqueue_remote_task', {
+          ...authParams,
+          teacher_id: authParams.auth_teacher_id || cu.userId || '',
+          school_code: cu.schoolCode || '',
+          grade: cu.grade || '',
+          class_no: cu.classNo || '',
           data: {
             remote_id: jobId,
-            task_type: _inferRemoteTaskType(typeLabel),
+            teacher_id: authParams.auth_teacher_id || cu.userId || '',
+            school_code: cu.schoolCode || '',
+            grade: cu.grade || '',
+            class_no: cu.classNo || '',
+            task_type: taskType,
             title: typeLabel,
-            due_date: new Date().toISOString().split('T')[0],
+            due_date: todayDate,
             priority: timingVal === 'now' ? 'high' : 'normal',
-            is_mobile_task: 1,
+            is_mobile_task: true,
             scheduled_time: scheduledStr,
             target_info: prompt,
-            action_payload: JSON.stringify({ prompt, mode: timingVal }),
+            action_payload: JSON.stringify({ prompt, mode: timingVal, scheduled_time: scheduledStr }),
             exec_status: 'pending',
-            is_done: 0,
+            is_done: false,
             memo: 'EduFlow Mobile에서 예약됨'
           }
         });
@@ -2735,11 +2838,12 @@ async function handleCreateRemoteTask(e) {
 
     mockData.remoteTasks.unshift({
       id: jobId,
+      taskType,
       type: typeLabel,
-      timing: timingVal === 'now' ? '즉시 실행 요청됨' : '예약됨 (오늘 17:30)',
+      timing: timingVal === 'now' ? '즉시 실행 요청됨' : `예약됨 (오늘 ${timeInputVal})`,
       prompt,
-      status: timingVal === 'now' ? 'running' : 'pending',
-      log: timingVal === 'now' ? '집 PC EduFlow 백그라운드 워커가 작업을 수신했습니다...' : 'PC EduFlow 워커 대기 중'
+      status: 'pending',
+      log: timingVal === 'now' ? 'PC EduFlow 워커 수신 대기 중...' : `예약됨 (${timeInputVal}) · PC 실행 시 자동 처리`
     });
     document.getElementById('remoteTaskPrompt').value = '';
     renderRemoteTasks();
@@ -2748,26 +2852,38 @@ async function handleCreateRemoteTask(e) {
 }
 
 function renderRemoteTasks() {
+  renderPcAgentStatusBanner();
   const container = document.getElementById('remoteTasksContainer');
-  document.getElementById('remoteTaskCountBadge').innerText = `${mockData.remoteTasks.length}건 대기/완료`;
+  const countBadge = document.getElementById('remoteTaskCountBadge');
+  if (!container || !countBadge) return;
+
+  countBadge.innerText = `${mockData.remoteTasks.length}건 대기/완료`;
   if (mockData.remoteTasks.length === 0) {
     container.innerHTML = `<div class="bg-white p-5 rounded-2xl border border-slate-200/80 text-center text-xs text-slate-400">등록된 PC 원격 작업이 없습니다.</div>`;
     return;
   }
   container.innerHTML = mockData.remoteTasks.map(job => {
-    let badge = `<span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700">대기중</span>`;
-    if (job.status === 'running') badge = `<span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-100 text-indigo-700 animate-pulse">PC 실행중</span>`;
-    if (job.status === 'done') badge = `<span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-700">완료</span>`;
+    let badge = `<span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 shrink-0">대기중</span>`;
+    let logClass = 'text-indigo-600 font-medium';
+    if (job.status === 'running') {
+      badge = `<span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-100 text-indigo-700 animate-pulse shrink-0">PC 실행중</span>`;
+    } else if (job.status === 'done') {
+      badge = `<span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-700 shrink-0">완료</span>`;
+      logClass = 'text-emerald-700 font-medium';
+    } else if (job.status === 'error') {
+      badge = `<span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-rose-100 text-rose-700 shrink-0">실패</span>`;
+      logClass = 'text-rose-600 font-medium';
+    }
     return `
       <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-1.5">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-800">${job.type}</span>
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-xs font-bold text-slate-800 truncate">${_escapeAttFaceHtml(job.type)}</span>
           ${badge}
         </div>
-        <p class="text-[11px] text-slate-600">${job.prompt}</p>
-        <div class="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-100">
-          <span>${job.timing}</span>
-          <span class="text-indigo-600 font-medium">${job.log}</span>
+        <p class="text-[11px] text-slate-600">${_escapeAttFaceHtml(job.prompt)}</p>
+        <div class="flex items-center justify-between gap-2 text-[10px] text-slate-400 pt-1 border-t border-slate-100">
+          <span class="shrink-0">${_escapeAttFaceHtml(job.timing)}</span>
+          <span class="${logClass} text-right truncate">${_escapeAttFaceHtml(job.log)}</span>
         </div>
       </div>
     `;
@@ -3112,6 +3228,9 @@ if (typeof globalThis !== 'undefined') {
     _getAttFaceState,
     stopAttFaceCameraPanel,
     _resolveFaceItemImageDataUrl,
+    isPcAgentOnline,
+    formatPcLastSeenRelative,
+    REMOTE_TASK_LABELS,
     _extractClassTokens,
     _expandSubjectTokens,
     _findBestSubjectRoster,
@@ -3408,6 +3527,9 @@ if (typeof module !== 'undefined' && module.exports) {
     _getAttFaceState,
     stopAttFaceCameraPanel,
     _resolveFaceItemImageDataUrl,
+    isPcAgentOnline,
+    formatPcLastSeenRelative,
+    REMOTE_TASK_LABELS,
     _extractClassTokens,
     _expandSubjectTokens,
     _findBestSubjectRoster,
