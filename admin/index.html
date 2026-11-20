@@ -194,6 +194,9 @@
       <button type="button" data-tab="tab-lessons" id="mobile-tab-btn-lessons" class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:bg-slate-100 whitespace-nowrap flex items-center space-x-1.5">
         <i class="fa-solid fa-book-open text-xs"></i><span>교과·진도</span>
       </button>
+      <button type="button" data-tab="tab-schedules" id="mobile-tab-btn-schedules" class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:bg-slate-100 whitespace-nowrap flex items-center space-x-1.5">
+        <i class="fa-solid fa-calendar-days text-xs"></i><span>학사일정</span>
+      </button>
     </div>
 
     <!-- Mobile Sidebar Backdrop -->
@@ -284,6 +287,14 @@
               </div>
               <span id="badge-lessons-count" class="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded-full font-bold">0</span>
             </a>
+
+            <a href="#schedules" data-tab="tab-schedules" id="nav-item-schedules" class="group flex items-center justify-between px-3 py-2.5 text-xs font-medium rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-all">
+              <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-calendar-days text-sm w-4 text-center text-slate-400 group-hover:text-slate-700"></i>
+                <span>학사일정</span>
+              </div>
+              <span id="badge-schedules-count" class="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded-full font-bold">0</span>
+            </a>
           </nav>
         </div>
 
@@ -325,6 +336,18 @@
             <h1 class="text-xl lg:text-2xl font-bold text-slate-900 tracking-tight">가정통신문 회신·서명 대장</h1>
           </div>
           <div class="flex flex-wrap items-center gap-2">
+            <button type="button" onclick="openNoticeModal()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-xl hover:bg-indigo-700 transition">
+              <i class="fa-solid fa-plus text-xs"></i>
+              <span>가정통신문 작성</span>
+            </button>
+            <button type="button" id="letter-edit-btn" onclick="openNoticeModal(true)" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
+              <i class="fa-solid fa-pen text-slate-500 text-xs"></i>
+              <span>수정</span>
+            </button>
+            <button type="button" id="letter-delete-btn" onclick="deleteSelectedNotice()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold rounded-xl hover:bg-rose-100 transition">
+              <i class="fa-solid fa-trash text-rose-500 text-xs"></i>
+              <span>삭제</span>
+            </button>
             <button type="button" onclick="refreshAdminData()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
               <i class="fa-solid fa-rotate text-slate-500 text-xs refresh-spin-icon"></i>
               <span>새로고침</span>
@@ -540,9 +563,14 @@
               </button>
               <button type="button" id="att-daily-today" class="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-semibold">오늘</button>
             </div>
-            <button type="button" onclick="exportDailyAttendanceCsv()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 transition self-start sm:self-auto">
-              <i class="fa-solid fa-file-excel text-xs"></i><span>일자별 CSV 다운로드</span>
-            </button>
+            <div class="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+              <button type="button" onclick="openAttendanceModal()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition">
+                <i class="fa-solid fa-plus text-xs"></i><span>출결 등록</span>
+              </button>
+              <button type="button" onclick="exportDailyAttendanceCsv()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 transition">
+                <i class="fa-solid fa-file-excel text-xs"></i><span>일자별 CSV 다운로드</span>
+              </button>
+            </div>
           </div>
 
           <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -579,6 +607,7 @@
                     <th class="py-2.5 px-3 text-center">교시 정보</th>
                     <th class="py-2.5 px-4">사유</th>
                     <th class="py-2.5 px-3 text-center">교사 확인</th>
+                    <th class="py-2.5 px-3 text-center">관리</th>
                   </tr>
                 </thead>
                 <tbody id="att-daily-tbody" class="divide-y divide-slate-100"></tbody>
@@ -657,6 +686,7 @@
                       <th class="py-2.5 px-3">유형</th>
                       <th class="py-2.5 px-3">사유</th>
                       <th class="py-2.5 px-3 text-center">확인</th>
+                      <th class="py-2.5 px-3 text-center">관리</th>
                     </tr>
                   </thead>
                   <tbody id="att-detail-tbody" class="divide-y divide-slate-100"></tbody>
@@ -665,7 +695,12 @@
             </div>
 
             <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-              <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 font-bold text-xs text-slate-800">증빙 서류 추적 (`서류_추적`)</div>
+              <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="font-bold text-xs text-slate-800">증빙 서류 추적 (`서류_추적`)</span>
+                <button type="button" onclick="openDocTrackingModal()" class="inline-flex items-center space-x-1 px-2.5 py-1 bg-indigo-600 text-white rounded-lg text-[11px] font-semibold hover:bg-indigo-700 transition">
+                  <i class="fa-solid fa-plus text-[10px]"></i><span>서류 추가</span>
+                </button>
+              </div>
               <div class="overflow-x-auto max-h-[420px]">
                 <table class="w-full text-left border-collapse text-xs">
                   <thead>
@@ -694,8 +729,11 @@
             <h2 class="text-xl lg:text-2xl font-bold text-slate-900">우리 반 명렬표 & 계정 관리</h2>
             <p class="text-xs text-slate-500 mt-1">학생·학부모 계정 연동 현황, 가입 승인 대기 처리 및 비밀번호 초기화</p>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <input type="text" id="roster-search-input" placeholder="이름·학번·ID 검색..." class="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 w-48 focus:outline-none focus:border-indigo-500">
+            <button type="button" onclick="openRosterStudentModal()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-xl hover:bg-indigo-700 transition">
+              <i class="fa-solid fa-user-plus text-xs"></i><span>학생 추가</span>
+            </button>
             <button type="button" onclick="refreshAdminData()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
               <i class="fa-solid fa-rotate text-slate-500 text-xs refresh-spin-icon"></i><span>새로고침</span>
             </button>
@@ -749,6 +787,7 @@
                   <th class="py-2.5 px-3">학부모 연락처</th>
                   <th class="py-2.5 px-3 text-center">학부모 상태</th>
                   <th class="py-2.5 px-4 text-center">비밀번호 초기화</th>
+                  <th class="py-2.5 px-3 text-center">관리</th>
                 </tr>
               </thead>
               <tbody id="roster-tbody" class="divide-y divide-slate-100"></tbody>
@@ -816,7 +855,12 @@
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-            <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 font-bold text-xs text-slate-800">학급 공지게시판 (`학급_공지게시판`)</div>
+            <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between gap-2">
+              <span class="font-bold text-xs text-slate-800">학급 공지게시판 (`학급_공지게시판`)</span>
+              <button type="button" onclick="openBoardNoticeModal()" class="inline-flex items-center space-x-1 px-2.5 py-1 bg-indigo-600 text-white rounded-lg text-[11px] font-semibold hover:bg-indigo-700 transition">
+                <i class="fa-solid fa-plus text-[10px]"></i><span>공지 작성</span>
+              </button>
+            </div>
             <div id="board-notices-list" class="divide-y divide-slate-100 max-h-[380px] overflow-y-auto"></div>
           </div>
           <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
@@ -858,6 +902,10 @@
               <span class="text-sm font-bold text-slate-800">학생을 선택해 주세요</span>
             </div>
             <div id="counsel-chat-messages" class="flex-1 p-5 space-y-3 overflow-y-auto max-h-[440px] bg-slate-50/40"></div>
+            <form id="counsel-reply-form" class="p-3 border-t border-slate-200 bg-white flex items-center gap-2">
+              <input id="counsel-reply-input" type="text" placeholder="선택한 학생에게 담임 답장 보내기..." class="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+              <button type="submit" id="counsel-reply-submit-btn" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition">전송</button>
+            </form>
           </div>
         </div>
       </div>
@@ -976,9 +1024,49 @@
                   <th class="py-2.5 px-4">이름</th>
                   <th class="py-2.5 px-3 text-center">출결상태</th>
                   <th class="py-2.5 px-4">비고</th>
+                  <th class="py-2.5 px-3 text-center">관리</th>
                 </tr>
               </thead>
               <tbody id="lesson-att-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================= -->
+      <!-- TAB 7: 학사일정 (`Schedules`)                                      -->
+      <!-- ================================================================= -->
+      <div id="tab-schedules" class="tab-content hidden flex-1 p-4 lg:p-7 max-w-7xl w-full mx-auto space-y-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h2 class="text-xl lg:text-2xl font-bold text-slate-900">학사일정 관리</h2>
+            <p class="text-xs text-slate-500 mt-1">학교·학급 공개 일정 및 교사 개인 일정 등록·수정·삭제</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" onclick="openScheduleModal()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition">
+              <i class="fa-solid fa-plus text-xs"></i><span>일정 추가</span>
+            </button>
+            <button type="button" onclick="refreshAdminData()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
+              <i class="fa-solid fa-rotate text-slate-500 text-xs refresh-spin-icon"></i><span>새로고침</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+          <div class="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 font-bold text-xs text-slate-800">학사일정 목록 (`Schedules`)</div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold text-[11px] whitespace-nowrap">
+                  <th class="py-2.5 px-4">기간 / 일자</th>
+                  <th class="py-2.5 px-4">일정명</th>
+                  <th class="py-2.5 px-3 text-center">구분</th>
+                  <th class="py-2.5 px-3 text-center">공개 범위</th>
+                  <th class="py-2.5 px-4">메모</th>
+                  <th class="py-2.5 px-3 text-center">관리</th>
+                </tr>
+              </thead>
+              <tbody id="schedules-tbody" class="divide-y divide-slate-100"></tbody>
             </table>
           </div>
         </div>
@@ -1170,6 +1258,316 @@
         <div class="flex justify-end gap-2 pt-2">
           <button type="button" onclick="closeLessonProgressModal()" class="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">취소</button>
           <button type="submit" id="lp-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Roster Student Add/Edit Modal -->
+  <div id="roster-student-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        <h3 id="roster-student-modal-title" class="text-sm font-bold text-slate-900">학생 추가</h3>
+        <button type="button" onclick="closeRosterStudentModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="roster-student-form" class="p-5 space-y-3.5">
+        <input type="hidden" id="rs-remote-id" value="">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="rs-student-id" class="block text-xs font-semibold text-slate-700 mb-1">학번</label>
+            <input id="rs-student-id" type="text" required placeholder="예: 10501" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label for="rs-student-no" class="block text-xs font-semibold text-slate-700 mb-1">번호</label>
+            <input id="rs-student-no" type="number" min="1" step="1" placeholder="예: 1" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+        <div>
+          <label for="rs-name" class="block text-xs font-semibold text-slate-700 mb-1">학생 이름</label>
+          <input id="rs-name" type="text" required placeholder="예: 홍길동" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label for="rs-phone" class="block text-xs font-semibold text-slate-700 mb-1">학생 연락처 (선택)</label>
+          <input id="rs-phone" type="tel" maxlength="20" placeholder="010-1234-5678" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div id="rs-create-only-wrap" class="space-y-3">
+          <div>
+            <label for="rs-init-pw" class="block text-xs font-semibold text-slate-700 mb-1">초기 비밀번호 (미입력 시 학번)</label>
+            <input id="rs-init-pw" type="text" placeholder="예: 090101" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+          </div>
+          <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+            <input id="rs-create-parent" type="checkbox" checked class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+            <span>연동 학부모 계정(<span class="font-mono text-indigo-600">p+학번</span>) 자동 생성</span>
+          </label>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeRosterStudentModal()" class="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">취소</button>
+          <button type="submit" id="rs-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Notice Add/Edit Modal -->
+  <div id="notice-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        <h3 id="notice-modal-title" class="text-sm font-bold text-slate-900">가정통신문 작성</h3>
+        <button type="button" onclick="closeNoticeModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="notice-form" class="p-5 space-y-3.5">
+        <input type="hidden" id="nt-remote-id" value="">
+        <div>
+          <label for="nt-title" class="block text-xs font-semibold text-slate-700 mb-1">제목</label>
+          <input id="nt-title" type="text" required placeholder="예: 1학기 현장체험학습 안내" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="nt-category" class="block text-xs font-semibold text-slate-700 mb-1">구분</label>
+            <input id="nt-category" type="text" value="가정통신문" placeholder="가정통신문" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label for="nt-due-date" class="block text-xs font-semibold text-slate-700 mb-1">회신 마감일</label>
+            <input id="nt-due-date" type="date" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+        <div>
+          <label for="nt-content" class="block text-xs font-semibold text-slate-700 mb-1">본문 내용</label>
+          <textarea id="nt-content" rows="4" required placeholder="가정통신문 내용을 입력하세요" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"></textarea>
+        </div>
+        <div>
+          <label for="nt-attachment-url" class="block text-xs font-semibold text-slate-700 mb-1">첨부 링크 (선택)</label>
+          <input id="nt-attachment-url" type="url" placeholder="https://drive.google.com/..." class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3 items-center">
+          <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+            <input id="nt-requires-reply" type="checkbox" checked class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+            <span>회신/서명 필요</span>
+          </label>
+          <div>
+            <select id="nt-signature-mode" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white">
+              <option value="single">단일 서명 (학부모/학생)</option>
+              <option value="both">학생+학부모 모두 서명</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeNoticeModal()" class="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">취소</button>
+          <button type="submit" id="nt-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">저장 및 게시</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Board Notice Add/Edit Modal -->
+  <div id="board-notice-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        <h3 id="board-notice-modal-title" class="text-sm font-bold text-slate-900">학급 공지 작성</h3>
+        <button type="button" onclick="closeBoardNoticeModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="board-notice-form" class="p-5 space-y-3.5">
+        <input type="hidden" id="bn-remote-id" value="">
+        <div>
+          <label for="bn-title" class="block text-xs font-semibold text-slate-700 mb-1">공지 제목</label>
+          <input id="bn-title" type="text" required placeholder="예: 내일 체육복 등교 안내" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3 items-center">
+          <div>
+            <label for="bn-source-type" class="block text-xs font-semibold text-slate-700 mb-1">출처 / 구분</label>
+            <select id="bn-source-type" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white">
+              <option value="담임 공지">담임 공지</option>
+              <option value="학교종이">학교종이</option>
+              <option value="학급 카톡">학급 카톡</option>
+            </select>
+          </div>
+          <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer pt-5">
+            <input id="bn-is-pinned" type="checkbox" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+            <span>상단 고정 (📌)</span>
+          </label>
+        </div>
+        <div>
+          <label for="bn-summary" class="block text-xs font-semibold text-slate-700 mb-1">핵심 요약 (선택)</label>
+          <input id="bn-summary" type="text" placeholder="한 줄 요약" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label for="bn-content" class="block text-xs font-semibold text-slate-700 mb-1">공지 내용</label>
+          <textarea id="bn-content" rows="4" placeholder="공지 본문을 입력하세요" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"></textarea>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeBoardNoticeModal()" class="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">취소</button>
+          <button type="submit" id="bn-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Attendance Add/Edit Modal -->
+  <div id="attendance-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        <h3 id="attendance-modal-title" class="text-sm font-bold text-slate-900">일일 출결 등록</h3>
+        <button type="button" onclick="closeAttendanceModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="attendance-form" class="p-5 space-y-3.5">
+        <input type="hidden" id="att-modal-remote-id" value="">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="att-modal-date" class="block text-xs font-semibold text-slate-700 mb-1">일자</label>
+            <input id="att-modal-date" type="date" required class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label for="att-modal-student" class="block text-xs font-semibold text-slate-700 mb-1">학생</label>
+            <select id="att-modal-student" required class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white"></select>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="att-modal-type" class="block text-xs font-semibold text-slate-700 mb-1">출결 구분</label>
+            <select id="att-modal-type" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white">
+              <option value="출석">출석</option>
+              <option value="질병결석">질병결석</option>
+              <option value="미인정결석">미인정결석</option>
+              <option value="인정결석">인정결석</option>
+              <option value="질병지각">질병지각</option>
+              <option value="미인정지각">미인정지각</option>
+              <option value="질병조퇴">질병조퇴</option>
+              <option value="미인정조퇴">미인정조퇴</option>
+              <option value="체험학습">체험학습</option>
+            </select>
+          </div>
+          <div>
+            <label for="att-modal-period" class="block text-xs font-semibold text-slate-700 mb-1">교시 정보 (선택)</label>
+            <input id="att-modal-period" type="text" placeholder="예: 1~2교시" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+        <div>
+          <label for="att-modal-reason" class="block text-xs font-semibold text-slate-700 mb-1">사유</label>
+          <input id="att-modal-reason" type="text" placeholder="예: 감기 몸살로 인한 결석" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeAttendanceModal()" class="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">취소</button>
+          <button type="submit" id="att-modal-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Document Tracking Add/Edit Modal -->
+  <div id="doc-tracking-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        <h3 id="doc-tracking-modal-title" class="text-sm font-bold text-slate-900">증빙 서류 추가</h3>
+        <button type="button" onclick="closeDocTrackingModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="doc-tracking-form" class="p-5 space-y-3.5">
+        <input type="hidden" id="dt-remote-id" value="">
+        <div>
+          <label for="dt-student" class="block text-xs font-semibold text-slate-700 mb-1">학생</label>
+          <select id="dt-student" required class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white"></select>
+        </div>
+        <div>
+          <label for="dt-doc-name" class="block text-xs font-semibold text-slate-700 mb-1">서류명</label>
+          <input id="dt-doc-name" type="text" required placeholder="예: 질병결석 증빙서류(진단서)" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="dt-due-date" class="block text-xs font-semibold text-slate-700 mb-1">마감일</label>
+            <input id="dt-due-date" type="date" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label for="dt-status" class="block text-xs font-semibold text-slate-700 mb-1">상태</label>
+            <select id="dt-status" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white">
+              <option value="pending">미제출</option>
+              <option value="submitted">제출됨</option>
+              <option value="closed">확인완료</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label for="dt-memo" class="block text-xs font-semibold text-slate-700 mb-1">비고 (선택)</label>
+          <input id="dt-memo" type="text" placeholder="메모 입력" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeDocTrackingModal()" class="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">취소</button>
+          <button type="submit" id="dt-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Subject Attendance Edit Modal -->
+  <div id="subject-att-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-2xl max-w-sm w-full shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        <h3 class="text-sm font-bold text-slate-900">교과 출결 수정</h3>
+        <button type="button" onclick="closeSubjectAttModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="subject-att-form" class="p-5 space-y-3.5">
+        <input type="hidden" id="sa-remote-id" value="">
+        <p id="sa-target-label" class="text-xs font-semibold text-slate-700"></p>
+        <div>
+          <label for="sa-status" class="block text-xs font-semibold text-slate-700 mb-1">출결 상태</label>
+          <select id="sa-status" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white">
+            <option value="출석">출석</option>
+            <option value="결석">결석</option>
+            <option value="지각">지각</option>
+            <option value="조퇴">조퇴</option>
+            <option value="공결">공결</option>
+          </select>
+        </div>
+        <div>
+          <label for="sa-memo" class="block text-xs font-semibold text-slate-700 mb-1">비고</label>
+          <input id="sa-memo" type="text" placeholder="사유/비고 입력" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeSubjectAttModal()" class="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">취소</button>
+          <button type="submit" id="sa-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Schedule Add/Edit Modal -->
+  <div id="schedule-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        <h3 id="schedule-modal-title" class="text-sm font-bold text-slate-900">학사일정 추가</h3>
+        <button type="button" onclick="closeScheduleModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="schedule-form" class="p-5 space-y-3.5">
+        <input type="hidden" id="sc-remote-id" value="">
+        <div>
+          <label for="sc-title" class="block text-xs font-semibold text-slate-700 mb-1">일정명</label>
+          <input id="sc-title" type="text" required placeholder="예: 2학기 기말고사" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="sc-start-date" class="block text-xs font-semibold text-slate-700 mb-1">시작일</label>
+            <input id="sc-start-date" type="date" required class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label for="sc-end-date" class="block text-xs font-semibold text-slate-700 mb-1">종료일</label>
+            <input id="sc-end-date" type="date" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3 items-center">
+          <div>
+            <label for="sc-category" class="block text-xs font-semibold text-slate-700 mb-1">구분</label>
+            <input id="sc-category" type="text" value="학사일정" placeholder="학사일정" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+          </div>
+          <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer pt-5">
+            <input id="sc-is-private" type="checkbox" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+            <span>교사 개인 일정 (비공개)</span>
+          </label>
+        </div>
+        <div>
+          <label for="sc-memo" class="block text-xs font-semibold text-slate-700 mb-1">메모 (선택)</label>
+          <textarea id="sc-memo" rows="2" placeholder="세부 안내 또는 메모" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"></textarea>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeScheduleModal()" class="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">취소</button>
+          <button type="submit" id="sc-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">저장</button>
         </div>
       </form>
     </div>

@@ -277,6 +277,7 @@ function buildLettersLedgerRows() {
       reply_file_drive_url: reply ? String(reply.reply_file_drive_url || '') : '',
       signed_at: reply ? String(reply.signed_at || '') : '',
       submitted_at: reply ? String(reply.submitted_at || reply.updated_at || '') : '',
+      reply_remote_id: reply ? String(reply.remote_id || `${noticeId}_${sid}`) : '',
     };
   });
 
@@ -298,6 +299,11 @@ function renderLettersTab() {
       }).join('');
     }
   }
+
+  const editBtn = document.getElementById('letter-edit-btn');
+  const delBtn = document.getElementById('letter-delete-btn');
+  if (editBtn) editBtn.disabled = !notice;
+  if (delBtn) delBtn.disabled = !notice;
 
   const metaEl = document.getElementById('letter-doc-meta');
   if (metaEl) {
@@ -350,14 +356,17 @@ function renderLettersTab() {
       <th class="py-3 px-4 text-center">학생 서명</th>
       <th class="py-3 px-4 text-center">학부모 서명</th>
       <th class="py-3 px-4 text-center">제출 일시</th>
+      <th class="py-3 px-3 text-center">관리</th>
     </tr>
   `;
 
   if (filteredRows.length === 0) {
-    const colSpan = 6 + (schema.length > 0 ? schema.length : 1);
+    const colSpan = 7 + (schema.length > 0 ? schema.length : 1);
     tbody.innerHTML = `<tr><td colspan="${colSpan}" class="py-10 text-center text-slate-400">표시할 학생 회신 데이터가 없습니다.</td></tr>`;
     return;
   }
+
+  const activeNoticeId = notice ? String(notice.remote_id || notice.id || '') : '';
 
   tbody.innerHTML = filteredRows.map((r) => {
     const isOk = r.status === 'completed';
@@ -393,9 +402,71 @@ function renderLettersTab() {
         <td class="py-3 px-4 text-center">${stuSigCell}</td>
         <td class="py-3 px-4 text-center">${parSigCell}</td>
         <td class="py-3 px-4 text-center text-slate-500 text-[11px] whitespace-nowrap tabular-nums">${escapeHtml(r.submitted_at || '-')}</td>
+        <td class="py-3 px-3 text-center whitespace-nowrap">
+          ${isOk
+            ? `<button type="button" onclick="deleteNoticeReplyRow('${_escapeJsAttr(activeNoticeId)}', '${_escapeJsAttr(r.student_id)}', '${_escapeJsAttr(r.reply_remote_id)}', '${_escapeJsAttr(r.student_name)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">회신 삭제</button>`
+            : '<span class="text-slate-300 text-[11px]">-</span>'}
+        </td>
       </tr>
     `;
   }).join('');
+}
+
+function openNoticeModal(isEdit = false) {
+  const notices = (adminState.overview && adminState.overview.notices) || [];
+  const target = isEdit
+    ? (notices.find((n) => String(n.remote_id || n.id || '') === adminState.selectedNoticeId) || notices[0] || null)
+    : null;
+  if (isEdit && !target) {
+    alert('수정할 가정통신문을 먼저 선택해 주세요.');
+    return;
+  }
+  document.getElementById('notice-modal-title').textContent = target ? '가정통신문 수정' : '가정통신문 작성';
+  document.getElementById('nt-remote-id').value = target ? String(target.remote_id || target.id || '') : '';
+  document.getElementById('nt-title').value = target ? String(target.title || '') : '';
+  document.getElementById('nt-category').value = target ? String(target.category || '가정통신문') : '가정통신문';
+  document.getElementById('nt-due-date').value = target ? String(target.due_date || '') : '';
+  document.getElementById('nt-content').value = target ? String(target.content || '') : '';
+  document.getElementById('nt-attachment-url').value = target ? String(target.attachment_url || '') : '';
+  document.getElementById('nt-requires-reply').checked = target ? (target.requires_reply !== false && target.requires_reply !== 0 && target.requires_reply !== '0') : true;
+  document.getElementById('nt-signature-mode').value = (target && String(target.signature_mode || '').toLowerCase() === 'both') ? 'both' : 'single';
+  document.getElementById('notice-modal').classList.remove('hidden');
+}
+
+function closeNoticeModal() {
+  document.getElementById('notice-modal').classList.add('hidden');
+}
+
+async function deleteSelectedNotice() {
+  const notices = (adminState.overview && adminState.overview.notices) || [];
+  const target = notices.find((n) => String(n.remote_id || n.id || '') === adminState.selectedNoticeId) || notices[0] || null;
+  if (!target) {
+    alert('삭제할 가정통신문을 선택해 주세요.');
+    return;
+  }
+  const nid = String(target.remote_id || target.id || '');
+  if (!confirm(`"${target.title || nid}" 가정통신문을 삭제하시겠습니까?`)) return;
+  try {
+    await callApi('delete_notice', { remote_id: nid }, true);
+    adminState.selectedNoticeId = '';
+    await refreshAdminData();
+  } catch (err) {
+    alert(`가정통신문 삭제 실패: ${err.message}`);
+  }
+}
+
+async function deleteNoticeReplyRow(noticeId, studentId, replyRemoteId, studentName) {
+  if (!confirm(`${studentName || studentId} 학생의 가정통신문 회신 내역을 삭제(초기화)하시겠습니까?`)) return;
+  try {
+    await callApi('delete_notice_reply', {
+      remote_id: replyRemoteId,
+      notice_id: noticeId,
+      student_id: studentId,
+    }, true);
+    await refreshAdminData();
+  } catch (err) {
+    alert(`회신 삭제 실패: ${err.message}`);
+  }
 }
 
 function openSignatureModal(signer, timestamp, url) {
@@ -664,7 +735,7 @@ function renderDailyAttendancePanel() {
   const tbody = document.getElementById('att-daily-tbody');
   if (!tbody) return;
   tbody.innerHTML = rows.length === 0
-    ? '<tr><td colspan="6" class="py-8 text-center text-slate-400">학급 학생 명렬이 없습니다.</td></tr>'
+    ? '<tr><td colspan="7" class="py-8 text-center text-slate-400">학급 학생 명렬이 없습니다.</td></tr>'
     : rows.map((r) => {
         const st = r.status;
         let badgeCls = 'bg-emerald-100 text-emerald-700';
@@ -678,6 +749,11 @@ function renderDailyAttendancePanel() {
             ? '<span class="text-emerald-600 font-semibold text-[11px]">확인완료</span>'
             : `<button type="button" onclick="confirmAttendanceRow('${escapeHtml(r.remote_id)}')" class="px-2 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-[11px] font-semibold">담임 확인</button>`);
 
+        const manageCell = r.has_record
+          ? `<button type="button" onclick="openAttendanceModal('${_escapeJsAttr(r.remote_id)}', '${_escapeJsAttr(r.student_id)}', '${_escapeJsAttr(selectedDate)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
+             <button type="button" onclick="deleteAttendanceRow('${_escapeJsAttr(r.remote_id)}', '${_escapeJsAttr(r.student_name)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>`
+          : `<button type="button" onclick="openAttendanceModal('', '${_escapeJsAttr(r.student_id)}', '${_escapeJsAttr(selectedDate)}')" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[11px] font-semibold">등록</button>`;
+
         return `
           <tr class="hover:bg-slate-50">
             <td class="py-2.5 px-3 text-center font-mono text-slate-500 tabular-nums">${escapeHtml(r.student_id || r.student_no)}</td>
@@ -686,6 +762,7 @@ function renderDailyAttendancePanel() {
             <td class="py-2.5 px-3 text-center text-slate-600 whitespace-nowrap">${escapeHtml(r.period_info)}</td>
             <td class="py-2.5 px-4 text-slate-600">${escapeHtml(r.reason)}</td>
             <td class="py-2.5 px-3 text-center whitespace-nowrap">${confirmCell}</td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap space-x-1">${manageCell}</td>
           </tr>
         `;
       }).join('');
@@ -802,7 +879,7 @@ function renderAttendanceTab() {
 
   const detTbody = document.getElementById('att-detail-tbody');
   detTbody.innerHTML = filteredAtt.length === 0
-    ? '<tr><td colspan="5" class="py-8 text-center text-slate-400">해당 기간 출결 기록이 없습니다.</td></tr>'
+    ? '<tr><td colspan="6" class="py-8 text-center text-slate-400">해당 기간 출결 기록이 없습니다.</td></tr>'
     : filteredAtt.map((a) => {
         const rid = String(a.remote_id || '');
         const confirmed = Boolean(a.teacher_confirmed);
@@ -816,6 +893,10 @@ function renderAttendanceTab() {
               ${confirmed
                 ? '<span class="text-emerald-600 font-semibold text-[11px]">확인됨</span>'
                 : `<button type="button" onclick="confirmAttendanceRow('${escapeHtml(rid)}')" class="px-2 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-[11px] font-semibold">담임 확인</button>`}
+            </td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap space-x-1">
+              <button type="button" onclick="openAttendanceModal('${_escapeJsAttr(rid)}', '${_escapeJsAttr(a.student_id)}', '${_escapeJsAttr(a.date)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
+              <button type="button" onclick="deleteAttendanceRow('${_escapeJsAttr(rid)}', '${_escapeJsAttr(a.student_name || a.student_id)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
             </td>
           </tr>
         `;
@@ -842,7 +923,11 @@ function renderAttendanceTab() {
             <td class="py-2.5 px-3 text-slate-700">${escapeHtml(d.doc_name || d.rule_name || d.rule_code || '증빙서류')}</td>
             <td class="py-2.5 px-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">${escapeHtml(d.due_date || '-')}</td>
             <td class="py-2.5 px-3 text-center whitespace-nowrap">${statusHtml}</td>
-            <td class="py-2.5 px-3 text-center whitespace-nowrap">${actionBtn}</td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap space-x-1">
+              ${actionBtn}
+              <button type="button" onclick="openDocTrackingModal('${_escapeJsAttr(rid)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
+              <button type="button" onclick="deleteDocTrackingRow('${_escapeJsAttr(rid)}', '${_escapeJsAttr(d.student_name || d.student_id)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
+            </td>
           </tr>
         `;
       }).join('');
@@ -946,7 +1031,7 @@ function renderRosterTab() {
 
   const tbody = document.getElementById('roster-tbody');
   tbody.innerHTML = filtered.length === 0
-    ? '<tr><td colspan="10" class="py-8 text-center text-slate-400">조회된 학생 계정이 없습니다.</td></tr>'
+    ? '<tr><td colspan="11" class="py-8 text-center text-slate-400">조회된 학생 계정이 없습니다.</td></tr>'
     : filtered.map((s) => {
         const sid = String(s.student_id || '').trim();
         const sRid = String(s.remote_id || sid);
@@ -987,9 +1072,42 @@ function renderRosterTab() {
               <button type="button" onclick="openPwResetModal('student', '${escapeHtml(sRid)}', '${escapeHtml(s.name || sLogin)} (학생)')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">학생 비번초기화</button>
               ${p ? `<button type="button" onclick="openPwResetModal('parent', '${escapeHtml(pRid)}', '${escapeHtml(p.name || pLogin)} (학부모)')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">학부모 비번초기화</button>` : ''}
             </td>
+            <td class="py-3 px-3 text-center whitespace-nowrap space-x-1">
+              <button type="button" onclick="openRosterStudentModal('${_escapeJsAttr(sRid)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
+              <button type="button" onclick="deleteRosterStudent('${_escapeJsAttr(sRid)}', '${_escapeJsAttr(s.name || sLogin)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
+            </td>
           </tr>
         `;
       }).join('');
+}
+
+function openRosterStudentModal(remoteId = '') {
+  const students = (adminState.overview && adminState.overview.students) || [];
+  const target = remoteId ? students.find((s) => String(s.remote_id || s.student_id || '') === String(remoteId)) : null;
+  document.getElementById('roster-student-modal-title').textContent = target ? '학생 정보 수정' : '학생 추가';
+  document.getElementById('rs-remote-id').value = target ? String(target.remote_id || target.student_id || '') : '';
+  document.getElementById('rs-student-id').value = target ? String(target.student_id || '') : '';
+  document.getElementById('rs-student-no').value = target && target.student_no !== null && target.student_no !== undefined ? String(target.student_no) : '';
+  document.getElementById('rs-name').value = target ? String(target.name || target.student_name || '') : '';
+  document.getElementById('rs-phone').value = target ? String(target.phone || '') : '';
+  document.getElementById('rs-init-pw').value = '';
+  const createWrap = document.getElementById('rs-create-only-wrap');
+  if (createWrap) createWrap.classList.toggle('hidden', Boolean(target));
+  document.getElementById('roster-student-modal').classList.remove('hidden');
+}
+
+function closeRosterStudentModal() {
+  document.getElementById('roster-student-modal').classList.add('hidden');
+}
+
+async function deleteRosterStudent(remoteId, name) {
+  if (!confirm(`"${name || remoteId}" 학생 계정과 연동된 학부모 계정을 삭제(전출 처리)하시겠습니까?`)) return;
+  try {
+    await callApi('admin_delete_roster_student', { remote_id: remoteId }, true);
+    await refreshAdminData();
+  } catch (err) {
+    alert(`학생 삭제 실패: ${err.message}`);
+  }
 }
 
 async function reviewPendingAccount(targetRole, remoteId, decision) {
@@ -1081,16 +1199,23 @@ function renderLedgerTab() {
   const boardList = document.getElementById('board-notices-list');
   boardList.innerHTML = boardNotices.length === 0
     ? '<div class="p-6 text-center text-xs text-slate-400">등록된 공지사항이 없습니다.</div>'
-    : boardNotices.map((b) => `
-      <div class="p-4 hover:bg-slate-50 space-y-1">
+    : boardNotices.map((b) => {
+        const rid = String(b.remote_id || b.id || '');
+        return `
+      <div class="p-4 hover:bg-slate-50 space-y-1.5">
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs font-bold text-slate-900">${b.is_pinned ? '📌 ' : ''}${escapeHtml(b.title || '공지')}</span>
-          <span class="text-[10px] px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold">${escapeHtml(b.source_type || '담임 공지')}</span>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <span class="text-[10px] px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold">${escapeHtml(b.source_type || '담임 공지')}</span>
+            <button type="button" onclick="openBoardNoticeModal('${_escapeJsAttr(rid)}')" class="px-2 py-0.5 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded text-[11px] font-semibold">수정</button>
+            <button type="button" onclick="deleteBoardNoticeRow('${_escapeJsAttr(rid)}', '${_escapeJsAttr(b.title || '공지')}')" class="px-2 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-[11px] font-semibold">삭제</button>
+          </div>
         </div>
         <p class="text-xs text-slate-600 line-clamp-2">${escapeHtml(b.summary || b.content || '')}</p>
         <div class="text-[11px] text-slate-400">${escapeHtml(b.published_at || b.created_at || '')}</div>
       </div>
-    `).join('');
+    `;
+      }).join('');
 
   const notiList = document.getElementById('sent-notifications-list');
   notiList.innerHTML = notifications.length === 0
@@ -1182,15 +1307,46 @@ function renderCounselTab() {
     const role = String(m.sender_role || m.role || '').toLowerCase();
     const isTeacher = role === 'teacher';
     const senderLabel = m.sender_name || (isTeacher ? '담임교사' : (role === 'parent' ? '학부모' : '학생'));
+    const mRid = String(m.remote_id || m.id || '');
+    const mText = String(m.message || m.text || '');
     return `
       <div class="flex flex-col ${isTeacher ? 'items-end' : 'items-start'}">
-        <div class="text-[10px] text-slate-400 mb-1">${escapeHtml(senderLabel)} · ${escapeHtml(m.created_at || '')}</div>
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-[10px] text-slate-400">${escapeHtml(senderLabel)} · ${escapeHtml(m.created_at || '')}</span>
+          ${isTeacher && mRid ? `
+            <button type="button" onclick="editCounselMessage('${_escapeJsAttr(mRid)}', '${_escapeJsAttr(mText)}')" class="text-[10px] text-indigo-600 hover:underline font-semibold">수정</button>
+            <button type="button" onclick="deleteCounselMessage('${_escapeJsAttr(mRid)}')" class="text-[10px] text-rose-600 hover:underline font-semibold">삭제</button>
+          ` : ''}
+        </div>
         <div class="max-w-[85%] px-3.5 py-2.5 rounded-2xl text-xs leading-relaxed ${isTeacher ? 'bg-indigo-600 text-white rounded-tr-xs' : 'bg-white border border-slate-200 text-slate-800 rounded-tl-xs'}">
-          ${escapeHtml(m.message || m.text || '')}
+          ${escapeHtml(mText)}
         </div>
       </div>
     `;
   }).join('');
+}
+
+async function editCounselMessage(remoteId, currentText) {
+  const nextText = prompt('수정할 상담 메시지 내용을 입력하세요:', currentText || '');
+  if (nextText === null) return;
+  const trimmed = nextText.trim();
+  if (!trimmed) return;
+  try {
+    await callApi('update_chat_message', { remote_id: remoteId, message: trimmed }, true);
+    await refreshAdminData();
+  } catch (err) {
+    alert(`메시지 수정 실패: ${err.message}`);
+  }
+}
+
+async function deleteCounselMessage(remoteId) {
+  if (!confirm('이 상담 메시지를 삭제하시겠습니까?')) return;
+  try {
+    await callApi('delete_chat_message', { remote_id: remoteId }, true);
+    await refreshAdminData();
+  } catch (err) {
+    alert(`메시지 삭제 실패: ${err.message}`);
+  }
 }
 
 function selectCounselStudent(sid) {
@@ -1780,8 +1936,9 @@ function renderLessonsTab() {
   const attTbody = document.getElementById('lesson-att-tbody');
   if (attTbody) {
     attTbody.innerHTML = filteredAtt.length === 0
-      ? '<tr><td colspan="8" class="py-8 text-center text-slate-400">조회된 교과 출결 기록이 없습니다.</td></tr>'
+      ? '<tr><td colspan="9" class="py-8 text-center text-slate-400">조회된 교과 출결 기록이 없습니다.</td></tr>'
       : filteredAtt.map((a) => {
+          const rid = String(a.remote_id || '');
           const st = String(a.status || '출석');
           let badgeCls = 'bg-emerald-100 text-emerald-700';
           if (st.includes('결석')) badgeCls = 'bg-rose-100 text-rose-700';
@@ -1798,6 +1955,10 @@ function renderLessonsTab() {
               <td class="py-2.5 px-4 font-bold text-slate-900">${escapeHtml(a.student_name || '-')}</td>
               <td class="py-2.5 px-3 text-center whitespace-nowrap"><span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${badgeCls}">${escapeHtml(st)}</span></td>
               <td class="py-2.5 px-4 text-slate-500">${escapeHtml(a.memo || '-')}</td>
+              <td class="py-2.5 px-3 text-center whitespace-nowrap space-x-1">
+                <button type="button" onclick="openSubjectAttModal('${_escapeJsAttr(rid)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
+                <button type="button" onclick="deleteSubjectAttRow('${_escapeJsAttr(rid)}', '${_escapeJsAttr(a.student_name || a.student_id)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
+              </td>
             </tr>
           `;
         }).join('');
@@ -2102,6 +2263,7 @@ function renderAll() {
   renderLedgerTab();
   renderCounselTab();
   renderLessonsTab();
+  renderSchedulesTab();
 }
 
 function bindEvents() {
@@ -2414,6 +2576,407 @@ function bindEvents() {
       btn.disabled = false;
     }
   });
+
+  // Roster student add/edit modal submit
+  document.getElementById('roster-student-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('rs-submit-btn');
+    btn.disabled = true;
+    try {
+      const rid = document.getElementById('rs-remote-id').value.trim();
+      const payload = {
+        remote_id: rid || undefined,
+        student_id: document.getElementById('rs-student-id').value.trim(),
+        student_no: document.getElementById('rs-student-no').value.trim() || undefined,
+        name: document.getElementById('rs-name').value.trim(),
+        phone: document.getElementById('rs-phone').value.trim(),
+      };
+      if (!rid) {
+        payload.initial_password = document.getElementById('rs-init-pw').value.trim();
+        payload.create_parent = Boolean(document.getElementById('rs-create-parent').checked);
+      }
+      await callApi('admin_upsert_roster_student', payload, true);
+      closeRosterStudentModal();
+      await refreshAdminData();
+    } catch (err) {
+      alert(`저장 실패: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Notice add/edit modal submit
+  document.getElementById('notice-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('nt-submit-btn');
+    btn.disabled = true;
+    try {
+      const rid = document.getElementById('nt-remote-id').value.trim();
+      const payload = {
+        remote_id: rid || undefined,
+        title: document.getElementById('nt-title').value.trim(),
+        category: document.getElementById('nt-category').value.trim() || '가정통신문',
+        due_date: document.getElementById('nt-due-date').value.trim(),
+        content: document.getElementById('nt-content').value.trim(),
+        attachment_url: document.getElementById('nt-attachment-url').value.trim(),
+        requires_reply: Boolean(document.getElementById('nt-requires-reply').checked),
+        signature_mode: document.getElementById('nt-signature-mode').value || 'single',
+        is_published: true,
+      };
+      const res = await callApi('upsert_notice', payload, true);
+      if (res && res.remote_id) adminState.selectedNoticeId = String(res.remote_id);
+      closeNoticeModal();
+      await refreshAdminData();
+    } catch (err) {
+      alert(`가정통신문 저장 실패: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Board notice add/edit modal submit
+  document.getElementById('board-notice-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('bn-submit-btn');
+    btn.disabled = true;
+    try {
+      const rid = document.getElementById('bn-remote-id').value.trim();
+      const payload = {
+        remote_id: rid || undefined,
+        title: document.getElementById('bn-title').value.trim(),
+        source_type: document.getElementById('bn-source-type').value || '담임 공지',
+        is_pinned: Boolean(document.getElementById('bn-is-pinned').checked),
+        summary: document.getElementById('bn-summary').value.trim(),
+        content: document.getElementById('bn-content').value.trim(),
+        is_published: true,
+      };
+      await callApi('upsert_board_notice', payload, true);
+      closeBoardNoticeModal();
+      await refreshAdminData();
+    } catch (err) {
+      alert(`학급 공지 저장 실패: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Daily attendance add/edit modal submit
+  document.getElementById('attendance-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('att-modal-submit-btn');
+    btn.disabled = true;
+    try {
+      const rid = document.getElementById('att-modal-remote-id').value.trim();
+      const sid = document.getElementById('att-modal-student').value.trim();
+      const students = (adminState.overview && adminState.overview.students) || [];
+      const stu = students.find((s) => String(s.student_id || s.remote_id || '') === sid);
+      await callApi('submit_attendance', {
+        remote_id: rid || undefined,
+        role: 'teacher',
+        date: document.getElementById('att-modal-date').value.trim(),
+        student_id: sid,
+        student_name: stu ? String(stu.name || stu.student_name || sid) : sid,
+        attendance_type: document.getElementById('att-modal-type').value,
+        period_info: document.getElementById('att-modal-period').value.trim(),
+        reason: document.getElementById('att-modal-reason').value.trim(),
+        teacher_confirmed: true,
+      }, true);
+      closeAttendanceModal();
+      await refreshAdminData();
+    } catch (err) {
+      alert(`출결 저장 실패: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Document tracking add/edit modal submit
+  document.getElementById('doc-tracking-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('dt-submit-btn');
+    btn.disabled = true;
+    try {
+      const rid = document.getElementById('dt-remote-id').value.trim();
+      const sid = document.getElementById('dt-student').value.trim();
+      const students = (adminState.overview && adminState.overview.students) || [];
+      const stu = students.find((s) => String(s.student_id || s.remote_id || '') === sid);
+      await callApi('upsert_document_tracking', {
+        remote_id: rid || undefined,
+        role: 'teacher',
+        student_id: sid,
+        student_name: stu ? String(stu.name || stu.student_name || sid) : sid,
+        doc_name: document.getElementById('dt-doc-name').value.trim(),
+        doc_type: document.getElementById('dt-doc-name').value.trim(),
+        due_date: document.getElementById('dt-due-date').value.trim(),
+        status: document.getElementById('dt-status').value,
+        memo: document.getElementById('dt-memo').value.trim(),
+      }, true);
+      closeDocTrackingModal();
+      await refreshAdminData();
+    } catch (err) {
+      alert(`서류 추적 저장 실패: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Subject attendance edit modal submit
+  document.getElementById('subject-att-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const rid = document.getElementById('sa-remote-id').value.trim();
+    const list = (adminState.overview && adminState.overview.subject_attendance) || [];
+    const target = list.find((a) => String(a.remote_id || '') === rid);
+    if (!target) return;
+    const btn = document.getElementById('sa-submit-btn');
+    btn.disabled = true;
+    try {
+      await callApi('save_subject_attendance_batch', {
+        date: String(target.date || '').slice(0, 10),
+        period: target.period || '',
+        subject: target.subject || '',
+        class_label: target.class_label || '',
+        roster_key: target.roster_key || '',
+        records: [{
+          remote_id: rid,
+          student_id: target.student_id,
+          student_name: target.student_name || '',
+          status: document.getElementById('sa-status').value,
+          memo: document.getElementById('sa-memo').value.trim(),
+        }],
+      }, true);
+      closeSubjectAttModal();
+      await refreshAdminData();
+    } catch (err) {
+      alert(`교과 출결 수정 실패: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // 1:1 Counsel reply submit
+  document.getElementById('counsel-reply-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const sid = adminState.selectedCounselStudentId;
+    if (!sid) {
+      alert('답장을 보낼 학생을 먼저 선택해 주세요.');
+      return;
+    }
+    const input = document.getElementById('counsel-reply-input');
+    const msg = input.value.trim();
+    if (!msg) return;
+    const btn = document.getElementById('counsel-reply-submit-btn');
+    btn.disabled = true;
+    try {
+      await callApi('send_chat_message', {
+        room_id: `ROOM-${sid}`,
+        student_id: sid,
+        sender_role: 'teacher',
+        message: msg,
+      }, true);
+      input.value = '';
+      await refreshAdminData();
+    } catch (err) {
+      alert(`답장 전송 실패: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Schedule add/edit modal submit
+  document.getElementById('schedule-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('sc-submit-btn');
+    btn.disabled = true;
+    try {
+      const rid = document.getElementById('sc-remote-id').value.trim();
+      await callApi('upsert_schedule', {
+        remote_id: rid || undefined,
+        title: document.getElementById('sc-title').value.trim(),
+        start_date: document.getElementById('sc-start-date').value.trim(),
+        end_date: document.getElementById('sc-end-date').value.trim(),
+        category: document.getElementById('sc-category').value.trim() || '학사일정',
+        is_private: Boolean(document.getElementById('sc-is-private').checked),
+        memo: document.getElementById('sc-memo').value.trim(),
+      }, true);
+      closeScheduleModal();
+      await refreshAdminData();
+    } catch (err) {
+      alert(`학사일정 저장 실패: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function openBoardNoticeModal(remoteId = '') {
+  const list = (adminState.overview && adminState.overview.board_notices) || [];
+  const target = remoteId ? list.find((b) => String(b.remote_id || b.id || '') === String(remoteId)) : null;
+  document.getElementById('board-notice-modal-title').textContent = target ? '학급 공지 수정' : '학급 공지 작성';
+  document.getElementById('bn-remote-id').value = target ? String(target.remote_id || target.id || '') : '';
+  document.getElementById('bn-title').value = target ? String(target.title || '') : '';
+  document.getElementById('bn-source-type').value = target ? String(target.source_type || '담임 공지') : '담임 공지';
+  document.getElementById('bn-is-pinned').checked = Boolean(target && target.is_pinned);
+  document.getElementById('bn-summary').value = target ? String(target.summary || '') : '';
+  document.getElementById('bn-content').value = target ? String(target.content || '') : '';
+  document.getElementById('board-notice-modal').classList.remove('hidden');
+}
+
+function closeBoardNoticeModal() {
+  document.getElementById('board-notice-modal').classList.add('hidden');
+}
+
+function deleteBoardNoticeRow(remoteId, title) {
+  if (!confirm(`"${title || remoteId}" 공지를 삭제하시겠습니까?`)) return;
+  callApi('delete_board_notice', { remote_id: remoteId }, true)
+    .then(() => refreshAdminData())
+    .catch((err) => alert(`공지 삭제 실패: ${err.message}`));
+}
+
+function _populateStudentSelectOptions(selectEl, selectedSid = '') {
+  if (!selectEl) return;
+  const students = (adminState.overview && adminState.overview.students) || [];
+  selectEl.innerHTML = students.map((s) => {
+    const sid = String(s.student_id || s.remote_id || '').trim();
+    const label = `${s.student_no ? `${s.student_no}번 ` : ''}${s.name || sid} (${sid})`;
+    return `<option value="${escapeHtml(sid)}" ${sid === String(selectedSid) ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+  }).join('');
+}
+
+function openAttendanceModal(remoteId = '', studentId = '', dateStr = '') {
+  const list = (adminState.overview && adminState.overview.attendance) || [];
+  const target = remoteId ? list.find((a) => String(a.remote_id || '') === String(remoteId)) : null;
+  document.getElementById('attendance-modal-title').textContent = target ? '일일 출결 수정' : '일일 출결 등록';
+  document.getElementById('att-modal-remote-id').value = target ? String(target.remote_id || '') : '';
+  document.getElementById('att-modal-date').value = (target && target.date) || dateStr || adminState.attDailyDate || getLocalTodayStr();
+  _populateStudentSelectOptions(document.getElementById('att-modal-student'), (target && target.student_id) || studentId);
+  document.getElementById('att-modal-type').value = (target && target.attendance_type) || '출석';
+  document.getElementById('att-modal-period').value = (target && target.period_info) || '';
+  document.getElementById('att-modal-reason').value = (target && target.reason) || '';
+  document.getElementById('attendance-modal').classList.remove('hidden');
+}
+
+function closeAttendanceModal() {
+  document.getElementById('attendance-modal').classList.add('hidden');
+}
+
+async function deleteAttendanceRow(remoteId, studentName) {
+  if (!confirm(`${studentName || ''} 학생의 이 출결 기록을 삭제하시겠습니까?`)) return;
+  try {
+    await callApi('delete_attendance', { remote_id: remoteId, role: 'teacher' }, true);
+    await refreshAdminData();
+  } catch (err) {
+    alert(`출결 삭제 실패: ${err.message}`);
+  }
+}
+
+function openDocTrackingModal(remoteId = '') {
+  const docs = (adminState.overview && adminState.overview.documents) || [];
+  const target = remoteId ? docs.find((d) => String(d.remote_id || '') === String(remoteId)) : null;
+  document.getElementById('doc-tracking-modal-title').textContent = target ? '증빙 서류 수정' : '증빙 서류 추가';
+  document.getElementById('dt-remote-id').value = target ? String(target.remote_id || '') : '';
+  _populateStudentSelectOptions(document.getElementById('dt-student'), target && target.student_id);
+  document.getElementById('dt-doc-name').value = target ? String(target.doc_name || target.rule_name || target.doc_type || '') : '';
+  document.getElementById('dt-due-date').value = target ? String(target.due_date || '') : '';
+  document.getElementById('dt-status').value = target ? String(target.status || 'pending') : 'pending';
+  document.getElementById('dt-memo').value = target ? String(target.memo || '') : '';
+  document.getElementById('doc-tracking-modal').classList.remove('hidden');
+}
+
+function closeDocTrackingModal() {
+  document.getElementById('doc-tracking-modal').classList.add('hidden');
+}
+
+async function deleteDocTrackingRow(remoteId, studentName) {
+  if (!confirm(`${studentName || ''} 학생의 증빙 서류 추적 항목을 삭제하시겠습니까?`)) return;
+  try {
+    await callApi('delete_document_tracking', { remote_id: remoteId }, true);
+    await refreshAdminData();
+  } catch (err) {
+    alert(`서류 추적 삭제 실패: ${err.message}`);
+  }
+}
+
+function openSubjectAttModal(remoteId) {
+  const list = (adminState.overview && adminState.overview.subject_attendance) || [];
+  const target = list.find((a) => String(a.remote_id || '') === String(remoteId));
+  if (!target) return;
+  document.getElementById('sa-remote-id').value = String(target.remote_id || '');
+  document.getElementById('sa-target-label').textContent = `${target.date || ''} · ${target.subject || ''} (${target.class_label || ''}) · ${target.student_name || target.student_id}`;
+  document.getElementById('sa-status').value = String(target.status || '출석');
+  document.getElementById('sa-memo').value = String(target.memo || '');
+  document.getElementById('subject-att-modal').classList.remove('hidden');
+}
+
+function closeSubjectAttModal() {
+  document.getElementById('subject-att-modal').classList.add('hidden');
+}
+
+async function deleteSubjectAttRow(remoteId, studentName) {
+  if (!confirm(`${studentName || ''} 학생의 교과 출결 기록을 삭제하시겠습니까?`)) return;
+  try {
+    await callApi('delete_subject_attendance', { remote_id: remoteId }, true);
+    await refreshAdminData();
+  } catch (err) {
+    alert(`교과 출결 삭제 실패: ${err.message}`);
+  }
+}
+
+function renderSchedulesTab() {
+  const schedules = (adminState.overview && adminState.overview.schedules) || [];
+  const badgeEl = document.getElementById('badge-schedules-count');
+  if (badgeEl) badgeEl.textContent = String(schedules.length);
+  const tbody = document.getElementById('schedules-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = schedules.length === 0
+    ? '<tr><td colspan="6" class="py-8 text-center text-slate-400">등록된 학사일정이 없습니다.</td></tr>'
+    : schedules.map((s) => {
+        const rid = String(s.remote_id || s.id || '');
+        const start = String(s.start_date || s.date || '-');
+        const end = String(s.end_date || start);
+        const periodText = start === end ? start : `${start} ~ ${end}`;
+        const isPriv = Boolean(s.is_private || String(s.visibility || '').toLowerCase() === 'private');
+        return `
+          <tr class="hover:bg-slate-50">
+            <td class="py-2.5 px-4 font-mono text-[11px] text-slate-600 whitespace-nowrap">${escapeHtml(periodText)}</td>
+            <td class="py-2.5 px-4 font-bold text-slate-900">${escapeHtml(s.title || '-')}</td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap"><span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700">${escapeHtml(s.category || '학사일정')}</span></td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap">${isPriv ? '<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">교사 개인</span>' : '<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">공개</span>'}</td>
+            <td class="py-2.5 px-4 text-slate-500">${escapeHtml(s.memo || s.description || '-')}</td>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap space-x-1">
+              <button type="button" onclick="openScheduleModal('${_escapeJsAttr(rid)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
+              <button type="button" onclick="deleteScheduleRow('${_escapeJsAttr(rid)}', '${_escapeJsAttr(s.title || '')}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+}
+
+function openScheduleModal(remoteId = '') {
+  const list = (adminState.overview && adminState.overview.schedules) || [];
+  const target = remoteId ? list.find((s) => String(s.remote_id || s.id || '') === String(remoteId)) : null;
+  document.getElementById('schedule-modal-title').textContent = target ? '학사일정 수정' : '학사일정 추가';
+  document.getElementById('sc-remote-id').value = target ? String(target.remote_id || target.id || '') : '';
+  document.getElementById('sc-title').value = target ? String(target.title || '') : '';
+  document.getElementById('sc-start-date').value = target ? String(target.start_date || target.date || '') : getLocalTodayStr();
+  document.getElementById('sc-end-date').value = target ? String(target.end_date || target.start_date || target.date || '') : getLocalTodayStr();
+  document.getElementById('sc-category').value = target ? String(target.category || '학사일정') : '학사일정';
+  document.getElementById('sc-is-private').checked = Boolean(target && (target.is_private || String(target.visibility || '').toLowerCase() === 'private'));
+  document.getElementById('sc-memo').value = target ? String(target.memo || target.description || '') : '';
+  document.getElementById('schedule-modal').classList.remove('hidden');
+}
+
+function closeScheduleModal() {
+  document.getElementById('schedule-modal').classList.add('hidden');
+}
+
+async function deleteScheduleRow(remoteId, title) {
+  if (!confirm(`"${title || remoteId}" 학사일정을 삭제하시겠습니까?`)) return;
+  try {
+    await callApi('delete_schedule', { remote_id: remoteId }, true);
+    await refreshAdminData();
+  } catch (err) {
+    alert(`학사일정 삭제 실패: ${err.message}`);
+  }
 }
 
 async function initAdminPage() {

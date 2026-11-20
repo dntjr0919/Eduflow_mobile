@@ -44,6 +44,7 @@ async function toggleCounselingAcceptance(isOpen) {
   if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
     try {
       await gasApi.post('set_consultation_status', {
+        ..._getTeacherAuthParams(),
         teacher_id: mockData.currentUser.userId || 'teacher01',
         consultation_enabled: isOpen ? 1 : 0
       });
@@ -491,7 +492,7 @@ async function saveTeacherProfile(e) {
   await withButtonLoading(submitBtn, '저장 중...', async () => {
     if (gasApi.isConfigured()) {
       try {
-        await gasApi.post('upsert_teacher_profile', payload);
+        await gasApi.post('upsert_teacher_profile', { ..._getTeacherAuthParams(), ...payload });
       } catch (err) {
         showToast(`교사 프로필 저장 실패: ${err.message}`, '⚠️');
         return;
@@ -567,7 +568,7 @@ async function deleteTeacherAtt(id, btnEl) {
   const doDelete = async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
-        await gasApi.post('delete_attendance', { remote_id: id });
+        await gasApi.post('delete_attendance', { ..._getTeacherAuthParams(), remote_id: id, role: 'teacher' });
       } catch (err) {
         showToast(`출결 삭제 실패: ${err.message}`, '⚠️');
         return;
@@ -677,6 +678,8 @@ async function saveTeacherAttEdit(e) {
       try {
         const cu = mockData.currentUser || {};
         await gasApi.post('submit_attendance', {
+          ..._getTeacherAuthParams(),
+          role: 'teacher',
           data: {
             remote_id: item.id,
             date: typeof getLocalTodayStr === 'function' ? getLocalTodayStr() : new Date().toISOString().slice(0, 10),
@@ -1836,6 +1839,7 @@ async function saveTeacherAttendanceCheck(btnEl) {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
         await gasApi.post('save_class_attendance', {
+          ..._getTeacherAuthParams(),
           data: {
             date: todayStr,
             grade: cu.grade || '',
@@ -2215,6 +2219,7 @@ async function toggleBoardNoticePin(noticeId, btnEl) {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
         await gasApi.post('upsert_board_notice', {
+          ..._getTeacherAuthParams(),
           remote_id: noticeId,
           is_pinned: nextPinned
         });
@@ -2248,7 +2253,7 @@ async function deleteBoardNotice(noticeId, btnEl) {
   await withButtonLoading(btnEl, '삭제 중...', async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
-        await gasApi.post('delete_board_notice', { remote_id: noticeId });
+        await gasApi.post('delete_board_notice', { ..._getTeacherAuthParams(), remote_id: noticeId });
       } catch (err) {
         if (!err.isDemo) {
           showToast(`공지 삭제 실패: ${err.message}`, '⚠️');
@@ -2418,6 +2423,7 @@ async function publishCandidateNotice(btnEl) {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
         await gasApi.post('publish_notice', {
+          ..._getTeacherAuthParams(),
           data: {
             remote_id: c.id,
             title,
@@ -2509,6 +2515,7 @@ async function publishNewCircular(btnEl) {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
         await gasApi.post('upsert_notice', {
+          ..._getTeacherAuthParams(),
           data: {
             remote_id: noticeId,
             title,
@@ -2950,7 +2957,7 @@ function openTeacherChatDetail(roomId) {
   renderTeacherChatRooms();
 
   if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
-    gasApi.post('mark_chat_read', { room_id: roomId, reader_role: 'teacher' }).catch(() => {});
+    gasApi.post('mark_chat_read', { ..._getTeacherAuthParams(), room_id: roomId, reader_role: 'teacher' }).catch(() => {});
   }
 }
 
@@ -3002,6 +3009,7 @@ async function sendTeacherMessage() {
   if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
     try {
       await gasApi.post('send_chat_message', {
+        ..._getTeacherAuthParams(),
         data: {
           room_id: room.roomId,
           sender_id: mockData.currentUser.userId || 'teacher01',
@@ -3037,6 +3045,7 @@ async function quickRegisterAttFromChat() {
   if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
     try {
       await gasApi.post('submit_attendance', {
+        ..._getTeacherAuthParams(),
         data: {
           remote_id: attId,
           date: new Date().toISOString().split('T')[0],
