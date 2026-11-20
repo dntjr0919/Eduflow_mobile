@@ -50,6 +50,7 @@ const {
   _computeFaceMatchPercent,
   _mapVideoBoxToOverlay,
   applyCameraFaceRecognitionToAttRows,
+  _resolveFaceItemImageDataUrl,
 } = require('../teacher.js');
 
 function createMockDb(initialCollections = {}) {
@@ -273,6 +274,113 @@ test('get_student_face_data returns only homeroom class records', async () => {
   assert.equal(res.json.items.length, 1);
   assert.equal(res.json.items[0].student_id, '10401');
   assert.deepEqual(res.json.items[0].face_descriptor, vec);
+});
+
+test('upsert_student_face_photos_batch and get_student_face_data support photo_data_url, photo_hash, and payload optimization', async () => {
+  const existingVec = makeDescriptor(0.25);
+  const sampleDataUrl1 = 'data:image/jpeg;base64,QUFBQUFB';
+  const sampleDataUrl2 = 'data:image/png;base64,QkJCQkJC';
+  const db = createMockDb({});
+
+  // 1) Initial upload with photo_data_url + photo_hash and no face_descriptor
+  const up1 = await _handleDesktopApiAction(db, 'upsert_student_face_photos_batch', {
+    rows: [
+      {
+        student_id: '10405',
+        student_name: '정수민',
+        student_no: 5,
+        photo_data_url: sampleDataUrl1,
+        photo_hash: 'hash_v1',
+      },
+      {
+        student_id: '10406',
+        student_name: '최유진',
+        student_no: 6,
+        photo_data_url: sampleDataUrl2,
+        photo_hash: 'hash_cached_v1',
+        face_descriptor: existingVec,
+      },
+    ],
+  }, teacherAuth);
+  assert.equal(up1.status, 200);
+  assert.equal(up1.json.written, 2);
+
+  // 2) get_student_face_data includes photo_data_url when descriptor missing, omits when cached
+  const get1 = await _handleDesktopApiAction(db, 'get_student_face_data', {}, teacherAuth);
+  assert.equal(get1.status, 200);
+  assert.equal(get1.json.items.length, 2);
+  const item5 = get1.json.items.find((i) => i.student_id === '10405');
+  const item6 = get1.json.items.find((i) => i.student_id === '10406');
+  assert.equal(item5.face_descriptor, null);
+  assert.equal(item5.photo_data_url, sampleDataUrl1);
+  assert.equal(item5.photo_hash, 'hash_v1');
+  assert.deepEqual(item6.face_descriptor, existingVec);
+  assert.equal(item6.photo_hash, 'hash_cached_v1');
+  assert.equal(Object.prototype.hasOwnProperty.call(item6, 'photo_data_url'), false);
+
+  // 3) Re-sync with same photo_hash preserves cached face_descriptor
+  const upSameHash = await _handleDesktopApiAction(db, 'upsert_student_face_photos_batch', {
+    rows: [
+      {
+        student_id: '10406',
+        student_name: '최유진',
+        photo_data_url: sampleDataUrl2,
+        photo_hash: 'hash_cached_v1',
+      },
+    ],
+  }, teacherAuth);
+  assert.equal(upSameHash.status, 200);
+  const docId6 = _buildStudentFaceDocId(teacherAuth, '10406');
+  assert.deepEqual(db._store.get('학생_안면데이터').get(docId6).face_descriptor, existingVec);
+
+  // 4) Re-sync with changed photo_hash invalidates cached face_descriptor -> null and returns photo_data_url again
+  const upChangedHash = await _handleDesktopApiAction(db, 'upsert_student_face_photos_batch', {
+    rows: [
+      {
+        student_id: '10406',
+        student_name: '최유진',
+        photo_data_url: sampleDataUrl1,
+        photo_hash: 'hash_cached_v2',
+      },
+    ],
+  }, teacherAuth);
+  assert.equal(upChangedHash.status, 200);
+  assert.equal(db._store.get('학생_안면데이터').get(docId6).face_descriptor, null);
+
+  const get2 = await _handleDesktopApiAction(db, 'get_student_face_data', {}, teacherAuth);
+  const item6After = get2.json.items.find((i) => i.student_id === '10406');
+  assert.equal(item6After.face_descriptor, null);
+  assert.equal(item6After.photo_data_url, sampleDataUrl1);
+  assert.equal(item6After.photo_hash, 'hash_cached_v2');
+});
+
+test('_resolveFaceItemImageDataUrl uses Firestore photo_data_url directly and falls back to proxy_drive_photo', async () => {
+  let proxyCalls = [];
+  const mockProxy = async (params) => {
+    proxyCalls.push(params);
+    return { ok: true, data_url: 'data:image/jpeg;base64,UFJPWFk=' };
+  };
+
+  // Direct photo_data_url -> 0 proxy calls
+  const direct = await _resolveFaceItemImageDataUrl(
+    { student_id: '10401', photo_data_url: 'data:image/jpeg;base64,RElSRUNU', photo_file_id: 'drive123' },
+    mockProxy
+  );
+  assert.equal(direct, 'data:image/jpeg;base64,RElSRUNU');
+  assert.equal(proxyCalls.length, 0);
+
+  // Fallback to proxy_drive_photo when only photo_file_id is present
+  const proxied = await _resolveFaceItemImageDataUrl(
+    { student_id: '10402', photo_file_id: 'driveFile10402' },
+    mockProxy
+  );
+  assert.equal(proxied, 'data:image/jpeg;base64,UFJPWFk=');
+  assert.equal(proxyCalls.length, 1);
+  assert.deepEqual(proxyCalls[0], {
+    file_id: 'driveFile10402',
+    photo_url: '',
+    student_id: '10402',
+  });
 });
 
 test('save_student_face_descriptors_batch validates 128-dim arrays and enforces class isolation', async () => {

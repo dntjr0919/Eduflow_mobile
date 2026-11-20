@@ -2166,6 +2166,16 @@ function _normalizeFaceDescriptor(raw) {
   return out;
 }
 
+function _normalizePhotoDataUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s || s.length > 750000) return '';
+  const m = s.match(/^(data:image\/[a-z0-9.+-]+;base64,)([A-Za-z0-9+/=\s]+)$/i);
+  if (!m) return '';
+  const body = m[2].replace(/\s+/g, '');
+  if (!body || (m[1].length + body.length) > 750000) return '';
+  return `${m[1].toLowerCase()}${body}`;
+}
+
 function _isFaceRowAllowedForTeacherClass(row, auth) {
   if (!row || typeof row !== 'object' || !auth) return false;
   if (auth.gradeNum === null || auth.gradeNum === undefined || auth.classNum === null || auth.classNum === undefined) {
@@ -2986,6 +2996,10 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       );
       const rawPhotoUrl = String(row.photo_url || row.drive_url || row.download_url || '').trim();
       const photoUrl = rawPhotoUrl || (photoFileId ? `https://drive.google.com/uc?export=download&id=${photoFileId}` : '');
+      const photoDataUrl = row.photo_data_url !== undefined ? _normalizePhotoDataUrl(row.photo_data_url) : undefined;
+      const photoHash = row.photo_hash !== undefined
+        ? String(row.photo_hash || '').trim()
+        : (photoDataUrl ? _sha256Hex(photoDataUrl) : '');
       const sNo = _toIntOrNull(row.student_no);
 
       const itemPayload = {
@@ -3002,6 +3016,12 @@ async function _handleDesktopApiAction(db, action, params, auth) {
         photo_url: photoUrl,
         updated_at: nowStr,
       };
+      if (photoDataUrl !== undefined) {
+        itemPayload.photo_data_url = photoDataUrl;
+      }
+      if (photoHash || row.photo_hash !== undefined) {
+        itemPayload.photo_hash = photoHash;
+      }
 
       if (row.face_descriptor !== undefined) {
         const vec = _normalizeFaceDescriptor(row.face_descriptor);
@@ -3015,7 +3035,10 @@ async function _handleDesktopApiAction(db, action, params, auth) {
         }
       } else if (existing) {
         const prevFileId = String(existing.photo_file_id || _extractDriveFileId(existing.photo_url || '')).trim();
-        if (photoFileId && prevFileId !== photoFileId) {
+        const prevHash = String(existing.photo_hash || '').trim();
+        const fileIdChanged = Boolean(photoFileId && prevFileId && prevFileId !== photoFileId) || Boolean(photoFileId && !prevFileId && !prevHash);
+        const hashChanged = Boolean(photoHash && prevHash !== photoHash);
+        if (fileIdChanged || hashChanged) {
           itemPayload.face_descriptor = null;
           itemPayload.descriptor_model = '';
         }
@@ -3038,19 +3061,28 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     const rows = _snapToRows(snap);
     const items = rows
       .filter((d) => _isStrictClassMember(d, auth))
-      .map((d) => ({
-        remote_id: String(d.remote_id || ''),
-        student_id: String(d.student_id || '').trim(),
-        student_name: String(d.student_name || d.name || '').trim(),
-        student_no: d.student_no ?? null,
-        grade: _toIntOrNull(d.grade),
-        class_no: _toIntOrNull(d.class_no),
-        photo_file_id: String(d.photo_file_id || _extractDriveFileId(d.photo_url || '')).trim(),
-        photo_url: String(d.photo_url || '').trim(),
-        face_descriptor: _normalizeFaceDescriptor(d.face_descriptor),
-        descriptor_model: String(d.descriptor_model || '').trim(),
-        updated_at: String(d.updated_at || ''),
-      }))
+      .map((d) => {
+        const descriptor = _normalizeFaceDescriptor(d.face_descriptor);
+        const item = {
+          remote_id: String(d.remote_id || ''),
+          student_id: String(d.student_id || '').trim(),
+          student_name: String(d.student_name || d.name || '').trim(),
+          student_no: d.student_no ?? null,
+          grade: _toIntOrNull(d.grade),
+          class_no: _toIntOrNull(d.class_no),
+          photo_file_id: String(d.photo_file_id || _extractDriveFileId(d.photo_url || '')).trim(),
+          photo_url: String(d.photo_url || '').trim(),
+          photo_hash: String(d.photo_hash || '').trim(),
+          face_descriptor: descriptor,
+          descriptor_model: String(d.descriptor_model || '').trim(),
+          updated_at: String(d.updated_at || ''),
+        };
+        if (!descriptor) {
+          const dataUrl = _normalizePhotoDataUrl(d.photo_data_url);
+          if (dataUrl) item.photo_data_url = dataUrl;
+        }
+        return item;
+      })
       .sort((a, b) => Number(a.student_no || 9999) - Number(b.student_no || 9999) || String(a.student_id).localeCompare(String(b.student_id)));
     return { status: 200, json: { ok: true, items, total: items.length } };
   }

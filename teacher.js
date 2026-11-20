@@ -1105,6 +1105,23 @@ function _loadImageFromDataUrl(dataUrl) {
   });
 }
 
+async function _resolveFaceItemImageDataUrl(item, proxyFetcher) {
+  if (!item || typeof item !== 'object') return '';
+  const directDataUrl = String(item.photo_data_url || '').trim();
+  if (/^data:image\//i.test(directDataUrl)) {
+    return directDataUrl;
+  }
+  if ((item.photo_file_id || item.photo_url) && typeof proxyFetcher === 'function') {
+    const photoRes = await proxyFetcher({
+      file_id: item.photo_file_id || '',
+      photo_url: item.photo_url || '',
+      student_id: String(item.student_id || '').trim()
+    });
+    return (photoRes && photoRes.data_url) ? String(photoRes.data_url) : '';
+  }
+  return '';
+}
+
 async function _prepareClassFaceMatcher(sessionId) {
   if (typeof gasApi === 'undefined' || !gasApi.isConfigured()) {
     throw new Error('서버 연결이 필요합니다.');
@@ -1143,7 +1160,7 @@ async function _prepareClassFaceMatcher(sessionId) {
     ) {
       if (!descriptorGroups.has(sid)) descriptorGroups.set(sid, []);
       descriptorGroups.get(sid).push(new Float32Array(item.face_descriptor.map(Number)));
-    } else if (item.photo_file_id || item.photo_url) {
+    } else if (item.photo_data_url || item.photo_file_id || item.photo_url) {
       missingItems.push(item);
     }
   });
@@ -1155,16 +1172,16 @@ async function _prepareClassFaceMatcher(sessionId) {
     const sid = String(item.student_id || '').trim();
     _setAttFaceLoading(true, `얼굴 특징 추출 중 (${i + 1}/${missingItems.length})...`);
     try {
-      const photoRes = await gasApi.post('proxy_drive_photo', {
-        ..._getTeacherAuthParams(),
-        file_id: item.photo_file_id || '',
-        photo_url: item.photo_url || '',
-        student_id: sid
-      });
+      const dataUrl = await _resolveFaceItemImageDataUrl(item, (proxyParams) =>
+        gasApi.post('proxy_drive_photo', {
+          ..._getTeacherAuthParams(),
+          ...proxyParams
+        })
+      );
       if (sessionId !== _attFaceState.sessionId || !_attFaceState.isOpen) return null;
-      if (!photoRes || !photoRes.data_url) continue;
+      if (!dataUrl) continue;
 
-      const img = await _loadImageFromDataUrl(photoRes.data_url);
+      const img = await _loadImageFromDataUrl(dataUrl);
       let det = await faceapi
         .detectSingleFace(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
         .withFaceLandmarks()
@@ -2783,6 +2800,7 @@ if (typeof globalThis !== 'undefined') {
     _computeFaceMatchPercent,
     _mapVideoBoxToOverlay,
     applyCameraFaceRecognitionToAttRows,
+    _resolveFaceItemImageDataUrl,
     _extractClassTokens,
     _expandSubjectTokens,
     _findBestSubjectRoster,
@@ -3067,6 +3085,7 @@ if (typeof module !== 'undefined' && module.exports) {
     _computeFaceMatchPercent,
     _mapVideoBoxToOverlay,
     applyCameraFaceRecognitionToAttRows,
+    _resolveFaceItemImageDataUrl,
     _extractClassTokens,
     _expandSubjectTokens,
     _findBestSubjectRoster,
