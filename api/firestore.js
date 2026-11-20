@@ -5,7 +5,8 @@
  */
 const crypto = require('crypto');
 const { getFirestore, buildFirestoreErrorPayload } = require('./_firebaseAdmin');
-const { uploadBase64ToDrive } = require('./_googleDrive');
+const googleDrive = require('./_googleDrive');
+const { uploadBase64ToDrive } = googleDrive;
 
 const SUPER_ADMIN_ID = '유우석';
 
@@ -1799,6 +1800,10 @@ module.exports = async function handler(req, res) {
       'upsert_lesson_progress',
       'delete_lesson_progress',
       'sync_lesson_progress_batch',
+      'upsert_student_face_photos_batch',
+      'get_student_face_data',
+      'save_student_face_descriptors_batch',
+      'proxy_drive_photo',
     ]);
 
     if (desktopActions.has(action)) {
@@ -1907,6 +1912,284 @@ function _extractBirth6Digits(student) {
     }
   }
   return '';
+}
+
+const _LESSON_SCHED_ITEM_SRC = '[월화수목금토일](?:요일)?\\s*[:\\-·/]?\\s*\\d{1,2}(?:\\s*[~,\\-]\\s*\\d{1,2})*(?:\\s*교시)?';
+const _LESSON_BRACKETED_WEEKDAY_PERIOD_RE = new RegExp(
+  `(?:\\[\\s*${_LESSON_SCHED_ITEM_SRC}(?:\\s*[,/·ㆍ\\s]\\s*${_LESSON_SCHED_ITEM_SRC})*\\s*\\]|\\(\\s*${_LESSON_SCHED_ITEM_SRC}(?:\\s*[,/·ㆍ\\s]\\s*${_LESSON_SCHED_ITEM_SRC})*\\s*\\))`,
+  'g'
+);
+
+function _cleanLessonMetaSeparators(str) {
+  let out = String(str || '');
+  for (let i = 0; i < 3; i += 1) {
+    const next = out.replace(/\(\s*[·ㆍ•\-/|,:;\s]*\)|\[\s*[·ㆍ•\-/|,:;\s]*\]/g, ' ');
+    if (next === out) break;
+    out = next;
+  }
+  out = out.replace(/([·ㆍ•/|,:;])(?:\s*[·ㆍ•/|,:;])+/g, '$1');
+  out = out.replace(/\s+/g, ' ').trim();
+  out = out.replace(/^[·ㆍ•\-/|,:;\s]+/, '').replace(/[·ㆍ•\-/|,:;\s]+$/, '').trim();
+  return out;
+}
+
+function _stripLessonWeekdayPeriod(raw, allowCompactBare = false) {
+  let text = String(raw || '').trim();
+  let firstPeriod = null;
+  if (!text) return { text: '', period: null };
+
+  const recordPeriod = (periodNum) => {
+    if (periodNum >= 1 && periodNum <= 15) {
+      if (firstPeriod === null) firstPeriod = periodNum;
+      return true;
+    }
+    return false;
+  };
+
+  text = text.replace(_LESSON_BRACKETED_WEEKDAY_PERIOD_RE, (match) => {
+    const innerRe = /([월화수목금토일])(?:요일)?\s*[:\-·/]?\s*(\d{1,2})(?:\s*[~,\-]\s*\d{1,2})*(?:\s*교시)?/g;
+    const extracted = [];
+    let m;
+    while ((m = innerRe.exec(match)) !== null) {
+      const pNum = Number(m[2]);
+      if (pNum >= 1 && pNum <= 15) extracted.push(pNum);
+    }
+    if (extracted.length === 0) return match;
+    extracted.forEach(recordPeriod);
+    return ' ';
+  });
+
+  text = text.replace(/(?:\[\s*(\d{1,2})\s*교시\s*\]|\(\s*(\d{1,2})\s*교시\s*\))/g, (match, p1, p2) => {
+    return recordPeriod(Number(p1 || p2)) ? ' ' : match;
+  });
+
+  text = text.replace(
+    /(^|[\s·ㆍ•,/|(\[])([월화수목금토일])(?:요일\s*[:\-·/]?\s*|\s+[:\-·/]?\s*|\s*[:\-·/]\s*)(\d{1,2})(?:\s*교시)?(?=$|[\s·ㆍ•,/|)\]])/g,
+    (match, prefix, wd, pStr) => (recordPeriod(Number(pStr)) ? `${prefix} ` : match)
+  );
+
+  text = text.replace(
+    /(^|[\s·ㆍ•,/|(\[])([월화수목금토일])(?:요일)?\s*(\d{1,2})\s*교시(?=$|[\s·ㆍ•,/|)\]])/g,
+    (match, prefix, wd, pStr) => (recordPeriod(Number(pStr)) ? `${prefix} ` : match)
+  );
+
+  if (allowCompactBare) {
+    text = text.replace(
+      /(^|[\s·ㆍ•,/|(\[])([월화수목금토일])(\d{1,2})(?=$|[\s·ㆍ•,/|)\]])/g,
+      (match, prefix, wd, pStr) => (recordPeriod(Number(pStr)) ? `${prefix} ` : match)
+    );
+  }
+
+  return { text, period: firstPeriod };
+}
+
+function _normalizeExplicitLessonPeriod(raw) {
+  if (raw === null || raw === undefined || typeof raw === 'boolean') return null;
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw)) return null;
+    const n = Math.trunc(raw);
+    return n >= 1 && n <= 15 ? n : null;
+  }
+  const s = String(raw).trim();
+  if (!s) return null;
+  const directMatch = s.match(/^(?:제\s*)?(\d{1,2})\s*(?:교시)?$/);
+  if (directMatch) {
+    const n = Number(directMatch[1]);
+    return n >= 1 && n <= 15 ? n : null;
+  }
+  const stripped = _stripLessonWeekdayPeriod(s, true);
+  if (stripped.period !== null) return stripped.period;
+  return s;
+}
+
+function _extractAndStripLessonClassToken(raw) {
+  const str = String(raw || '').trim();
+  if (!str) return { text: '', classLabel: '' };
+
+  const specs = [
+    {
+      bracketed: true,
+      re: /\(\s*(\d{1,2})\s*학년\s*(\d{1,2})\s*반\s*\)|\[\s*(\d{1,2})\s*학년\s*(\d{1,2})\s*반\s*\]/g,
+      format: (m) => {
+        const g = Number(m[1] || m[3]);
+        const c = Number(m[2] || m[4]);
+        return g >= 1 && g <= 6 && c >= 1 && c <= 30 ? `${g}학년 ${c}반` : null;
+      },
+    },
+    {
+      bracketed: false,
+      re: /(^|[\s·ㆍ•,;/|(\[])(\d{1,2})\s*학년\s*(\d{1,2})\s*반(?=$|[\s·ㆍ•,;/|)\[\]])/g,
+      format: (m) => {
+        const g = Number(m[2]);
+        const c = Number(m[3]);
+        return g >= 1 && g <= 6 && c >= 1 && c <= 30 ? `${g}학년 ${c}반` : null;
+      },
+    },
+    {
+      bracketed: true,
+      re: /\(\s*(\d{1,2})\s*-\s*([A-Za-z][A-Za-z0-9]*)(?:반)?\s*\)|\[\s*(\d{1,2})\s*-\s*([A-Za-z][A-Za-z0-9]*)(?:반)?\s*\]/g,
+      format: (m) => {
+        const g = Number(m[1] || m[3]);
+        const code = String(m[2] || m[4] || '').toUpperCase();
+        return g >= 1 && g <= 6 && code ? `${g}-${code}` : null;
+      },
+    },
+    {
+      bracketed: false,
+      re: /(^|[\s·ㆍ•,;/|(\[])(\d{1,2})\s*-\s*([A-Za-z][A-Za-z0-9]*)(?:반)?(?=$|[\s·ㆍ•,;/|)\[\]])/g,
+      format: (m) => {
+        const g = Number(m[2]);
+        const code = String(m[3] || '').toUpperCase();
+        return g >= 1 && g <= 6 && code ? `${g}-${code}` : null;
+      },
+    },
+    {
+      bracketed: true,
+      re: /\(\s*(\d{1,2})\s*-\s*(\d{1,2})(?:반)?\s*\)|\[\s*(\d{1,2})\s*-\s*(\d{1,2})(?:반)?\s*\]/g,
+      format: (m) => {
+        const g = Number(m[1] || m[3]);
+        const c = Number(m[2] || m[4]);
+        return g >= 1 && g <= 6 && c >= 1 && c <= 30 ? `${g}-${c}` : null;
+      },
+    },
+    {
+      bracketed: false,
+      re: /(^|[\s·ㆍ•,;/|(\[])(\d{1,2})\s*-\s*(\d{1,2})(?:반)?(?=$|[\s·ㆍ•,;/|)\[\]])/g,
+      format: (m) => {
+        const g = Number(m[2]);
+        const c = Number(m[3]);
+        return g >= 1 && g <= 6 && c >= 1 && c <= 30 ? `${g}-${c}` : null;
+      },
+    },
+    {
+      bracketed: true,
+      re: /\(\s*([A-Za-z]\d{2,4})(?:반)?\s*\)|\[\s*([A-Za-z]\d{2,4})(?:반)?\s*\]/g,
+      format: (m) => String(m[1] || m[2] || '').toUpperCase() || null,
+    },
+    {
+      bracketed: false,
+      re: /(^|[\s·ㆍ•,;/|(\[])([A-Za-z]\d{2,4})(?:반)?(?=$|[\s·ㆍ•,;/|)\[\]])/g,
+      format: (m) => String(m[2] || '').toUpperCase() || null,
+    },
+  ];
+
+  for (const spec of specs) {
+    spec.re.lastIndex = 0;
+    let m;
+    while ((m = spec.re.exec(str)) !== null) {
+      const classLabel = spec.format(m);
+      if (classLabel) {
+        const prefix = spec.bracketed ? '' : (m[1] || '');
+        const text = `${str.slice(0, m.index)}${prefix} ${str.slice(m.index + m[0].length)}`;
+        return { text, classLabel };
+      }
+    }
+  }
+  return { text: str, classLabel: '' };
+}
+
+function _parseLessonMeta(subjectOrObj, classLabel = '', period = '') {
+  let rawSubject = subjectOrObj;
+  let rawClass = classLabel;
+  let rawPeriod = period;
+  if (subjectOrObj && typeof subjectOrObj === 'object') {
+    rawSubject = subjectOrObj.subject ?? '';
+    rawClass = subjectOrObj.class_label ?? subjectOrObj.classLabel ?? '';
+    rawPeriod = subjectOrObj.period ?? '';
+  }
+
+  const explicitPeriod = _normalizeExplicitLessonPeriod(rawPeriod);
+  const clsPeriodStrip = _stripLessonWeekdayPeriod(rawClass, true);
+  const subjPeriodStrip = _stripLessonWeekdayPeriod(rawSubject, false);
+  const resolvedPeriod = explicitPeriod !== null
+    ? explicitPeriod
+    : (clsPeriodStrip.period !== null ? clsPeriodStrip.period : subjPeriodStrip.period);
+
+  const clsClassStrip = _extractAndStripLessonClassToken(clsPeriodStrip.text);
+  const subjClassStrip = _extractAndStripLessonClassToken(subjPeriodStrip.text);
+
+  const cleanedClsRemainder = _cleanLessonMetaSeparators(clsClassStrip.text);
+  const cleanedSubjRemainder = _cleanLessonMetaSeparators(subjClassStrip.text);
+
+  const resolvedClass = clsClassStrip.classLabel || cleanedClsRemainder || subjClassStrip.classLabel || '';
+  const resolvedSubject = cleanedSubjRemainder || (clsClassStrip.classLabel ? cleanedClsRemainder : '');
+
+  return {
+    subject: resolvedSubject,
+    class_label: resolvedClass,
+    period: resolvedPeriod,
+  };
+}
+
+function _extractDriveFileId(input) {
+  if (typeof googleDrive.extractDriveFileId === 'function') {
+    return googleDrive.extractDriveFileId(input);
+  }
+  const s = String(input || '').trim();
+  if (!s) return '';
+  const queryMatch = s.match(/[?&]id=([A-Za-z0-9_-]{10,128})/);
+  if (queryMatch) return queryMatch[1];
+  const filePathMatch = s.match(/\/file\/d\/([A-Za-z0-9_-]{10,128})/);
+  if (filePathMatch) return filePathMatch[1];
+  const shortPathMatch = s.match(/\/d\/([A-Za-z0-9_-]{10,128})/);
+  if (shortPathMatch) return shortPathMatch[1];
+  if (/^[A-Za-z0-9_-]{10,128}$/.test(s)) return s;
+  return '';
+}
+
+function _buildStudentFaceDocId(auth, studentId) {
+  const scopeKey = String((auth && (auth.schoolCode || auth.schoolName || auth.teacherId)) || 'default').trim();
+  return `face_${scopeKey}_${String(studentId || '').trim()}`.replace(/[\\/:*?"<>|\s]/g, '_');
+}
+
+function _normalizeFaceDescriptor(raw) {
+  if (!raw) return null;
+  let arr = null;
+  if (Array.isArray(raw)) {
+    arr = raw;
+  } else if (ArrayBuffer.isView(raw) && !(raw instanceof DataView)) {
+    arr = Array.from(raw);
+  } else {
+    return null;
+  }
+  if (arr.length !== 128) return null;
+  const out = new Array(128);
+  for (let i = 0; i < 128; i += 1) {
+    const val = arr[i];
+    if (typeof val === 'boolean' || val === null || val === undefined || val === '') {
+      return null;
+    }
+    const num = Number(val);
+    if (!Number.isFinite(num)) return null;
+    out[i] = num;
+  }
+  return out;
+}
+
+function _isFaceRowAllowedForTeacherClass(row, auth) {
+  if (!row || typeof row !== 'object' || !auth) return false;
+  if (auth.gradeNum === null || auth.gradeNum === undefined || auth.classNum === null || auth.classNum === undefined) {
+    return false;
+  }
+  const docSc = String(row.school_code || row.neis_school_code || '').trim();
+  const docSn = String(row.school_name || '').trim();
+  if (auth.schoolCode && docSc && docSc !== auth.schoolCode) return false;
+  if (!auth.schoolCode && auth.schoolName && docSn && docSn !== auth.schoolName) return false;
+  if (auth.schoolCode && !docSc && auth.schoolName && docSn && docSn !== auth.schoolName) return false;
+
+  const rawG = row.grade !== undefined && row.grade !== '' ? row.grade : row.target_grade;
+  const rawC = row.class_no !== undefined && row.class_no !== '' ? row.class_no : row.target_class;
+  const explicitG = _toIntOrNull(rawG);
+  const explicitC = _toIntOrNull(rawC);
+  if (explicitG !== null && explicitG !== auth.gradeNum) return false;
+  if (explicitC !== null && explicitC !== auth.classNum) return false;
+
+  if (explicitG === null || explicitC === null) {
+    const inferred = _inferGradeClassFromStudentId(row.student_id);
+    if (explicitG === null && inferred.grade !== null && inferred.grade !== auth.gradeNum) return false;
+    if (explicitC === null && inferred.class_no !== null && inferred.class_no !== auth.classNum) return false;
+  }
+  return true;
 }
 
 async function _handleDesktopApiAction(db, action, params, auth) {
@@ -2568,8 +2851,9 @@ async function _handleDesktopApiAction(db, action, params, auth) {
   }
 
   if (action === 'upsert_lesson_progress') {
-    const subject = String(params.subject || '').trim();
-    const classLabel = String(params.class_label || '').trim();
+    const parsedMeta = _parseLessonMeta(params.subject, params.class_label, params.period);
+    const subject = parsedMeta.subject;
+    const classLabel = parsedMeta.class_label;
     if (!subject) {
       return { status: 400, json: { ok: false, error: '과목명(subject)이 필요합니다.' } };
     }
@@ -2581,13 +2865,23 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       return { status: 403, json: { ok: false, error: '본인이 등록한 수업 진도만 수정할 수 있습니다.' } };
     }
     const nowStr = _nowStr();
+    const hasExplicitPeriodParam = params.period !== undefined;
+    let resolvedPeriod = parsedMeta.period;
+    if (resolvedPeriod === null) {
+      if (hasExplicitPeriodParam) {
+        resolvedPeriod = '';
+      } else {
+        const existingPeriod = existing ? _parseLessonMeta('', '', existing.period).period : null;
+        resolvedPeriod = existingPeriod !== null ? existingPeriod : '';
+      }
+    }
     const payload = {
       remote_id: rid,
       teacher_id: auth.teacherId,
       school_code: auth.schoolCode,
       school_name: auth.schoolName,
       date: String(params.date || (existing && existing.date) || nowStr.slice(0, 10)).trim(),
-      period: _toIntOrNull(params.period) ?? String(params.period || (existing && existing.period) || '').trim(),
+      period: resolvedPeriod,
       subject,
       class_label: classLabel,
       roster_key: String(params.roster_key || `${subject}__${classLabel}`).trim(),
@@ -2628,9 +2922,10 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       .filter((r) => r && typeof r === 'object')
       .map((r, idx) => {
         const rid = String(r.remote_id || `prog_${auth.teacherId}_${Date.now()}_${idx}`).replace(/[\\/:*?"<>|]/g, '_');
-        const subject = String(r.subject || '').trim();
-        const classLabel = String(r.class_label || '').trim();
-        return {
+        const parsedMeta = _parseLessonMeta(r.subject, r.class_label, r.period);
+        const subject = parsedMeta.subject;
+        const classLabel = parsedMeta.class_label;
+        const nextRow = {
           ...r,
           remote_id: rid,
           teacher_id: auth.teacherId,
@@ -2641,9 +2936,224 @@ async function _handleDesktopApiAction(db, action, params, auth) {
           roster_key: String(r.roster_key || `${subject}__${classLabel}`).trim(),
           updated_at: nowStr,
         };
+        if (parsedMeta.period !== null) {
+          nextRow.period = parsedMeta.period;
+        }
+        return nextRow;
       });
     const written = await _batchUpsertDocs(db, '수업_진도', normalized, scopeDefaults);
     return { status: 200, json: { ok: true, written } };
+  }
+
+  if (
+    action === 'upsert_student_face_photos_batch' ||
+    action === 'get_student_face_data' ||
+    action === 'save_student_face_descriptors_batch' ||
+    action === 'proxy_drive_photo'
+  ) {
+    if (auth.gradeNum === null || auth.gradeNum === undefined || auth.classNum === null || auth.classNum === undefined) {
+      return { status: 403, json: { ok: false, error: '담당 학년·반이 지정된 교사만 학생 안면 데이터를 조회·관리할 수 있습니다.' } };
+    }
+  }
+
+  if (action === 'upsert_student_face_photos_batch') {
+    const rawRows = Array.isArray(params.rows)
+      ? params.rows
+      : (Array.isArray(params.items) ? params.items : (Array.isArray(params.photos) ? params.photos : []));
+    const nowStr = _nowStr();
+    const validRows = [];
+    let rejectedCount = 0;
+
+    for (const row of rawRows) {
+      if (!row || typeof row !== 'object') continue;
+      const sid = String(row.student_id || '').trim();
+      if (!sid) continue;
+      if (!_isFaceRowAllowedForTeacherClass(row, auth)) {
+        rejectedCount += 1;
+        continue;
+      }
+
+      const docId = String(row.remote_id || _buildStudentFaceDocId(auth, sid)).replace(/[\\/:*?"<>|\s]/g, '_');
+      const existingSnap = await db.collection('학생_안면데이터').doc(docId).get();
+      const existing = existingSnap.exists ? { remote_id: existingSnap.id, ...(existingSnap.data() || {}) } : null;
+      if (existing && !_isStrictClassMember(existing, auth)) {
+        rejectedCount += 1;
+        continue;
+      }
+
+      const photoFileId = _extractDriveFileId(
+        row.photo_file_id || row.drive_file_id || row.file_id || row.photo_url || row.drive_url || row.download_url || ''
+      );
+      const rawPhotoUrl = String(row.photo_url || row.drive_url || row.download_url || '').trim();
+      const photoUrl = rawPhotoUrl || (photoFileId ? `https://drive.google.com/uc?export=download&id=${photoFileId}` : '');
+      const sNo = _toIntOrNull(row.student_no);
+
+      const itemPayload = {
+        remote_id: docId,
+        student_id: sid,
+        student_name: String(row.student_name || row.name || (existing && (existing.student_name || existing.name)) || '').trim(),
+        student_no: sNo !== null ? sNo : (existing && existing.student_no !== undefined ? existing.student_no : null),
+        grade: auth.gradeNum,
+        class_no: auth.classNum,
+        school_code: auth.schoolCode,
+        school_name: auth.schoolName,
+        teacher_id: auth.teacherId,
+        photo_file_id: photoFileId,
+        photo_url: photoUrl,
+        updated_at: nowStr,
+      };
+
+      if (row.face_descriptor !== undefined) {
+        const vec = _normalizeFaceDescriptor(row.face_descriptor);
+        if (vec) {
+          itemPayload.face_descriptor = vec;
+          itemPayload.descriptor_model = String(row.descriptor_model || 'vladmandic-face-api-128d').trim();
+          itemPayload.descriptor_updated_at = nowStr;
+        } else if (row.face_descriptor === null) {
+          itemPayload.face_descriptor = null;
+          itemPayload.descriptor_model = '';
+        }
+      } else if (existing) {
+        const prevFileId = String(existing.photo_file_id || _extractDriveFileId(existing.photo_url || '')).trim();
+        if (photoFileId && prevFileId !== photoFileId) {
+          itemPayload.face_descriptor = null;
+          itemPayload.descriptor_model = '';
+        }
+      }
+
+      validRows.push(itemPayload);
+    }
+
+    if (rejectedCount > 0 && validRows.length === 0) {
+      return { status: 403, json: { ok: false, error: '담당 학급 학생의 안면 데이터만 저장할 수 있습니다.' } };
+    }
+
+    const written = await _batchUpsertDocs(db, '학생_안면데이터', validRows, scopeDefaults);
+    return { status: 200, json: { ok: true, written, skipped: rejectedCount, items: validRows } };
+  }
+
+  if (action === 'get_student_face_data') {
+    const gradeIn = _gradeCandidates(auth.gradeNum);
+    const snap = await db.collection('학생_안면데이터').where('grade', 'in', gradeIn).limit(200).get();
+    const rows = _snapToRows(snap);
+    const items = rows
+      .filter((d) => _isStrictClassMember(d, auth))
+      .map((d) => ({
+        remote_id: String(d.remote_id || ''),
+        student_id: String(d.student_id || '').trim(),
+        student_name: String(d.student_name || d.name || '').trim(),
+        student_no: d.student_no ?? null,
+        grade: _toIntOrNull(d.grade),
+        class_no: _toIntOrNull(d.class_no),
+        photo_file_id: String(d.photo_file_id || _extractDriveFileId(d.photo_url || '')).trim(),
+        photo_url: String(d.photo_url || '').trim(),
+        face_descriptor: _normalizeFaceDescriptor(d.face_descriptor),
+        descriptor_model: String(d.descriptor_model || '').trim(),
+        updated_at: String(d.updated_at || ''),
+      }))
+      .sort((a, b) => Number(a.student_no || 9999) - Number(b.student_no || 9999) || String(a.student_id).localeCompare(String(b.student_id)));
+    return { status: 200, json: { ok: true, items, total: items.length } };
+  }
+
+  if (action === 'save_student_face_descriptors_batch') {
+    const rawRows = Array.isArray(params.rows)
+      ? params.rows
+      : (Array.isArray(params.items) ? params.items : (Array.isArray(params.descriptors) ? params.descriptors : []));
+    const nowStr = _nowStr();
+    const validRows = [];
+    let rejectedCount = 0;
+    let invalidCount = 0;
+
+    for (const row of rawRows) {
+      if (!row || typeof row !== 'object') continue;
+      const sid = String(row.student_id || '').trim();
+      if (!sid) continue;
+
+      const vec = _normalizeFaceDescriptor(row.face_descriptor);
+      if (!vec) {
+        invalidCount += 1;
+        continue;
+      }
+      if (!_isFaceRowAllowedForTeacherClass(row, auth)) {
+        rejectedCount += 1;
+        continue;
+      }
+
+      const docId = String(row.remote_id || _buildStudentFaceDocId(auth, sid)).replace(/[\\/:*?"<>|\s]/g, '_');
+      const existingSnap = await db.collection('학생_안면데이터').doc(docId).get();
+      const existing = existingSnap.exists ? { remote_id: existingSnap.id, ...(existingSnap.data() || {}) } : null;
+      if (existing && !_isStrictClassMember(existing, auth)) {
+        rejectedCount += 1;
+        continue;
+      }
+
+      const nextDoc = {
+        remote_id: docId,
+        student_id: sid,
+        grade: auth.gradeNum,
+        class_no: auth.classNum,
+        school_code: auth.schoolCode,
+        school_name: auth.schoolName,
+        teacher_id: auth.teacherId,
+        face_descriptor: vec,
+        descriptor_model: String(row.descriptor_model || 'vladmandic-face-api-128d').trim(),
+        descriptor_updated_at: nowStr,
+        updated_at: nowStr,
+      };
+      const sName = String(row.student_name || row.name || (existing && (existing.student_name || existing.name)) || '').trim();
+      if (sName) nextDoc.student_name = sName;
+      const sNo = _toIntOrNull(row.student_no);
+      if (sNo !== null) nextDoc.student_no = sNo;
+      else if (existing && existing.student_no !== undefined && existing.student_no !== null) nextDoc.student_no = existing.student_no;
+      const pFileId = _extractDriveFileId(row.photo_file_id || row.photo_url || (existing && (existing.photo_file_id || existing.photo_url)) || '');
+      if (pFileId) nextDoc.photo_file_id = pFileId;
+      const pUrl = String(row.photo_url || (existing && existing.photo_url) || '').trim();
+      if (pUrl) nextDoc.photo_url = pUrl;
+
+      validRows.push(nextDoc);
+    }
+
+    if (rejectedCount > 0 && validRows.length === 0) {
+      return { status: 403, json: { ok: false, error: '담당 학급 학생의 안면 데이터만 저장할 수 있습니다.' } };
+    }
+    if (invalidCount > 0 && validRows.length === 0) {
+      return { status: 400, json: { ok: false, error: 'face_descriptor는 128차원 숫자 배열이어야 합니다.' } };
+    }
+
+    const written = await _batchUpsertDocs(db, '학생_안면데이터', validRows, scopeDefaults);
+    return { status: 200, json: { ok: true, saved_count: written, skipped: rejectedCount + invalidCount } };
+  }
+
+  if (action === 'proxy_drive_photo') {
+    const fileId = _extractDriveFileId(params.file_id || params.photo_file_id || params.photo_url || '');
+    if (!fileId) {
+      return { status: 400, json: { ok: false, error: '유효한 Google Drive file_id가 필요합니다.' } };
+    }
+
+    const targetSid = String(params.student_id || '').trim();
+    const gradeIn = _gradeCandidates(auth.gradeNum);
+    const snap = await db.collection('학생_안면데이터').where('grade', 'in', gradeIn).limit(200).get();
+    const rows = _snapToRows(snap);
+    const matchedDoc = rows.find((d) => {
+      if (!_isStrictClassMember(d, auth)) return false;
+      const docFileId = String(d.photo_file_id || _extractDriveFileId(d.photo_url || '')).trim();
+      if (docFileId !== fileId) return false;
+      if (targetSid && String(d.student_id || '').trim() !== targetSid) return false;
+      return true;
+    });
+
+    if (!matchedDoc) {
+      return { status: 403, json: { ok: false, error: '담당 학급 학생의 안면 사진만 불러올 수 있습니다.' } };
+    }
+    if (typeof googleDrive.downloadDriveFileAsDataUrl !== 'function') {
+      return { status: 500, json: { ok: false, error: 'Google Drive 읽기 헬퍼를 사용할 수 없습니다.' } };
+    }
+
+    const dl = await googleDrive.downloadDriveFileAsDataUrl(fileId);
+    if (!dl || !dl.ok) {
+      return { status: 502, json: { ok: false, error: (dl && dl.error) || '사진을 불러오지 못했습니다.' } };
+    }
+    return { status: 200, json: { ok: true, file_id: fileId, mime_type: dl.mimeType, data_url: dl.dataUrl } };
   }
 
   return { status: 400, json: { ok: false, error: `지원하지 않는 데스크톱 action입니다: ${action}` } };
@@ -2925,4 +3435,8 @@ module.exports._testHelpers = {
   _matchesTeacherClassOrAuthor,
   _parseReplySchema,
   _buildNoticeReplyLedger,
+  _parseLessonMeta,
+  _normalizeFaceDescriptor,
+  _buildStudentFaceDocId,
+  _extractDriveFileId,
 };

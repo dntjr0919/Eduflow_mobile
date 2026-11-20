@@ -760,6 +760,7 @@ function _deriveAttCheckStatus(row) {
 function openTeacherAttendanceCheck() {
   const view = document.getElementById('teacherAttendanceCheckView');
   if (!view) return;
+  stopAttFaceCameraPanel();
 
   const cu = mockData.currentUser;
   const todayStr = getLocalTodayStr();
@@ -815,6 +816,8 @@ function openTeacherAttendanceCheck() {
       classNo: stu.class_no || cuClass,
       checked,
       period,
+      cameraVerified: false,
+      cameraMatchPct: 0,
       existingId: existing ? existing.id : '',
       existingReason: existing ? (existing.reason || '') : '',
       existingType: existing ? (existing.type || '') : ''
@@ -826,6 +829,7 @@ function openTeacherAttendanceCheck() {
 }
 
 function closeTeacherAttendanceCheck() {
+  stopAttFaceCameraPanel();
   const view = document.getElementById('teacherAttendanceCheckView');
   if (view) view.classList.add('hidden');
 }
@@ -835,21 +839,25 @@ function updateAttCheckSummary() {
   let absent = 0;
   let late = 0;
   let early = 0;
+  let cameraVerifiedCount = 0;
   _attCheckRows.forEach(row => {
     const st = _deriveAttCheckStatus(row);
     if (st.type === '결석') absent++;
     else if (st.type === '지각') late++;
     else if (st.type === '조퇴') early++;
     else present++;
+    if (!row.checked && !row.period && row.cameraVerified) cameraVerifiedCount++;
   });
   const elP = document.getElementById('attCheckCntPresent');
   const elA = document.getElementById('attCheckCntAbsent');
   const elL = document.getElementById('attCheckCntLate');
   const elE = document.getElementById('attCheckCntEarly');
+  const elCam = document.getElementById('attFaceRecognizedSummary');
   if (elP) elP.innerText = `${present}명`;
   if (elA) elA.innerText = `${absent}명`;
   if (elL) elL.innerText = `${late}명`;
   if (elE) elE.innerText = `${early}명`;
+  if (elCam) elCam.innerText = `카메라 확인: ${cameraVerifiedCount}명`;
 }
 
 function renderAttCheckStudentList() {
@@ -865,11 +873,21 @@ function renderAttCheckStudentList() {
   const periodOptions = getPeriodOptionsList();
   list.innerHTML = _attCheckRows.map((row, idx) => {
     const st = _deriveAttCheckStatus(row);
+    const isCamVerified = !row.checked && !row.period && Boolean(row.cameraVerified);
     const defaultOptLabel = row.checked ? '전체(결석)' : '해당 없음(출석)';
     const promptLabel = row.checked ? '어디까지 결과인지' : '어디서부터 결과인지';
     const cardBorder = row.checked
       ? 'border-red-200 bg-red-50/30'
-      : (row.period ? 'border-purple-200 bg-purple-50/30' : 'border-slate-200/80 bg-white');
+      : (row.period
+        ? 'border-purple-200 bg-purple-50/30'
+        : (isCamVerified ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200/80 bg-white'));
+
+    const badgesHtml = isCamVerified
+      ? `<div class="flex items-center gap-1 shrink-0">
+           <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 bg-emerald-100 text-emerald-700 border-emerald-200">카메라 확인됨</span>
+           <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${st.badgeClass}">${st.label}</span>
+         </div>`
+      : `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${st.badgeClass}">${st.label}</span>`;
 
     return `
       <div class="rounded-2xl p-3 border shadow-xs transition-colors ${cardBorder}" id="attCheckRow-${idx}">
@@ -881,7 +899,7 @@ function renderAttCheckStudentList() {
               <span class="text-[10px] text-slate-400">${row.studentId}</span>
             </div>
           </label>
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${st.badgeClass}">${st.label}</span>
+          ${badgesHtml}
         </div>
         <div class="mt-2 pt-2 border-t border-slate-200/60 flex items-center justify-between gap-2">
           <span class="text-[11px] font-semibold text-slate-600 shrink-0">${promptLabel}</span>
@@ -899,13 +917,561 @@ function onAttCheckToggle(idx, isChecked) {
   if (!_attCheckRows[idx]) return;
   _attCheckRows[idx].checked = Boolean(isChecked);
   _attCheckRows[idx].period = '';
+  if (_attCheckRows[idx].checked) {
+    _attCheckRows[idx].cameraVerified = false;
+  }
   renderAttCheckStudentList();
 }
 
 function onAttCheckPeriodChange(idx, periodVal) {
   if (!_attCheckRows[idx]) return;
   _attCheckRows[idx].period = periodVal || '';
+  if (_attCheckRows[idx].checked || _attCheckRows[idx].period) {
+    _attCheckRows[idx].cameraVerified = false;
+  }
   renderAttCheckStudentList();
+}
+
+// --- REAL-TIME CAMERA FACIAL RECOGNITION ATTENDANCE ---
+const FACE_API_SCRIPT_URLS = [
+  'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js',
+  'https://unpkg.com/@vladmandic/face-api@1.7.15/dist/face-api.js'
+];
+const FACE_API_MODEL_URLS = [
+  'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model',
+  'https://unpkg.com/@vladmandic/face-api@1.7.15/model'
+];
+const FACE_MATCH_THRESHOLD = 0.52;
+
+const _attFaceState = {
+  isOpen: false,
+  sessionId: 0,
+  modelsLoaded: false,
+  loadingPromise: null,
+  stream: null,
+  loopTimer: null,
+  facingMode: 'environment',
+  matcher: null,
+  studentMap: new Map(),
+  enrolledCount: 0,
+};
+
+function _computeFaceMatchPercent(distance) {
+  const d = Number(distance);
+  if (!Number.isFinite(d)) return 0;
+  return Math.max(0, Math.min(100, Math.round((1 - d) * 100)));
+}
+
+function _mapVideoBoxToOverlay(box, videoWidth, videoHeight, canvasWidth, canvasHeight) {
+  if (!box || !videoWidth || !videoHeight || !canvasWidth || !canvasHeight) {
+    return { x: 0, y: 0, width: 0, height: 0 };
+  }
+  const scale = Math.max(canvasWidth / videoWidth, canvasHeight / videoHeight);
+  const renderedWidth = videoWidth * scale;
+  const renderedHeight = videoHeight * scale;
+  const offsetX = (canvasWidth - renderedWidth) / 2;
+  const offsetY = (canvasHeight - renderedHeight) / 2;
+  return {
+    x: Number(box.x || 0) * scale + offsetX,
+    y: Number(box.y || 0) * scale + offsetY,
+    width: Number(box.width || 0) * scale,
+    height: Number(box.height || 0) * scale,
+  };
+}
+
+function applyCameraFaceRecognitionToAttRows(rows, studentId, matchPct = 100) {
+  const list = Array.isArray(rows) ? rows : [];
+  const sid = String(studentId || '').trim();
+  if (!sid) return { matched: false, changed: false, row: null };
+  const row = list.find((r) => r && String(r.studentId || '').trim() === sid);
+  if (!row) return { matched: false, changed: false, row: null };
+
+  const pct = Math.max(0, Math.min(100, Math.round(Number(matchPct) || 0)));
+  const prevPct = Number(row.cameraMatchPct || 0);
+  const changed = Boolean(row.checked) || Boolean(row.period) || !row.cameraVerified;
+
+  row.checked = false;
+  row.period = '';
+  row.cameraVerified = true;
+  row.cameraMatchPct = Math.max(prevPct, pct);
+
+  return { matched: true, changed, row };
+}
+
+function _setAttFaceStatus(text, tone = 'emerald') {
+  const statusEl = document.getElementById('attFaceStatusText');
+  const dotEl = document.getElementById('attFaceCamDot');
+  if (statusEl) statusEl.innerText = text || '';
+  if (dotEl) {
+    let cls = 'w-2 h-2 rounded-full shrink-0 bg-emerald-400 animate-pulse';
+    if (tone === 'amber') cls = 'w-2 h-2 rounded-full shrink-0 bg-amber-400';
+    else if (tone === 'rose') cls = 'w-2 h-2 rounded-full shrink-0 bg-rose-500';
+    dotEl.className = cls;
+  }
+}
+
+function _setAttFaceLoading(visible, text = '') {
+  const overlay = document.getElementById('attFaceLoadingOverlay');
+  const textEl = document.getElementById('attFaceLoadingText');
+  if (textEl && text) textEl.innerText = text;
+  if (overlay) overlay.classList.toggle('hidden', !visible);
+}
+
+function _loadExternalScriptOnce(urls) {
+  if (typeof window !== 'undefined' && window.faceapi) {
+    return Promise.resolve(window.faceapi);
+  }
+  if (typeof document === 'undefined') {
+    return Promise.reject(new Error('브라우저 환경에서만 실행할 수 있습니다.'));
+  }
+  const candidates = Array.isArray(urls) ? urls : [urls];
+  return new Promise((resolve, reject) => {
+    let idx = 0;
+    const tryNext = () => {
+      if (typeof window !== 'undefined' && window.faceapi) {
+        resolve(window.faceapi);
+        return;
+      }
+      if (idx >= candidates.length) {
+        reject(new Error('face-api.js 스크립트를 불러오지 못했습니다.'));
+        return;
+      }
+      const url = candidates[idx++];
+      const script = document.createElement('script');
+      script.src = url;
+      script.async = true;
+      script.onload = () => {
+        if (window.faceapi) resolve(window.faceapi);
+        else {
+          script.remove();
+          tryNext();
+        }
+      };
+      script.onerror = () => {
+        script.remove();
+        tryNext();
+      };
+      document.head.appendChild(script);
+    };
+    tryNext();
+  });
+}
+
+async function _ensureFaceApiLoaded() {
+  if (_attFaceState.modelsLoaded && typeof window !== 'undefined' && window.faceapi) {
+    return window.faceapi;
+  }
+  if (_attFaceState.loadingPromise) {
+    return _attFaceState.loadingPromise;
+  }
+  _attFaceState.loadingPromise = (async () => {
+    try {
+      const faceapi = await _loadExternalScriptOnce(FACE_API_SCRIPT_URLS);
+      let loaded = false;
+      let lastErr = null;
+      for (const modelUrl of FACE_API_MODEL_URLS) {
+        try {
+          await Promise.all([
+            faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl),
+            faceapi.nets.ssdMobilenetv1.loadFromUri(modelUrl),
+            faceapi.nets.faceLandmark68Net.loadFromUri(modelUrl),
+            faceapi.nets.faceRecognitionNet.loadFromUri(modelUrl),
+          ]);
+          loaded = true;
+          break;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      if (!loaded) {
+        throw lastErr || new Error('안면 인식 모델 가중치를 불러오지 못했습니다.');
+      }
+      _attFaceState.modelsLoaded = true;
+      return faceapi;
+    } catch (err) {
+      _attFaceState.loadingPromise = null;
+      throw err;
+    }
+  })();
+  return _attFaceState.loadingPromise;
+}
+
+function _loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('이미지를 디코딩하지 못했습니다.'));
+    img.src = dataUrl;
+  });
+}
+
+async function _prepareClassFaceMatcher(sessionId) {
+  if (typeof gasApi === 'undefined' || !gasApi.isConfigured()) {
+    throw new Error('서버 연결이 필요합니다.');
+  }
+  const faceapi = window.faceapi;
+  const res = await gasApi.post('get_student_face_data', { ..._getTeacherAuthParams() });
+  if (sessionId !== _attFaceState.sessionId || !_attFaceState.isOpen) return null;
+
+  const items = Array.isArray(res && res.items) ? res.items : [];
+  const studentMap = new Map();
+  _attCheckRows.forEach((r) => {
+    studentMap.set(String(r.studentId || '').trim(), {
+      studentId: String(r.studentId || '').trim(),
+      studentNo: r.studentNo || '',
+      name: r.name || ''
+    });
+  });
+
+  const descriptorGroups = new Map();
+  const missingItems = [];
+
+  items.forEach((item) => {
+    const sid = String(item.student_id || '').trim();
+    if (!sid) return;
+    const prev = studentMap.get(sid) || {};
+    studentMap.set(sid, {
+      studentId: sid,
+      studentNo: item.student_no !== null && item.student_no !== undefined ? item.student_no : (prev.studentNo || ''),
+      name: item.student_name || prev.name || sid
+    });
+
+    if (
+      Array.isArray(item.face_descriptor) &&
+      item.face_descriptor.length === 128 &&
+      item.face_descriptor.every((v) => Number.isFinite(Number(v)))
+    ) {
+      if (!descriptorGroups.has(sid)) descriptorGroups.set(sid, []);
+      descriptorGroups.get(sid).push(new Float32Array(item.face_descriptor.map(Number)));
+    } else if (item.photo_file_id || item.photo_url) {
+      missingItems.push(item);
+    }
+  });
+
+  const newlyExtracted = [];
+  for (let i = 0; i < missingItems.length; i += 1) {
+    if (sessionId !== _attFaceState.sessionId || !_attFaceState.isOpen) return null;
+    const item = missingItems[i];
+    const sid = String(item.student_id || '').trim();
+    _setAttFaceLoading(true, `얼굴 특징 추출 중 (${i + 1}/${missingItems.length})...`);
+    try {
+      const photoRes = await gasApi.post('proxy_drive_photo', {
+        ..._getTeacherAuthParams(),
+        file_id: item.photo_file_id || '',
+        photo_url: item.photo_url || '',
+        student_id: sid
+      });
+      if (sessionId !== _attFaceState.sessionId || !_attFaceState.isOpen) return null;
+      if (!photoRes || !photoRes.data_url) continue;
+
+      const img = await _loadImageFromDataUrl(photoRes.data_url);
+      let det = await faceapi
+        .detectSingleFace(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (!det) {
+        det = await faceapi
+          .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.35 }))
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+      }
+      if (det && det.descriptor && det.descriptor.length === 128) {
+        const vec = Array.from(det.descriptor);
+        if (!descriptorGroups.has(sid)) descriptorGroups.set(sid, []);
+        descriptorGroups.get(sid).push(new Float32Array(vec));
+        newlyExtracted.push({
+          remote_id: item.remote_id || '',
+          student_id: sid,
+          student_name: item.student_name || '',
+          student_no: item.student_no,
+          photo_file_id: item.photo_file_id || '',
+          photo_url: item.photo_url || '',
+          face_descriptor: vec,
+          descriptor_model: 'vladmandic-face-api-128d'
+        });
+      }
+    } catch (err) {
+      console.warn(`[FaceExtract] 학생 ${sid} 임베딩 추출 실패:`, err);
+    }
+  }
+
+  if (newlyExtracted.length > 0 && sessionId === _attFaceState.sessionId && _attFaceState.isOpen) {
+    try {
+      await gasApi.post('save_student_face_descriptors_batch', {
+        ..._getTeacherAuthParams(),
+        rows: newlyExtracted
+      });
+    } catch (err) {
+      console.warn('[FaceExtract] 임베딩 캐시 저장 실패:', err);
+      showToast('추출된 얼굴 데이터 캐시 저장에 실패했습니다.', '⚠️');
+    }
+  }
+
+  const labeledDescriptors = [];
+  descriptorGroups.forEach((vecs, sid) => {
+    if (vecs.length > 0) {
+      labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(sid, vecs));
+    }
+  });
+
+  _attFaceState.studentMap = studentMap;
+  _attFaceState.enrolledCount = labeledDescriptors.length;
+  const enrolledEl = document.getElementById('attFaceEnrolledSummary');
+  if (enrolledEl) enrolledEl.innerText = `등록 얼굴: ${labeledDescriptors.length}명`;
+
+  if (labeledDescriptors.length === 0) return null;
+  return new faceapi.FaceMatcher(labeledDescriptors, FACE_MATCH_THRESHOLD);
+}
+
+function _stopCurrentVideoStream() {
+  if (_attFaceState.stream) {
+    try {
+      _attFaceState.stream.getTracks().forEach((track) => track.stop());
+    } catch (_) {}
+    _attFaceState.stream = null;
+  }
+  const video = document.getElementById('attFaceVideo');
+  if (video) {
+    try { video.srcObject = null; } catch (_) {}
+  }
+}
+
+async function _startAttFaceVideoStream(facingMode, sessionId) {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error('이 브라우저는 카메라 기능을 지원하지 않습니다.');
+  }
+  _stopCurrentVideoStream();
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: { ideal: facingMode },
+      width: { ideal: 640 },
+      height: { ideal: 480 }
+    },
+    audio: false
+  });
+  if (sessionId !== _attFaceState.sessionId || !_attFaceState.isOpen) {
+    try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    return false;
+  }
+  const video = document.getElementById('attFaceVideo');
+  if (!video) {
+    try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    return false;
+  }
+  _attFaceState.stream = stream;
+  video.srcObject = stream;
+  await video.play();
+  return true;
+}
+
+function _drawFaceDetectionBox(ctx, overlayBox, labelText, isMatched) {
+  const { x, y, width, height } = overlayBox;
+  ctx.save();
+  ctx.lineWidth = isMatched ? 2.5 : 1.5;
+  ctx.strokeStyle = isMatched ? '#10b981' : 'rgba(148, 163, 184, 0.85)';
+  ctx.strokeRect(x, y, width, height);
+
+  ctx.font = 'bold 12px Pretendard, sans-serif';
+  const paddingX = 6;
+  const textWidth = ctx.measureText(labelText).width;
+  const boxW = textWidth + paddingX * 2;
+  const boxH = 20;
+  const labelX = Math.max(2, x);
+  const labelY = y >= boxH + 4 ? y - boxH - 2 : y + 2;
+
+  ctx.fillStyle = isMatched ? '#10b981' : 'rgba(51, 65, 85, 0.85)';
+  ctx.fillRect(labelX, labelY, boxW, boxH);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(labelText, labelX + paddingX, labelY + boxH / 2);
+  ctx.restore();
+}
+
+function _scheduleAttFaceDetectionLoop(sessionId) {
+  if (_attFaceState.loopTimer) {
+    clearTimeout(_attFaceState.loopTimer);
+    _attFaceState.loopTimer = null;
+  }
+
+  const runTick = async () => {
+    if (sessionId !== _attFaceState.sessionId || !_attFaceState.isOpen) return;
+    const video = document.getElementById('attFaceVideo');
+    const canvas = document.getElementById('attFaceOverlay');
+    const faceapi = typeof window !== 'undefined' ? window.faceapi : null;
+
+    try {
+      if (
+        video &&
+        canvas &&
+        faceapi &&
+        _attFaceState.matcher &&
+        video.readyState >= 2 &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0
+      ) {
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+          const targetW = Math.round(rect.width * dpr);
+          const targetH = Math.round(rect.height * dpr);
+          if (canvas.width !== targetW || canvas.height !== targetH) {
+            canvas.width = targetW;
+            canvas.height = targetH;
+          }
+          const ctx = canvas.getContext('2d');
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, rect.width, rect.height);
+
+          const detections = await faceapi
+            .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
+            .withFaceLandmarks()
+            .withFaceDescriptors();
+
+          if (sessionId !== _attFaceState.sessionId || !_attFaceState.isOpen) return;
+
+          let anyRowChanged = false;
+          detections.forEach((det) => {
+            const box = det.detection && det.detection.box;
+            if (!box) return;
+            const overlayBox = _mapVideoBoxToOverlay(box, video.videoWidth, video.videoHeight, rect.width, rect.height);
+            const best = _attFaceState.matcher.findBestMatch(det.descriptor);
+            const isMatched = Boolean(best && best.label && best.label !== 'unknown');
+
+            if (isMatched) {
+              const sid = String(best.label).trim();
+              const pct = _computeFaceMatchPercent(best.distance);
+              const meta = _attFaceState.studentMap.get(sid) || {};
+              const stuName = meta.name || sid;
+              const labelText = `${sid} ${stuName} (${pct}%)`;
+              _drawFaceDetectionBox(ctx, overlayBox, labelText, true);
+
+              const updateRes = applyCameraFaceRecognitionToAttRows(_attCheckRows, sid, pct);
+              if (updateRes.changed) {
+                anyRowChanged = true;
+                showToast(`${stuName} 출석 확인 (${pct}%)`, '📸');
+              }
+            } else {
+              _drawFaceDetectionBox(ctx, overlayBox, '미등록', false);
+            }
+          });
+
+          if (anyRowChanged) {
+            renderAttCheckStudentList();
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[FaceLoop] 프레임 감지 오류:', err);
+    } finally {
+      if (sessionId === _attFaceState.sessionId && _attFaceState.isOpen) {
+        _attFaceState.loopTimer = setTimeout(runTick, 280);
+      }
+    }
+  };
+
+  _attFaceState.loopTimer = setTimeout(runTick, 120);
+}
+
+function toggleAttFaceCameraPanel() {
+  if (_attFaceState.isOpen) {
+    stopAttFaceCameraPanel();
+  } else {
+    startAttFaceCameraPanel();
+  }
+}
+
+async function startAttFaceCameraPanel() {
+  const panel = document.getElementById('attFaceCameraPanel');
+  const toggleBtn = document.getElementById('attFaceCamToggleBtn');
+  if (!panel) return;
+
+  _attFaceState.isOpen = true;
+  _attFaceState.sessionId += 1;
+  const sessionId = _attFaceState.sessionId;
+
+  panel.classList.remove('hidden');
+  if (toggleBtn) {
+    toggleBtn.innerText = '📷 카메라 끄기';
+    toggleBtn.className = 'text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 border border-emerald-600 px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition-colors';
+  }
+  _setAttFaceStatus('안면 인식 모델 불러오는 중...', 'emerald');
+  _setAttFaceLoading(true, '안면 인식 모델을 불러오는 중...');
+
+  try {
+    await _ensureFaceApiLoaded();
+    if (sessionId !== _attFaceState.sessionId || !_attFaceState.isOpen) return;
+
+    _setAttFaceStatus('학생 안면 데이터 동기화 중...', 'emerald');
+    _setAttFaceLoading(true, '우리 반 학생 안면 데이터를 불러오는 중...');
+    const matcher = await _prepareClassFaceMatcher(sessionId);
+    if (sessionId !== _attFaceState.sessionId || !_attFaceState.isOpen) return;
+
+    _attFaceState.matcher = matcher;
+    if (!matcher) {
+      _setAttFaceLoading(false);
+      _setAttFaceStatus('등록된 학생 얼굴 데이터가 없습니다. 데스크톱에서 사진을 등록해 주세요.', 'amber');
+      return;
+    }
+
+    _setAttFaceLoading(true, '카메라를 연결하는 중...');
+    const started = await _startAttFaceVideoStream(_attFaceState.facingMode, sessionId);
+    if (!started || sessionId !== _attFaceState.sessionId || !_attFaceState.isOpen) return;
+
+    _setAttFaceLoading(false);
+    _setAttFaceStatus('실시간 안면 인식 중 (카메라에 얼굴을 비춰주세요)', 'emerald');
+    _scheduleAttFaceDetectionLoop(sessionId);
+  } catch (err) {
+    if (sessionId !== _attFaceState.sessionId) return;
+    _setAttFaceLoading(false);
+    const msg = (err && err.message) || '카메라 안면 인식을 시작하지 못했습니다.';
+    _setAttFaceStatus(msg, 'rose');
+    showToast(msg, '⚠️');
+  }
+}
+
+function stopAttFaceCameraPanel() {
+  _attFaceState.isOpen = false;
+  _attFaceState.sessionId += 1;
+  if (_attFaceState.loopTimer) {
+    clearTimeout(_attFaceState.loopTimer);
+    _attFaceState.loopTimer = null;
+  }
+  _stopCurrentVideoStream();
+
+  const canvas = document.getElementById('attFaceOverlay');
+  if (canvas) {
+    const ctx = canvas.getContext && canvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+  const panel = document.getElementById('attFaceCameraPanel');
+  if (panel) panel.classList.add('hidden');
+  _setAttFaceLoading(false);
+
+  const toggleBtn = document.getElementById('attFaceCamToggleBtn');
+  if (toggleBtn) {
+    toggleBtn.innerText = '📷 카메라 출석';
+    toggleBtn.className = 'text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition-colors';
+  }
+}
+
+async function switchAttFaceCameraFacing() {
+  _attFaceState.facingMode = _attFaceState.facingMode === 'environment' ? 'user' : 'environment';
+  if (!_attFaceState.isOpen) return;
+  try {
+    _setAttFaceLoading(true, '카메라 전환 중...');
+    const started = await _startAttFaceVideoStream(_attFaceState.facingMode, _attFaceState.sessionId);
+    if (started) {
+      _setAttFaceLoading(false);
+      _setAttFaceStatus(
+        _attFaceState.facingMode === 'user' ? '전면 카메라로 실시간 안면 인식 중' : '후면 카메라로 실시간 안면 인식 중',
+        'emerald'
+      );
+    }
+  } catch (err) {
+    _setAttFaceLoading(false);
+    showToast(`카메라 전환 실패: ${(err && err.message) || '오류'}`, '⚠️');
+  }
 }
 
 async function saveTeacherAttendanceCheck(btnEl) {
@@ -2213,6 +2779,10 @@ function _findBestSubjectRoster(rosters, subject, classLabel) {
 
 if (typeof globalThis !== 'undefined') {
   globalThis._eduflowTeacherHelpers = {
+    _deriveAttCheckStatus,
+    _computeFaceMatchPercent,
+    _mapVideoBoxToOverlay,
+    applyCameraFaceRecognitionToAttRows,
     _extractClassTokens,
     _expandSubjectTokens,
     _findBestSubjectRoster,
@@ -2489,4 +3059,16 @@ async function saveTeacherLessonProgress(btnEl) {
     }
     showToast(`${_lessonModalState.classLabel} ${_lessonModalState.subject} 수업 진도가 저장되었습니다.`, '📖');
   });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    _deriveAttCheckStatus,
+    _computeFaceMatchPercent,
+    _mapVideoBoxToOverlay,
+    applyCameraFaceRecognitionToAttRows,
+    _extractClassTokens,
+    _expandSubjectTokens,
+    _findBestSubjectRoster,
+  };
 }

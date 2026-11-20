@@ -1188,9 +1188,371 @@ function selectCounselStudent(sid) {
 // =========================================================================
 // TAB 6: 교과 출결 · 수업 진도
 // =========================================================================
-function _populateSelectOptions(selectEl, values, currentVal, defaultLabel) {
+const _SCHED_ITEM_SRC = '[월화수목금토일](?:요일)?\\s*[:\\-·/]?\\s*\\d{1,2}(?:\\s*[~,\\-]\\s*\\d{1,2})*(?:\\s*교시)?';
+const _BRACKETED_WEEKDAY_PERIOD_RE = new RegExp(
+  `(?:\\[\\s*${_SCHED_ITEM_SRC}(?:\\s*[,/·ㆍ\\s]\\s*${_SCHED_ITEM_SRC})*\\s*\\]|\\(\\s*${_SCHED_ITEM_SRC}(?:\\s*[,/·ㆍ\\s]\\s*${_SCHED_ITEM_SRC})*\\s*\\))`,
+  'g'
+);
+
+function _cleanMetaSeparators(str) {
+  let out = String(str || '');
+  // Remove empty or punctuation-only brackets left behind after stripping tokens
+  for (let i = 0; i < 3; i += 1) {
+    const next = out.replace(/\(\s*[·ㆍ•\-/|,:;\s]*\)|\[\s*[·ㆍ•\-/|,:;\s]*\]/g, ' ');
+    if (next === out) break;
+    out = next;
+  }
+  // Collapse consecutive punctuation separators (e.g. " · · ") while preserving internal spaces/hyphens
+  out = out.replace(/([·ㆍ•/|,:;])(?:\s*[·ㆍ•/|,:;])+/g, '$1');
+  out = out.replace(/\s+/g, ' ').trim();
+  out = out.replace(/^[·ㆍ•\-/|,:;\s]+/, '').replace(/[·ㆍ•\-/|,:;\s]+$/, '').trim();
+  return out;
+}
+
+function _stripWeekdayPeriod(raw, allowCompactBare = false) {
+  let text = String(raw || '').trim();
+  let firstPeriod = null;
+  const schedules = [];
+
+  if (!text) {
+    return { text: '', period: null, schedules };
+  }
+
+  const recordSchedule = (weekday, periodNum) => {
+    if (periodNum >= 1 && periodNum <= 15) {
+      if (firstPeriod === null) firstPeriod = periodNum;
+      if (weekday) schedules.push({ weekday, period: periodNum });
+      return true;
+    }
+    return false;
+  };
+
+  // 1) Bracketed / parenthesized weekday+period (single or multi-schedule)
+  text = text.replace(_BRACKETED_WEEKDAY_PERIOD_RE, (match) => {
+    const innerRe = /([월화수목금토일])(?:요일)?\s*[:\-·/]?\s*(\d{1,2})(?:\s*[~,\-]\s*\d{1,2})*(?:\s*교시)?/g;
+    const localExtracted = [];
+    let m;
+    while ((m = innerRe.exec(match)) !== null) {
+      const pNum = Number(m[2]);
+      if (pNum >= 1 && pNum <= 15) {
+        localExtracted.push({ weekday: m[1], period: pNum });
+      }
+    }
+    if (localExtracted.length === 0) return match;
+    localExtracted.forEach((item) => recordSchedule(item.weekday, item.period));
+    return ' ';
+  });
+
+  // 2) Bracketed / parenthesized standalone period: [3교시], (7교시)
+  text = text.replace(/(?:\[\s*(\d{1,2})\s*교시\s*\]|\(\s*(\d{1,2})\s*교시\s*\))/g, (match, p1, p2) => {
+    const pNum = Number(p1 || p2);
+    return recordSchedule('', pNum) ? ' ' : match;
+  });
+
+  // 3) Bare weekday + period with separator, '요일', or '교시' (safe against '수1', '화2', '특수 1')
+  text = text.replace(
+    /(^|[\s·ㆍ•,/|(\[])([월화수목금토일])(?:요일\s*[:\-·/]?\s*|\s+[:\-·/]?\s*|\s*[:\-·/]\s*)(\d{1,2})(?:\s*교시)?(?=$|[\s·ㆍ•,/|)\]])/g,
+    (match, prefix, wd, pStr) => {
+      const pNum = Number(pStr);
+      return recordSchedule(wd, pNum) ? `${prefix} ` : match;
+    }
+  );
+
+  // 4) Bare weekday + compact digits with '교시' suffix: 목7교시
+  text = text.replace(
+    /(^|[\s·ㆍ•,/|(\[])([월화수목금토일])(?:요일)?\s*(\d{1,2})\s*교시(?=$|[\s·ㆍ•,/|)\]])/g,
+    (match, prefix, wd, pStr) => {
+      const pNum = Number(pStr);
+      return recordSchedule(wd, pNum) ? `${prefix} ` : match;
+    }
+  );
+
+  // 5) Compact bare weekday + digits (only for class_label / period fields, never subject)
+  if (allowCompactBare) {
+    text = text.replace(
+      /(^|[\s·ㆍ•,/|(\[])([월화수목금토일])(\d{1,2})(?=$|[\s·ㆍ•,/|)\]])/g,
+      (match, prefix, wd, pStr) => {
+        const pNum = Number(pStr);
+        return recordSchedule(wd, pNum) ? `${prefix} ` : match;
+      }
+    );
+  }
+
+  return { text, period: firstPeriod, schedules };
+}
+
+function _normalizeExplicitPeriod(raw) {
+  if (raw === null || raw === undefined || typeof raw === 'boolean') return null;
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw)) return null;
+    const n = Math.trunc(raw);
+    return n >= 1 && n <= 15 ? n : null;
+  }
+  const s = String(raw).trim();
+  if (!s) return null;
+  const directMatch = s.match(/^(?:제\s*)?(\d{1,2})\s*(?:교시)?$/);
+  if (directMatch) {
+    const n = Number(directMatch[1]);
+    return n >= 1 && n <= 15 ? n : null;
+  }
+  const stripped = _stripWeekdayPeriod(s, true);
+  if (stripped.period !== null) return stripped.period;
+  return s;
+}
+
+function _extractAndStripClassToken(raw) {
+  const str = String(raw || '').trim();
+  if (!str) return { text: '', classLabel: '' };
+
+  const specs = [
+    // 1) Korean grade-class: 1학년 4반
+    {
+      bracketed: true,
+      re: /\(\s*(\d{1,2})\s*학년\s*(\d{1,2})\s*반\s*\)|\[\s*(\d{1,2})\s*학년\s*(\d{1,2})\s*반\s*\]/g,
+      format: (m) => {
+        const g = Number(m[1] || m[3]);
+        const c = Number(m[2] || m[4]);
+        return g >= 1 && g <= 6 && c >= 1 && c <= 30 ? `${g}학년 ${c}반` : null;
+      },
+    },
+    {
+      bracketed: false,
+      re: /(^|[\s·ㆍ•,;/|(\[])(\d{1,2})\s*학년\s*(\d{1,2})\s*반(?=$|[\s·ㆍ•,;/|)\[\]])/g,
+      format: (m) => {
+        const g = Number(m[2]);
+        const c = Number(m[3]);
+        return g >= 1 && g <= 6 && c >= 1 && c <= 30 ? `${g}학년 ${c}반` : null;
+      },
+    },
+    // 2) Grade + dash + alphanumeric moving-class code: 2-F206, 2-A
+    {
+      bracketed: true,
+      re: /\(\s*(\d{1,2})\s*-\s*([A-Za-z][A-Za-z0-9]*)(?:반)?\s*\)|\[\s*(\d{1,2})\s*-\s*([A-Za-z][A-Za-z0-9]*)(?:반)?\s*\]/g,
+      format: (m) => {
+        const g = Number(m[1] || m[3]);
+        const code = String(m[2] || m[4] || '').toUpperCase();
+        return g >= 1 && g <= 6 && code ? `${g}-${code}` : null;
+      },
+    },
+    {
+      bracketed: false,
+      re: /(^|[\s·ㆍ•,;/|(\[])(\d{1,2})\s*-\s*([A-Za-z][A-Za-z0-9]*)(?:반)?(?=$|[\s·ㆍ•,;/|)\[\]])/g,
+      format: (m) => {
+        const g = Number(m[2]);
+        const code = String(m[3] || '').toUpperCase();
+        return g >= 1 && g <= 6 && code ? `${g}-${code}` : null;
+      },
+    },
+    // 3) Grade + dash + numeric class: 1-4, 1-13
+    {
+      bracketed: true,
+      re: /\(\s*(\d{1,2})\s*-\s*(\d{1,2})(?:반)?\s*\)|\[\s*(\d{1,2})\s*-\s*(\d{1,2})(?:반)?\s*\]/g,
+      format: (m) => {
+        const g = Number(m[1] || m[3]);
+        const c = Number(m[2] || m[4]);
+        return g >= 1 && g <= 6 && c >= 1 && c <= 30 ? `${g}-${c}` : null;
+      },
+    },
+    {
+      bracketed: false,
+      re: /(^|[\s·ㆍ•,;/|(\[])(\d{1,2})\s*-\s*(\d{1,2})(?:반)?(?=$|[\s·ㆍ•,;/|)\[\]])/g,
+      format: (m) => {
+        const g = Number(m[2]);
+        const c = Number(m[3]);
+        return g >= 1 && g <= 6 && c >= 1 && c <= 30 ? `${g}-${c}` : null;
+      },
+    },
+    // 4) Standalone moving-class code: F206, A101
+    {
+      bracketed: true,
+      re: /\(\s*([A-Za-z]\d{2,4})(?:반)?\s*\)|\[\s*([A-Za-z]\d{2,4})(?:반)?\s*\]/g,
+      format: (m) => String(m[1] || m[2] || '').toUpperCase() || null,
+    },
+    {
+      bracketed: false,
+      re: /(^|[\s·ㆍ•,;/|(\[])([A-Za-z]\d{2,4})(?:반)?(?=$|[\s·ㆍ•,;/|)\[\]])/g,
+      format: (m) => String(m[2] || '').toUpperCase() || null,
+    },
+  ];
+
+  for (const spec of specs) {
+    spec.re.lastIndex = 0;
+    let m;
+    while ((m = spec.re.exec(str)) !== null) {
+      const classLabel = spec.format(m);
+      if (classLabel) {
+        const prefix = spec.bracketed ? '' : (m[1] || '');
+        const text = `${str.slice(0, m.index)}${prefix} ${str.slice(m.index + m[0].length)}`;
+        return { text, classLabel };
+      }
+    }
+  }
+  return { text: str, classLabel: '' };
+}
+
+function parseLessonMeta(subjectOrObj, classLabel = '', period = '') {
+  let rawSubject = subjectOrObj;
+  let rawClass = classLabel;
+  let rawPeriod = period;
+  if (subjectOrObj && typeof subjectOrObj === 'object') {
+    rawSubject = subjectOrObj.subject ?? '';
+    rawClass = subjectOrObj.class_label ?? subjectOrObj.classLabel ?? '';
+    rawPeriod = subjectOrObj.period ?? '';
+  }
+
+  const explicitPeriod = _normalizeExplicitPeriod(rawPeriod);
+  const clsPeriodStrip = _stripWeekdayPeriod(rawClass, true);
+  const subjPeriodStrip = _stripWeekdayPeriod(rawSubject, false);
+  const resolvedPeriod = explicitPeriod !== null
+    ? explicitPeriod
+    : (clsPeriodStrip.period !== null ? clsPeriodStrip.period : subjPeriodStrip.period);
+
+  const clsClassStrip = _extractAndStripClassToken(clsPeriodStrip.text);
+  const subjClassStrip = _extractAndStripClassToken(subjPeriodStrip.text);
+
+  const cleanedClsRemainder = _cleanMetaSeparators(clsClassStrip.text);
+  const cleanedSubjRemainder = _cleanMetaSeparators(subjClassStrip.text);
+
+  const resolvedClass = clsClassStrip.classLabel || cleanedClsRemainder || subjClassStrip.classLabel || '';
+  const resolvedSubject = cleanedSubjRemainder || (clsClassStrip.classLabel ? cleanedClsRemainder : '');
+
+  return {
+    subject: resolvedSubject,
+    class_label: resolvedClass,
+    period: resolvedPeriod,
+  };
+}
+
+function canonicalizeClassLabel(cls) {
+  const s = String(cls || '').trim().replace(/\s+/g, ' ');
+  if (!s) return '';
+  const kor = s.match(/^(\d{1,2})\s*학년\s*(\d{1,2})\s*반$/);
+  if (kor) return `${Number(kor[1])}-${Number(kor[2])}`;
+  const dashNum = s.match(/^(\d{1,2})\s*-\s*(\d{1,2})(?:반)?$/);
+  if (dashNum) return `${Number(dashNum[1])}-${Number(dashNum[2])}`;
+  const dashCode = s.match(/^(\d{1,2})\s*-\s*([A-Za-z][A-Za-z0-9]*)(?:반)?$/);
+  if (dashCode) return `${Number(dashCode[1])}-${dashCode[2].toUpperCase()}`;
+  const codeOnly = s.match(/^([A-Za-z]\d{2,4})(?:반)?$/);
+  if (codeOnly) return codeOnly[1].toUpperCase();
+  return s;
+}
+
+function normalizeLessonRecord(rec) {
+  const base = rec && typeof rec === 'object' ? rec : {};
+  const parsed = parseLessonMeta(base.subject, base.class_label, base.period);
+  return {
+    ...base,
+    subject: parsed.subject,
+    class_label: parsed.class_label,
+    period: parsed.period !== null ? parsed.period : '',
+  };
+}
+
+function buildLessonMatrixModel(progressList, rosterList, selectedSubject = '', todayWeekday = '') {
+  const rawProgs = Array.isArray(progressList) ? progressList : [];
+  const rawRosters = Array.isArray(rosterList) ? rosterList : [];
+
+  const normProgs = rawProgs.map((p) => {
+    const norm = normalizeLessonRecord(p);
+    return {
+      norm,
+      classKey: canonicalizeClassLabel(norm.class_label),
+    };
+  });
+
+  const normRosters = rawRosters.map((r) => {
+    const parsed = parseLessonMeta(r && r.subject, r && r.class_label, r && r.period);
+    const clsStrip = _stripWeekdayPeriod((r && r.class_label) || '', true);
+    const subjStrip = _stripWeekdayPeriod((r && r.subject) || '', false);
+    const schedules = [...clsStrip.schedules, ...subjStrip.schedules];
+    return {
+      subject: parsed.subject,
+      classKey: canonicalizeClassLabel(parsed.class_label),
+      schedules,
+      fallbackPeriod: typeof parsed.period === 'number' ? parsed.period : null,
+    };
+  });
+
+  const subjects = Array.from(new Set([
+    ...normProgs.map((x) => x.norm.subject),
+    ...normRosters.map((x) => x.subject),
+  ].filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko'));
+
+  const parsedSelected = selectedSubject ? parseLessonMeta(selectedSubject).subject : '';
+  const targetSubject = (selectedSubject && subjects.includes(selectedSubject))
+    ? selectedSubject
+    : ((parsedSelected && subjects.includes(parsedSelected)) ? parsedSelected : (subjects[0] || ''));
+
+  const subProgs = normProgs.filter((x) => x.norm.subject === targetSubject);
+  const subRosters = normRosters.filter((x) => x.subject === targetSubject);
+
+  const classLabels = Array.from(new Set([
+    ...subProgs.map((x) => x.classKey),
+    ...subRosters.map((x) => x.classKey),
+  ].filter(Boolean))).sort(_naturalClassSort);
+
+  const rosterMetaByClass = new Map();
+  subRosters.forEach((r) => {
+    if (!r.classKey) return;
+    if (!rosterMetaByClass.has(r.classKey)) {
+      rosterMetaByClass.set(r.classKey, { schedules: [], fallbackPeriods: [] });
+    }
+    const entry = rosterMetaByClass.get(r.classKey);
+    if (r.schedules.length > 0) {
+      entry.schedules.push(...r.schedules);
+    } else if (r.fallbackPeriod !== null) {
+      entry.fallbackPeriods.push(r.fallbackPeriod);
+    }
+  });
+
+  const defaultPeriodByClass = new Map();
+  rosterMetaByClass.forEach((meta, clsKey) => {
+    const schedPeriods = meta.schedules.map((s) => s.period);
+    const allPeriods = Array.from(new Set(schedPeriods.length > 0 ? schedPeriods : meta.fallbackPeriods));
+    if (allPeriods.length === 1) {
+      defaultPeriodByClass.set(clsKey, allPeriods[0]);
+    } else if (allPeriods.length > 1 && todayWeekday) {
+      const matched = meta.schedules.find((s) => s.weekday === todayWeekday);
+      if (matched) defaultPeriodByClass.set(clsKey, matched.period);
+    }
+  });
+
+  const rowMap = new Map();
+  subProgs.forEach(({ norm, classKey }) => {
+    const unit = String(norm.unit || '').trim() || '진도 기록';
+    const lessonNo = String(norm.lesson_no || '').trim();
+    const rowKey = `${unit}__${lessonNo}`;
+    if (!rowMap.has(rowKey)) rowMap.set(rowKey, { unit, lessonNo, byClass: new Map() });
+    if (classKey && !rowMap.get(rowKey).byClass.has(classKey)) {
+      rowMap.get(rowKey).byClass.set(classKey, norm);
+    }
+  });
+  if (rowMap.size === 0 && classLabels.length > 0) {
+    rowMap.set('진도 기록__', { unit: '진도 기록', lessonNo: '', byClass: new Map() });
+  }
+
+  return {
+    subjects,
+    targetSubject,
+    classLabels,
+    rows: Array.from(rowMap.values()),
+    defaultPeriodByClass,
+  };
+}
+
+function _escapeJsAttr(val) {
+  const jsEscaped = String(val ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n');
+  return escapeHtml(jsEscaped);
+}
+
+function _populateSelectOptions(selectEl, values, currentVal, defaultLabel, sortFn = null) {
   if (!selectEl) return;
-  const unique = Array.from(new Set(values.filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b), 'ko'));
+  const comparator = typeof sortFn === 'function' ? sortFn : (a, b) => String(a).localeCompare(String(b), 'ko');
+  const unique = Array.from(new Set(values.filter(Boolean))).sort(comparator);
   const opts = [`<option value="">${escapeHtml(defaultLabel)}</option>`];
   unique.forEach((v) => {
     opts.push(`<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${escapeHtml(v)}</option>`);
@@ -1215,68 +1577,42 @@ function renderLessonProgressMatrix(progressList, rosterList) {
   const tbody = document.getElementById('lesson-matrix-tbody');
   if (!subSelect || !thead || !tbody) return;
 
-  const subjects = Array.from(new Set([
-    ...progressList.map((p) => String(p.subject || '').trim()),
-    ...rosterList.map((r) => String(r.subject || '').trim()),
-  ].filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko'));
+  const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+  const todayWeekday = weekdays[new Date().getDay()];
+  const model = buildLessonMatrixModel(progressList, rosterList, adminState.lessonMatrixSubject, todayWeekday);
+  adminState.lessonMatrixSubject = model.targetSubject;
 
-  if (!adminState.lessonMatrixSubject && subjects.length > 0) {
-    adminState.lessonMatrixSubject = subjects[0];
-  }
-  if (subjects.length === 0) {
+  if (model.subjects.length === 0) {
     subSelect.innerHTML = '<option value="">등록된 과목 없음</option>';
     thead.innerHTML = '';
     tbody.innerHTML = '<tr><td class="py-8 text-center text-slate-400">수업 진도 또는 교과 명렬표가 없습니다.</td></tr>';
     return;
   }
 
-  subSelect.innerHTML = subjects.map((s) => `<option value="${escapeHtml(s)}" ${s === adminState.lessonMatrixSubject ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
+  subSelect.innerHTML = model.subjects.map((s) => `<option value="${escapeHtml(s)}" ${s === model.targetSubject ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
 
-  const targetSub = adminState.lessonMatrixSubject;
-  const subProgs = progressList.filter((p) => String(p.subject || '').trim() === targetSub);
-  const subRosters = rosterList.filter((r) => String(r.subject || '').trim() === targetSub);
-
-  const classLabels = Array.from(new Set([
-    ...subProgs.map((p) => String(p.class_label || '').trim()),
-    ...subRosters.map((r) => String(r.class_label || '').trim()),
-  ].filter(Boolean))).sort(_naturalClassSort);
-
-  if (classLabels.length === 0) {
+  if (model.classLabels.length === 0) {
     thead.innerHTML = '';
     tbody.innerHTML = '<tr><td class="py-8 text-center text-slate-400">해당 과목의 담당 학반 데이터가 없습니다.</td></tr>';
     return;
   }
 
-  // 행: 단원/차시 기준 (없으면 최신 진도 1행)
-  const rowMap = new Map();
-  subProgs.forEach((p) => {
-    const unit = String(p.unit || '').trim() || '진도 기록';
-    const lessonNo = String(p.lesson_no || '').trim();
-    const rowKey = `${unit}__${lessonNo}`;
-    if (!rowMap.has(rowKey)) rowMap.set(rowKey, { unit, lessonNo, byClass: new Map() });
-    const cls = String(p.class_label || '').trim();
-    if (cls && !rowMap.get(rowKey).byClass.has(cls)) {
-      rowMap.get(rowKey).byClass.set(cls, p);
-    }
-  });
-  if (rowMap.size === 0) {
-    rowMap.set('진도 기록__', { unit: '진도 기록', lessonNo: '', byClass: new Map() });
-  }
-
   thead.innerHTML = `
     <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold text-[11px] whitespace-nowrap">
       <th class="py-2.5 px-4 table-cell-sticky bg-slate-100 min-w-[160px]">단원 / 차시</th>
-      ${classLabels.map((c) => `<th class="py-2.5 px-3 text-center min-w-[130px] border-l border-slate-200/80">${escapeHtml(c)}</th>`).join('')}
+      ${model.classLabels.map((c) => `<th class="py-2.5 px-3 text-center min-w-[130px] border-l border-slate-200/80">${escapeHtml(c)}</th>`).join('')}
     </tr>
   `;
 
-  tbody.innerHTML = Array.from(rowMap.values()).map((row) => {
-    const cells = classLabels.map((cls) => {
+  tbody.innerHTML = model.rows.map((row) => {
+    const cells = model.classLabels.map((cls) => {
       const p = row.byClass.get(cls) || null;
+      const defaultPeriod = model.defaultPeriodByClass.get(cls);
+      const defaultPeriodArg = defaultPeriod !== undefined && defaultPeriod !== null ? String(defaultPeriod) : '';
       if (!p) {
         return `
           <td class="p-2 border-l border-slate-100 text-center align-middle">
-            <button type="button" onclick="openLessonMatrixCellModal('', '${escapeHtml(targetSub)}', '${escapeHtml(cls)}', '${escapeHtml(row.unit)}', '${escapeHtml(row.lessonNo)}')" class="w-full py-2 px-2 rounded-lg border border-dashed border-slate-200 text-[11px] text-slate-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/40 transition">+ 입력</button>
+            <button type="button" onclick="openLessonMatrixCellModal('', '${_escapeJsAttr(model.targetSubject)}', '${_escapeJsAttr(cls)}', '${_escapeJsAttr(row.unit)}', '${_escapeJsAttr(row.lessonNo)}', '${_escapeJsAttr(defaultPeriodArg)}')" class="w-full py-2 px-2 rounded-lg border border-dashed border-slate-200 text-[11px] text-slate-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/40 transition">+ 입력</button>
           </td>
         `;
       }
@@ -1286,7 +1622,7 @@ function renderLessonProgressMatrix(progressList, rosterList) {
       else if (st === '예정') stCls = 'bg-slate-100 text-slate-600';
       return `
         <td class="p-2 border-l border-slate-100 align-top">
-          <button type="button" onclick="openLessonMatrixCellModal('${escapeHtml(p.remote_id || '')}', '${escapeHtml(targetSub)}', '${escapeHtml(cls)}', '${escapeHtml(row.unit)}', '${escapeHtml(row.lessonNo)}')" class="w-full text-left p-2 rounded-lg bg-slate-50/80 hover:bg-indigo-50/60 border border-slate-200/70 hover:border-indigo-300 transition space-y-1">
+          <button type="button" onclick="openLessonMatrixCellModal('${_escapeJsAttr(p.remote_id || '')}', '${_escapeJsAttr(model.targetSubject)}', '${_escapeJsAttr(cls)}', '${_escapeJsAttr(row.unit)}', '${_escapeJsAttr(row.lessonNo)}', '${_escapeJsAttr(defaultPeriodArg)}')" class="w-full text-left p-2 rounded-lg bg-slate-50/80 hover:bg-indigo-50/60 border border-slate-200/70 hover:border-indigo-300 transition space-y-1">
             <div class="flex items-center justify-between gap-1">
               <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${stCls}">${escapeHtml(st)}</span>
               <span class="text-[10px] font-mono text-slate-400">${escapeHtml((p.date || '').slice(5) || '-')}</span>
@@ -1309,11 +1645,13 @@ function renderLessonProgressMatrix(progressList, rosterList) {
   }).join('');
 }
 
-function openLessonMatrixCellModal(remoteId, subject, classLabel, unit, lessonNo) {
+function openLessonMatrixCellModal(remoteId, subject, classLabel, unit, lessonNo, defaultPeriod = '') {
   openLessonProgressModal(remoteId);
   if (!remoteId) {
-    document.getElementById('lp-subject').value = subject || '';
-    document.getElementById('lp-class-label').value = classLabel || '';
+    const parsed = parseLessonMeta(subject, classLabel, defaultPeriod);
+    document.getElementById('lp-subject').value = parsed.subject || '';
+    document.getElementById('lp-class-label').value = parsed.class_label || '';
+    document.getElementById('lp-period').value = parsed.period !== null && parsed.period !== '' ? String(parsed.period) : '';
     document.getElementById('lp-unit').value = unit === '진도 기록' ? '' : (unit || '');
     document.getElementById('lp-lesson-no').value = lessonNo || '';
     document.getElementById('lp-status').value = '완료';
@@ -1322,35 +1660,38 @@ function openLessonMatrixCellModal(remoteId, subject, classLabel, unit, lessonNo
 
 function renderLessonsTab() {
   const ov = adminState.overview || {};
-  const progressList = ov.lesson_progress || [];
-  const subAttList = ov.subject_attendance || [];
+  const rawProgressList = ov.lesson_progress || [];
+  const rawSubAttList = ov.subject_attendance || [];
   const rosterList = ov.subject_rosters || [];
 
-  renderLessonProgressMatrix(progressList, rosterList);
+  renderLessonProgressMatrix(rawProgressList, rosterList);
+
+  const progressList = rawProgressList.map(normalizeLessonRecord);
+  const subAttList = rawSubAttList.map(normalizeLessonRecord);
 
   const allSubjects = [
-    ...progressList.map((p) => String(p.subject || '').trim()),
-    ...subAttList.map((a) => String(a.subject || '').trim()),
+    ...progressList.map((p) => p.subject),
+    ...subAttList.map((a) => a.subject),
   ];
   const allClasses = [
-    ...progressList.map((p) => String(p.class_label || '').trim()),
-    ...subAttList.map((a) => String(a.class_label || '').trim()),
+    ...progressList.map((p) => canonicalizeClassLabel(p.class_label)),
+    ...subAttList.map((a) => canonicalizeClassLabel(a.class_label)),
   ];
 
   _populateSelectOptions(document.getElementById('lesson-compare-subject-filter'), allSubjects, adminState.lessonCompareSubject, '전체 교과');
   _populateSelectOptions(document.getElementById('lesson-prog-subject-filter'), allSubjects, adminState.lessonProgSubject, '전체 과목');
-  _populateSelectOptions(document.getElementById('lesson-prog-class-filter'), allClasses, adminState.lessonProgClass, '전체 반');
+  _populateSelectOptions(document.getElementById('lesson-prog-class-filter'), allClasses, adminState.lessonProgClass, '전체 반', _naturalClassSort);
   _populateSelectOptions(document.getElementById('lesson-att-subject-filter'), allSubjects, adminState.lessonAttSubject, '전체 과목');
-  _populateSelectOptions(document.getElementById('lesson-att-class-filter'), allClasses, adminState.lessonAttClass, '전체 반');
+  _populateSelectOptions(document.getElementById('lesson-att-class-filter'), allClasses, adminState.lessonAttClass, '전체 반', _naturalClassSort);
 
   // 1) 반별/교과별 최신 진도 비교표
   const latestByGroup = new Map();
   progressList.forEach((p) => {
     const sub = String(p.subject || '').trim();
-    const cls = String(p.class_label || '').trim();
+    const clsKey = canonicalizeClassLabel(p.class_label);
     if (!sub) return;
     if (adminState.lessonCompareSubject && sub !== adminState.lessonCompareSubject) return;
-    const key = `${sub}__${cls}`;
+    const key = `${sub}__${clsKey}`;
     if (!latestByGroup.has(key)) {
       latestByGroup.set(key, p);
     }
@@ -1360,21 +1701,21 @@ function renderLessonsTab() {
   if (compareGrid) {
     const groups = Array.from(latestByGroup.values()).sort((a, b) =>
       String(a.subject || '').localeCompare(String(b.subject || ''), 'ko') ||
-      String(a.class_label || '').localeCompare(String(b.class_label || ''), 'ko')
+      _naturalClassSort(canonicalizeClassLabel(a.class_label), canonicalizeClassLabel(b.class_label))
     );
     compareGrid.innerHTML = groups.length === 0
       ? '<div class="col-span-full py-8 text-center text-xs text-slate-400">기록된 수업 진도가 없습니다.</div>'
       : groups.map((g) => `
         <div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 space-y-1.5">
           <div class="flex items-center justify-between gap-2">
-            <span class="text-xs font-bold text-indigo-700">${escapeHtml(g.subject)} · ${escapeHtml(g.class_label || '-')}</span>
+            <span class="text-xs font-bold text-indigo-700">${escapeHtml(g.subject)} · ${escapeHtml(canonicalizeClassLabel(g.class_label) || g.class_label || '-')}</span>
             <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600">${escapeHtml(g.lesson_no || '-')}</span>
           </div>
           <div class="text-xs font-semibold text-slate-900 truncate">${escapeHtml(g.unit || '-')}</div>
           <p class="text-[11px] text-slate-600 line-clamp-2">${escapeHtml(g.content || '-')}</p>
           <div class="flex items-center justify-between pt-1 text-[10px] text-slate-400">
             <span>${escapeHtml(g.date || '-')} ${g.period ? `${escapeHtml(g.period)}교시` : ''}</span>
-            <button type="button" onclick="openLessonProgressModal('${escapeHtml(g.remote_id || '')}')" class="text-indigo-600 font-semibold hover:underline">수정</button>
+            <button type="button" onclick="openLessonProgressModal('${_escapeJsAttr(g.remote_id || '')}')" class="text-indigo-600 font-semibold hover:underline">수정</button>
           </div>
         </div>
       `).join('');
@@ -1382,8 +1723,8 @@ function renderLessonsTab() {
 
   // 2) 진도 누적 이력 표
   const filteredProg = progressList.filter((p) => {
-    if (adminState.lessonProgSubject && String(p.subject || '').trim() !== adminState.lessonProgSubject) return false;
-    if (adminState.lessonProgClass && String(p.class_label || '').trim() !== adminState.lessonProgClass) return false;
+    if (adminState.lessonProgSubject && p.subject !== adminState.lessonProgSubject) return false;
+    if (adminState.lessonProgClass && canonicalizeClassLabel(p.class_label) !== adminState.lessonProgClass) return false;
     return true;
   });
 
@@ -1393,12 +1734,13 @@ function renderLessonsTab() {
       ? '<tr><td colspan="8" class="py-8 text-center text-slate-400">조회된 수업 진도 이력이 없습니다.</td></tr>'
       : filteredProg.map((p) => {
           const rid = String(p.remote_id || '');
+          const displayCls = canonicalizeClassLabel(p.class_label) || p.class_label || '-';
           return `
             <tr class="hover:bg-slate-50">
               <td class="py-2.5 px-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">${escapeHtml(p.date || '-')}</td>
               <td class="py-2.5 px-3 text-center whitespace-nowrap">${p.period ? `${escapeHtml(p.period)}교시` : '-'}</td>
               <td class="py-2.5 px-3 font-bold text-slate-800 whitespace-nowrap">${escapeHtml(p.subject || '-')}</td>
-              <td class="py-2.5 px-3 whitespace-nowrap">${escapeHtml(p.class_label || '-')}</td>
+              <td class="py-2.5 px-3 whitespace-nowrap">${escapeHtml(displayCls)}</td>
               <td class="py-2.5 px-3 text-indigo-700 font-semibold whitespace-nowrap">${escapeHtml(p.lesson_no || '-')}</td>
               <td class="py-2.5 px-4">
                 <div class="font-semibold text-slate-800">${escapeHtml(p.unit || '-')}</div>
@@ -1406,8 +1748,8 @@ function renderLessonsTab() {
               </td>
               <td class="py-2.5 px-4 text-slate-500">${escapeHtml(p.next_note || '-')}</td>
               <td class="py-2.5 px-3 text-center whitespace-nowrap space-x-1">
-                <button type="button" onclick="openLessonProgressModal('${escapeHtml(rid)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
-                <button type="button" onclick="deleteLessonProgressRow('${escapeHtml(rid)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
+                <button type="button" onclick="openLessonProgressModal('${_escapeJsAttr(rid)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
+                <button type="button" onclick="deleteLessonProgressRow('${_escapeJsAttr(rid)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
               </td>
             </tr>
           `;
@@ -1417,8 +1759,8 @@ function renderLessonsTab() {
   // 3) 교과 출결 조회 표
   const filteredAtt = subAttList.filter((a) => {
     if (adminState.lessonAttDate && String(a.date || '').slice(0, 10) !== adminState.lessonAttDate) return false;
-    if (adminState.lessonAttSubject && String(a.subject || '').trim() !== adminState.lessonAttSubject) return false;
-    if (adminState.lessonAttClass && String(a.class_label || '').trim() !== adminState.lessonAttClass) return false;
+    if (adminState.lessonAttSubject && a.subject !== adminState.lessonAttSubject) return false;
+    if (adminState.lessonAttClass && canonicalizeClassLabel(a.class_label) !== adminState.lessonAttClass) return false;
     return true;
   });
 
@@ -1432,12 +1774,13 @@ function renderLessonsTab() {
           if (st.includes('결석')) badgeCls = 'bg-rose-100 text-rose-700';
           else if (st.includes('지각') || st.includes('조퇴')) badgeCls = 'bg-amber-100 text-amber-800';
           else if (st.includes('공결')) badgeCls = 'bg-indigo-100 text-indigo-700';
+          const displayCls = canonicalizeClassLabel(a.class_label) || a.class_label || '-';
           return `
             <tr class="hover:bg-slate-50">
               <td class="py-2.5 px-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">${escapeHtml(a.date || '-')}</td>
               <td class="py-2.5 px-3 text-center whitespace-nowrap">${a.period ? `${escapeHtml(a.period)}교시` : '-'}</td>
               <td class="py-2.5 px-3 font-semibold text-slate-800 whitespace-nowrap">${escapeHtml(a.subject || '-')}</td>
-              <td class="py-2.5 px-3 whitespace-nowrap">${escapeHtml(a.class_label || '-')}</td>
+              <td class="py-2.5 px-3 whitespace-nowrap">${escapeHtml(displayCls)}</td>
               <td class="py-2.5 px-3 text-center font-mono text-slate-500 tabular-nums">${escapeHtml(a.student_id || '-')}</td>
               <td class="py-2.5 px-4 font-bold text-slate-900">${escapeHtml(a.student_name || '-')}</td>
               <td class="py-2.5 px-3 text-center whitespace-nowrap"><span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${badgeCls}">${escapeHtml(st)}</span></td>
@@ -1448,18 +1791,31 @@ function renderLessonsTab() {
   }
 }
 
+function normalizeLessonModalInputs() {
+  const subjectEl = document.getElementById('lp-subject');
+  const classEl = document.getElementById('lp-class-label');
+  const periodEl = document.getElementById('lp-period');
+  if (!subjectEl || !classEl || !periodEl) return { subject: '', class_label: '', period: null };
+  const parsed = parseLessonMeta(subjectEl.value, classEl.value, periodEl.value);
+  subjectEl.value = parsed.subject;
+  classEl.value = parsed.class_label;
+  periodEl.value = parsed.period !== null && parsed.period !== '' ? String(parsed.period) : '';
+  return parsed;
+}
+
 function openLessonProgressModal(remoteId = '') {
   const ov = adminState.overview || {};
   const list = ov.lesson_progress || [];
   const item = remoteId ? list.find((p) => String(p.remote_id || '') === remoteId) : null;
+  const parsed = item ? parseLessonMeta(item.subject, item.class_label, item.period) : null;
 
   document.getElementById('lesson-prog-modal-title').textContent = item ? '수업 진도 수정' : '수업 진도 추가';
   document.getElementById('lp-remote-id').value = item ? String(item.remote_id || '') : '';
   document.getElementById('lp-date').value = item ? String(item.date || '').slice(0, 10) || getLocalTodayStr() : getLocalTodayStr();
-  document.getElementById('lp-period').value = item ? String(item.period || '') : '';
+  document.getElementById('lp-period').value = parsed && parsed.period !== null && parsed.period !== '' ? String(parsed.period) : '';
   document.getElementById('lp-status').value = item ? String(item.status || '완료') : '완료';
-  document.getElementById('lp-subject').value = item ? String(item.subject || '') : '';
-  document.getElementById('lp-class-label').value = item ? String(item.class_label || '') : '';
+  document.getElementById('lp-subject').value = parsed ? parsed.subject : '';
+  document.getElementById('lp-class-label').value = parsed ? parsed.class_label : '';
   document.getElementById('lp-unit').value = item ? String(item.unit || '') : '';
   document.getElementById('lp-lesson-no').value = item ? String(item.lesson_no || '') : '';
   document.getElementById('lp-content').value = item ? String(item.content || '') : '';
@@ -1488,7 +1844,7 @@ async function deleteLessonProgressRow(remoteId) {
 
 function exportLessonProgressCsv() {
   const ov = adminState.overview || {};
-  const list = ov.lesson_progress || [];
+  const list = (ov.lesson_progress || []).map(normalizeLessonRecord);
   const headers = ['일자', '교시', '과목', '반', '차시/페이지', '단원명', '수업내용', '다음안내'];
   const lines = [headers.map(csvEscape).join(',')];
   list.forEach((p) => {
@@ -1496,7 +1852,7 @@ function exportLessonProgressCsv() {
       p.date || '',
       p.period || '',
       p.subject || '',
-      p.class_label || '',
+      canonicalizeClassLabel(p.class_label) || p.class_label || '',
       p.lesson_no || '',
       p.unit || '',
       p.content || '',
@@ -1508,7 +1864,7 @@ function exportLessonProgressCsv() {
 
 function exportSubjectAttendanceCsv() {
   const ov = adminState.overview || {};
-  const list = ov.subject_attendance || [];
+  const list = (ov.subject_attendance || []).map(normalizeLessonRecord);
   const headers = ['일자', '교시', '과목', '반', '학번', '이름', '출결상태', '비고'];
   const lines = [headers.map(csvEscape).join(',')];
   list.forEach((a) => {
@@ -1516,7 +1872,7 @@ function exportSubjectAttendanceCsv() {
       a.date || '',
       a.period || '',
       a.subject || '',
-      a.class_label || '',
+      canonicalizeClassLabel(a.class_label) || a.class_label || '',
       a.student_id || '',
       a.student_name || '',
       a.status || '',
@@ -1939,16 +2295,21 @@ function bindEvents() {
     renderLessonsTab();
   });
 
+  document.getElementById('lp-subject')?.addEventListener('blur', normalizeLessonModalInputs);
+  document.getElementById('lp-class-label')?.addEventListener('blur', normalizeLessonModalInputs);
+  document.getElementById('lp-period')?.addEventListener('blur', normalizeLessonModalInputs);
+
   document.getElementById('lesson-progress-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = document.getElementById('lp-submit-btn');
+    const parsed = normalizeLessonModalInputs();
     const payload = {
       remote_id: document.getElementById('lp-remote-id').value.trim(),
       date: document.getElementById('lp-date').value,
-      period: document.getElementById('lp-period').value.trim(),
+      period: parsed.period !== null && parsed.period !== '' ? parsed.period : '',
       status: document.getElementById('lp-status').value,
-      subject: document.getElementById('lp-subject').value.trim(),
-      class_label: document.getElementById('lp-class-label').value.trim(),
+      subject: parsed.subject,
+      class_label: parsed.class_label,
       unit: document.getElementById('lp-unit').value.trim(),
       lesson_no: document.getElementById('lp-lesson-no').value.trim(),
       content: document.getElementById('lp-content').value.trim(),
@@ -2063,4 +2424,16 @@ async function initAdminPage() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', initAdminPage);
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', initAdminPage);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    parseLessonMeta,
+    canonicalizeClassLabel,
+    normalizeLessonRecord,
+    buildLessonMatrixModel,
+    _naturalClassSort,
+  };
+}

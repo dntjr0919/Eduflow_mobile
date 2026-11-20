@@ -153,6 +153,94 @@ async function uploadBase64ToDrive({
   }
 }
 
+const MAX_IMAGE_DOWNLOAD_BYTES = Math.floor(3.5 * 1024 * 1024);
+
+function extractDriveFileId(input) {
+  const s = String(input || '').trim();
+  if (!s) return '';
+  const queryMatch = s.match(/[?&]id=([A-Za-z0-9_-]{10,128})/);
+  if (queryMatch) return queryMatch[1];
+  const filePathMatch = s.match(/\/file\/d\/([A-Za-z0-9_-]{10,128})/);
+  if (filePathMatch) return filePathMatch[1];
+  const shortPathMatch = s.match(/\/d\/([A-Za-z0-9_-]{10,128})/);
+  if (shortPathMatch) return shortPathMatch[1];
+  if (/^[A-Za-z0-9_-]{10,128}$/.test(s)) return s;
+  return '';
+}
+
+async function downloadDriveFileAsDataUrl(fileIdOrUrl) {
+  const fid = extractDriveFileId(fileIdOrUrl);
+  if (!fid) {
+    return { ok: false, error: '유효한 Google Drive file_id가 필요합니다.' };
+  }
+
+  try {
+    const drive = _getDriveClient();
+    const metaRes = await drive.files.get({
+      fileId: fid,
+      fields: 'id, name, mimeType, size',
+      supportsAllDrives: true
+    });
+    const meta = (metaRes && metaRes.data) || {};
+    let mimeType = String(meta.mimeType || '').trim().toLowerCase();
+    const fileName = String(meta.name || '').trim().toLowerCase();
+
+    if (!mimeType.startsWith('image/')) {
+      if ((mimeType === 'application/octet-stream' || !mimeType) && /\.(jpe?g|png|webp|gif|bmp)$/i.test(fileName)) {
+        if (fileName.endsWith('.png')) mimeType = 'image/png';
+        else if (fileName.endsWith('.webp')) mimeType = 'image/webp';
+        else if (fileName.endsWith('.gif')) mimeType = 'image/gif';
+        else mimeType = 'image/jpeg';
+      } else {
+        return { ok: false, error: '이미지 파일만 불러올 수 있습니다.' };
+      }
+    }
+
+    const metaSize = Number(meta.size || 0);
+    if (Number.isFinite(metaSize) && metaSize > MAX_IMAGE_DOWNLOAD_BYTES) {
+      return { ok: false, error: '이미지 파일 크기가 제한(3.5MB)을 초과했습니다.' };
+    }
+
+    const mediaRes = await drive.files.get(
+      { fileId: fid, alt: 'media', supportsAllDrives: true },
+      { responseType: 'arraybuffer' }
+    );
+    const rawData = mediaRes && mediaRes.data;
+    let buf;
+    if (Buffer.isBuffer(rawData)) {
+      buf = rawData;
+    } else if (rawData instanceof ArrayBuffer) {
+      buf = Buffer.from(rawData);
+    } else if (ArrayBuffer.isView(rawData)) {
+      buf = Buffer.from(rawData.buffer, rawData.byteOffset, rawData.byteLength);
+    } else {
+      buf = Buffer.from(rawData || '');
+    }
+
+    if (!buf.length) {
+      return { ok: false, error: '다운로드한 이미지 데이터가 비어 있습니다.' };
+    }
+    if (buf.length > MAX_IMAGE_DOWNLOAD_BYTES) {
+      return { ok: false, error: '이미지 파일 크기가 제한(3.5MB)을 초과했습니다.' };
+    }
+
+    return {
+      ok: true,
+      fileId: fid,
+      mimeType,
+      size: buf.length,
+      dataUrl: `data:${mimeType};base64,${buf.toString('base64')}`
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err && err.message ? err.message : 'Google Drive 파일 읽기 오류'
+    };
+  }
+}
+
 module.exports = {
-  uploadBase64ToDrive
+  uploadBase64ToDrive,
+  downloadDriveFileAsDataUrl,
+  extractDriveFileId
 };
