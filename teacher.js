@@ -429,6 +429,8 @@ function renderTeacherHome() {
       `).join('');
     }
   }
+
+  if (typeof renderAcademicSchedules === 'function') renderAcademicSchedules();
 }
 
 async function syncNeisMealsNow(btnEl) {

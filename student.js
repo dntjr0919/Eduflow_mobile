@@ -263,6 +263,7 @@ function renderMeals() {
       ℹ️ <span class="font-semibold">알레르기 번호 안내:</span> ${meal.allergyNotice}
     </div>
   `;
+  if (typeof renderAcademicSchedules === 'function') renderAcademicSchedules();
 }
 
 // --- TAB 2: Attendance & Documents ---

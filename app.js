@@ -251,7 +251,8 @@ let mockData = {
   notifications: [],
   subjectRosters: [],
   subjectAttendance: [],
-  lessonProgress: []
+  lessonProgress: [],
+  schedules: []
 };
 
 // Global Application State
@@ -1460,6 +1461,26 @@ function hydrateMockDataFromBundle(bundle) {
     renderNotificationsModal();
   }
 
+  // 13. 학사일정 (Schedules 시트)
+  if (Array.isArray(bundle.schedules)) {
+    mockData.schedules = bundle.schedules
+      .filter((s) => s && typeof s === 'object')
+      .map((s) => {
+        const startDate = String(s.start_date || s.date || '').trim().slice(0, 10);
+        const endDate = String(s.end_date || startDate || '').trim().slice(0, 10) || startDate;
+        return {
+          remote_id: String(s.remote_id || s.id || ''),
+          title: String(s.title || s.name || '학사일정').trim(),
+          start_date: startDate,
+          end_date: endDate < startDate ? startDate : endDate,
+          category: String(s.category || '학사').trim() || '학사',
+          memo: String(s.memo || s.description || '').trim(),
+        };
+      })
+      .filter((s) => Boolean(s.start_date))
+      .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.title.localeCompare(b.title, 'ko'));
+  }
+
   applyRoleUI();
 }
 
@@ -1904,11 +1925,175 @@ function normalizeBoardNotices(rows) {
     });
 }
 
+function _parseYmdUtcMs(dateStr) {
+  const m = String(dateStr || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return NaN;
+  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+function computeScheduleDday(startDateStr, endDateStr = '', todayStr = _getLocalTodayStr()) {
+  const startMs = _parseYmdUtcMs(startDateStr);
+  const endMs = _parseYmdUtcMs(endDateStr || startDateStr);
+  const todayMs = _parseYmdUtcMs(todayStr);
+  if (!Number.isFinite(startMs) || !Number.isFinite(todayMs)) {
+    return { label: '-', diffDays: null, isOngoing: false, isPast: false };
+  }
+  const diffDays = Math.round((startMs - todayMs) / 86400000);
+  if (diffDays === 0) {
+    return { label: '오늘', diffDays: 0, isOngoing: true, isPast: false };
+  }
+  if (diffDays < 0 && Number.isFinite(endMs) && todayMs <= endMs) {
+    return { label: '진행중', diffDays: 0, isOngoing: true, isPast: false };
+  }
+  if (diffDays > 0) {
+    return { label: `D-${diffDays}`, diffDays, isOngoing: false, isPast: false };
+  }
+  return { label: '종료', diffDays, isOngoing: false, isPast: true };
+}
+
+function getUpcomingSchedules(schedules, todayStr = _getLocalTodayStr(), windowDays = 14, maxItems = 5) {
+  const list = Array.isArray(schedules) ? schedules : [];
+  return list
+    .map((item) => {
+      const startDate = String((item && (item.start_date || item.date)) || '').trim().slice(0, 10);
+      const endDate = String((item && item.end_date) || startDate).trim().slice(0, 10) || startDate;
+      const dday = computeScheduleDday(startDate, endDate, todayStr);
+      return {
+        ...item,
+        start_date: startDate,
+        end_date: endDate,
+        dday,
+      };
+    })
+    .filter((item) => !item.dday.isPast && item.dday.diffDays !== null && item.dday.diffDays <= windowDays)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date) || String(a.title || '').localeCompare(String(b.title || ''), 'ko'))
+    .slice(0, maxItems);
+}
+
+function _formatScheduleDateRange(startDateStr, endDateStr = '') {
+  const s = String(startDateStr || '').slice(5).replace('-', '/');
+  const e = String(endDateStr || '').slice(5).replace('-', '/');
+  if (!s) return '-';
+  if (e && e !== s) return `${s}~${e}`;
+  return s;
+}
+
+function _escapeScheduleHtml(val) {
+  return String(val ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function _getScheduleCategoryBadgeClass(cat) {
+  const s = String(cat || '').trim().toLowerCase();
+  if (s.includes('시험') || s.includes('평가')) return 'bg-rose-50 text-rose-700 border-rose-200';
+  if (s.includes('행사') || s.includes('체험')) return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+  if (s.includes('휴업') || s.includes('방학') || s.includes('공휴')) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (s.includes('개인') || s.includes('교사') || s.includes('비공개')) return 'bg-amber-50 text-amber-800 border-amber-200';
+  return 'bg-slate-100 text-slate-700 border-slate-200';
+}
+
+function _buildScheduleItemsHtml(items, emptyMessage) {
+  if (!items || items.length === 0) {
+    return `<div class="bg-slate-50/80 rounded-xl p-3.5 border border-slate-100 text-center text-xs text-slate-400">${_escapeScheduleHtml(emptyMessage)}</div>`;
+  }
+  return items.map((item) => {
+    const dateLabel = _formatScheduleDateRange(item.start_date, item.end_date);
+    const cat = String(item.category || '학사').trim() || '학사';
+    const catCls = _getScheduleCategoryBadgeClass(cat);
+    const ddayLabel = (item.dday && item.dday.label) || '-';
+    let ddayCls = 'bg-slate-100 text-slate-600';
+    if (ddayLabel === '오늘' || ddayLabel === '진행중') ddayCls = 'bg-emerald-100 text-emerald-700';
+    else if (item.dday && item.dday.diffDays !== null && item.dday.diffDays <= 3 && !item.dday.isPast) ddayCls = 'bg-rose-100 text-rose-700';
+    else if (item.dday && !item.dday.isPast) ddayCls = 'bg-indigo-50 text-indigo-700';
+
+    return `
+      <div class="flex items-center justify-between gap-2 bg-slate-50/80 rounded-xl px-3 py-2 border border-slate-100">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="text-[11px] font-mono font-semibold text-slate-500 shrink-0 tabular-nums">${_escapeScheduleHtml(dateLabel)}</span>
+          <span class="text-xs font-bold text-slate-800 truncate">${_escapeScheduleHtml(item.title || '학사일정')}</span>
+          <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${catCls}">${_escapeScheduleHtml(cat)}</span>
+        </div>
+        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 tabular-nums ${ddayCls}">${_escapeScheduleHtml(ddayLabel)}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderAcademicSchedules() {
+  if (typeof document === 'undefined') return;
+  const upcoming = getUpcomingSchedules(mockData.schedules, _getLocalTodayStr(), 14, 5);
+  const html = _buildScheduleItemsHtml(upcoming, '향후 14일 이내 예정된 학사일정이 없습니다.');
+
+  const homeList = document.getElementById('homeScheduleList');
+  if (homeList) homeList.innerHTML = html;
+
+  const teacherList = document.getElementById('teacherScheduleWidgetList');
+  if (teacherList) teacherList.innerHTML = html;
+}
+
+function openAllSchedulesModal() {
+  if (typeof document === 'undefined') return;
+  const modal = document.getElementById('allSchedulesModal');
+  const listEl = document.getElementById('allSchedulesModalList');
+  const subEl = document.getElementById('allSchedulesModalSubtitle');
+  if (!modal || !listEl) return;
+
+  const todayStr = _getLocalTodayStr();
+  const allItems = (Array.isArray(mockData.schedules) ? mockData.schedules : []).map((item) => ({
+    ...item,
+    dday: computeScheduleDday(item.start_date, item.end_date, todayStr),
+  }));
+
+  if (subEl) {
+    subEl.innerText = `총 ${allItems.length}건의 학사일정`;
+  }
+  if (allItems.length === 0) {
+    listEl.innerHTML = `<div class="py-10 text-center text-xs text-slate-400">등록된 학사일정이 없습니다.</div>`;
+  } else {
+    listEl.innerHTML = allItems.map((item) => {
+      const dateLabel = item.end_date && item.end_date !== item.start_date
+        ? `${item.start_date} ~ ${item.end_date}`
+        : item.start_date;
+      const cat = String(item.category || '학사').trim() || '학사';
+      const catCls = _getScheduleCategoryBadgeClass(cat);
+      const ddayLabel = item.dday.label;
+      let ddayCls = 'bg-slate-100 text-slate-500';
+      if (ddayLabel === '오늘' || ddayLabel === '진행중') ddayCls = 'bg-emerald-100 text-emerald-700';
+      else if (!item.dday.isPast) ddayCls = 'bg-indigo-50 text-indigo-700';
+      return `
+        <div class="p-3 rounded-2xl border border-slate-200/80 bg-white space-y-1 ${item.dday.isPast ? 'opacity-60' : ''}">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${catCls}">${_escapeScheduleHtml(cat)}</span>
+              <span class="text-xs font-bold text-slate-900 truncate">${_escapeScheduleHtml(item.title)}</span>
+            </div>
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 tabular-nums ${ddayCls}">${_escapeScheduleHtml(ddayLabel)}</span>
+          </div>
+          <div class="text-[11px] font-mono text-slate-500">${_escapeScheduleHtml(dateLabel)}</div>
+          ${item.memo ? `<p class="text-[11px] text-slate-600">${_escapeScheduleHtml(item.memo)}</p>` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+  modal.classList.remove('hidden');
+}
+
+function closeAllSchedulesModal() {
+  if (typeof document === 'undefined') return;
+  const modal = document.getElementById('allSchedulesModal');
+  if (modal) modal.classList.add('hidden');
+}
+
 function renderAll() {
   // Student Views
   if (typeof renderUrgentDocuments === 'function') renderUrgentDocuments();
   if (typeof renderTimetable === 'function') renderTimetable();
   if (typeof renderMeals === 'function') renderMeals();
+  renderAcademicSchedules();
   if (typeof renderAttendanceHistory === 'function') renderAttendanceHistory();
   if (typeof renderCirculars === 'function') renderCirculars();
   if (typeof renderBoardNotices === 'function') renderBoardNotices();
@@ -2521,5 +2706,7 @@ if (typeof module !== 'undefined' && module.exports) {
     _getLocalTodayStr,
     _getKoreanTodayDayChar,
     resolvePwaPushGateDecision,
+    computeScheduleDday,
+    getUpcomingSchedules,
   };
 }

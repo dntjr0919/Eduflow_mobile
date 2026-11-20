@@ -671,6 +671,16 @@ function _parseTimestampMs(raw) {
   return Number.isFinite(ms) ? ms : NaN;
 }
 
+function _isPublicAcademicSchedule(row) {
+  if (!row || typeof row !== 'object') return false;
+  const cat = String(row.category || row.type || '').trim().toLowerCase();
+  if (!cat) return true;
+  if (cat === '개인' || cat === 'personal' || cat === '비공개' || cat === '교사') {
+    return false;
+  }
+  return true;
+}
+
 function _evaluatePcAgentOnline(statusDoc, nowMs = Date.now()) {
   if (!statusDoc || typeof statusDoc !== 'object') return false;
   if (!_toBool(statusDoc.pc_online)) return false;
@@ -725,7 +735,8 @@ async function _handleGetMobileBundle(db, params) {
     subjectAttRaw,
     lessonProgressRaw,
     pcAgentStatusDoc,
-    remoteTasksRaw
+    remoteTasksRaw,
+    schedulesRaw
   ] = await Promise.all([
     _getCachedOrFetch(teacherCacheKey, forceRefresh, () => (
       role === 'teacher' && userId
@@ -798,6 +809,7 @@ async function _handleGetMobileBundle(db, params) {
     role === 'teacher' && userId
       ? db.collection('Tasks').where('teacher_id', '==', userId).limit(100).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
+    db.collection('Schedules').limit(150).get().then(_snapToRows).catch(() => []),
   ]);
 
   const effectiveTeacherName = normTeacherParam || (role === 'teacher' && teachersRaw[0] ? _normalizeTeacherName(teachersRaw[0].name || teachersRaw[0].teacher_id || '') : '');
@@ -920,6 +932,10 @@ async function _handleGetMobileBundle(db, params) {
   if (timetableBaseRows !== undefined) bundle.timetable_base = timetableBaseRows.filter(_matchesTimetableRow);
   if (mealsRaw !== undefined) bundle.meals = mealsRaw.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
   if (docRulesRows !== undefined) bundle.doc_rules = docRulesRows;
+  bundle.schedules = (schedulesRaw || [])
+    .filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }))
+    .filter((d) => (isTeacherRole ? true : _isPublicAcademicSchedule(d)))
+    .sort((a, b) => String(a.start_date || a.date || '').localeCompare(String(b.start_date || b.date || '')));
   if (isTeacherRole) {
     const teacherScope = { teacherId: userId, schoolCode, schoolName };
     bundle.subject_rosters = (subjectRostersRaw || []).filter((d) => _belongsToTeacher(d, teacherScope));
@@ -3663,4 +3679,5 @@ module.exports._testHelpers = {
   _buildStudentFaceDocId,
   _extractDriveFileId,
   _evaluatePcAgentOnline,
+  _isPublicAcademicSchedule,
 };

@@ -176,6 +176,20 @@
 <div class="bg-slate-50/80 rounded-xl p-3 border border-slate-100" id="mealContentBox"></div>
 </div>
 
+<div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm" id="homeScheduleCard">
+<div class="flex items-center justify-between mb-2.5">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 text-sm">🗓️</div>
+<div>
+<h3 class="text-xs font-bold text-slate-800">다가오는 학사일정</h3>
+<p class="text-[10px] text-slate-400">향후 14일 이내 주요 일정</p>
+</div>
+</div>
+<button class="text-[11px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors" onclick="openAllSchedulesModal()" type="button">전체 일정</button>
+</div>
+<div class="space-y-2" id="homeScheduleList"></div>
+</div>
+
 <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm" id="homeBoardNoticeSection">
 <div class="flex items-center justify-between mb-2.5">
 <div class="flex items-center gap-2">
@@ -503,6 +517,20 @@
 </div>
 </div>
 <div class="space-y-2.5" id="teacherMealList"></div>
+</div>
+
+<div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm" id="teacherScheduleCard">
+<div class="flex items-center justify-between mb-2.5">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 text-sm">🗓️</div>
+<div>
+<h3 class="text-xs font-bold text-slate-800">다가오는 학사일정</h3>
+<p class="text-[10px] text-slate-400">향후 14일 이내 주요 일정</p>
+</div>
+</div>
+<button class="text-[11px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors" onclick="openAllSchedulesModal()" type="button">전체 일정</button>
+</div>
+<div class="space-y-2" id="teacherScheduleWidgetList"></div>
 </div>
 </main>
 
@@ -1525,6 +1553,28 @@
 </div>
 <button class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all" type="submit">출결 수정 저장 및 확인</button>
 </form>
+</div>
+</div>
+
+<!-- Modal: All Academic Schedules -->
+<div class="hidden absolute inset-0 z-[95] bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-3 sm:p-5" id="allSchedulesModal" onclick="if (event.target === this) closeAllSchedulesModal()">
+<div class="bg-white rounded-3xl shadow-2xl max-w-md w-full max-h-[82vh] flex flex-col overflow-hidden">
+<div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70 shrink-0">
+<div class="flex items-center gap-2">
+<span class="text-base">🗓️</span>
+<div>
+<h3 class="text-sm font-bold text-slate-900">전체 학사일정</h3>
+<p class="text-[10px] text-slate-500" id="allSchedulesModalSubtitle">등록된 학사일정 목록</p>
+</div>
+</div>
+<button aria-label="닫기" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200/70 transition-colors" onclick="closeAllSchedulesModal()" type="button">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</button>
+</div>
+<div class="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar" id="allSchedulesModalList"></div>
+<div class="px-4 py-3 border-t border-slate-100 bg-slate-50/50 shrink-0">
+<button class="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors" onclick="closeAllSchedulesModal()" type="button">닫기</button>
+</div>
 </div>
 </div>
 
