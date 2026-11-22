@@ -26,7 +26,7 @@ require.cache[googleDrivePath] = {
 
 const { _testHelpers } = require('../api/firestore.js');
 const { _handleGetMobileBundle, _isPublicAcademicSchedule } = _testHelpers;
-const { computeScheduleDday, getUpcomingSchedules } = require('../app.js');
+const { computeScheduleDday, getUpcomingSchedules, mergeTimetableForDay } = require('../app.js');
 
 function createMockDb(initialCollections = {}) {
   const store = new Map();
@@ -215,4 +215,80 @@ test('index.html places academic schedule cards below meal cards in student/teac
 
   assert.ok(html.includes('id="allSchedulesModal"'));
   assert.ok(html.includes('onclick="openAllSchedulesModal()"'));
+});
+
+test('mergeTimetableForDay preserves empty string changed_subject ("") as deleted/free period in class and teacher modes', () => {
+  const baseRows = [
+    {
+      remote_id: 'tb_c_1_5_월_3',
+      entry_type: 'class',
+      grade: '1',
+      class_no: '5',
+      day_of_week: '월',
+      period: '3',
+      subject: '자율',
+      teacher_name: '김교사',
+    },
+    {
+      remote_id: 'tb_c_1_5_월_4',
+      entry_type: 'class',
+      grade: '1',
+      class_no: '5',
+      day_of_week: '월',
+      period: '4',
+      subject: '수학',
+      teacher_name: '이교사',
+    },
+    {
+      remote_id: 'tb_t_김교사_월_3',
+      entry_type: 'teacher',
+      grade: '1',
+      class_no: '5',
+      day_of_week: '월',
+      period: '3',
+      subject: '자율',
+      teacher_name: '김교사',
+    },
+  ];
+  const changeRows = [
+    {
+      remote_id: 'tc_20261116_1_5_3',
+      date: '2026-11-16',
+      grade: '1',
+      class_no: '5',
+      period: '3',
+      original_subject: '자율',
+      changed_subject: '',
+      original_teacher: '김교사',
+      changed_teacher: '',
+    },
+  ];
+
+  const classMerged = mergeTimetableForDay(baseRows, changeRows, {
+    mode: 'class',
+    grade: '1',
+    classNo: '5',
+    dayChar: '월',
+    targetDate: '2026-11-16',
+  });
+  assert.equal(classMerged.length, 2);
+  const p3Class = classMerged.find((r) => Number(r.period) === 3);
+  assert.equal(p3Class.isChanged, true);
+  assert.equal(p3Class.subject, '');
+  assert.equal(p3Class.teacher, '');
+  assert.equal(p3Class.original, '자율');
+  const p4Class = classMerged.find((r) => Number(r.period) === 4);
+  assert.equal(p4Class.isChanged, false);
+  assert.equal(p4Class.subject, '수학');
+
+  const teacherMerged = mergeTimetableForDay(baseRows, changeRows, {
+    mode: 'teacher',
+    teacherName: '김교사',
+    dayChar: '월',
+    targetDate: '2026-11-16',
+  });
+  assert.equal(teacherMerged.length, 1);
+  assert.equal(teacherMerged[0].changed, true);
+  assert.equal(teacherMerged[0].subject, '');
+  assert.equal(teacherMerged[0].target, '');
 });

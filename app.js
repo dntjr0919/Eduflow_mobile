@@ -1035,10 +1035,18 @@ function mergeTimetableForDay(timetableBase, timetableChanges, options = {}) {
       const rawOrigSubj = String(c.original_subject || '').trim();
       const cleanOrigSubj = rawOrigSubj === '(기존수업)' ? '' : rawOrigSubj;
       const resolvedOrig = cleanOrigSubj || (prev ? prev.subject : '');
+      const hasChangedSubject = c.changed_subject !== undefined && c.changed_subject !== null;
+      const resolvedSubject = hasChangedSubject
+        ? String(c.changed_subject)
+        : (prev ? prev.subject : '');
+      const isDeletedLesson = hasChangedSubject && String(c.changed_subject).trim() === '';
+      const resolvedTeacher = isDeletedLesson
+        ? _normalizeTeacherName(c.changed_teacher || '')
+        : _normalizeTeacherName(c.changed_teacher || (prev ? prev.teacher : '') || c.original_teacher || '');
       periodMap.set(pKey, {
         period: pNum || c.period,
-        subject: c.changed_subject || (prev ? prev.subject : ''),
-        teacher: _normalizeTeacherName(c.changed_teacher || (prev ? prev.teacher : '') || c.original_teacher || ''),
+        subject: resolvedSubject,
+        teacher: resolvedTeacher,
         isChanged: true,
         original: resolvedOrig,
         originalSubject: resolvedOrig,
@@ -1091,16 +1099,23 @@ function mergeTimetableForDay(timetableBase, timetableChanges, options = {}) {
     const matchesPrevClass = prev && cGrade && cClass && prev._grade === cGrade && prev._classNo === cClass;
     if (!matchesTeacher && !matchesPrevClass) return;
 
-    const targetStr = (cGrade && cClass)
-      ? `${cGrade}학년 ${cClass}반`
-      : (prev ? prev.target : '');
+    const hasChangedSubject = c.changed_subject !== undefined && c.changed_subject !== null;
+    const resolvedSubject = hasChangedSubject
+      ? String(c.changed_subject)
+      : (prev ? prev.subject : '');
+    const isDeletedLesson = hasChangedSubject && String(c.changed_subject).trim() === '';
+    const targetStr = isDeletedLesson
+      ? ''
+      : ((cGrade && cClass)
+          ? `${cGrade}학년 ${cClass}반`
+          : (prev ? prev.target : ''));
     periodMap.set(pKey, {
       _periodNum: pNum || (prev ? prev._periodNum : 0),
       _grade: cGrade || (prev ? prev._grade : ''),
       _classNo: cClass || (prev ? prev._classNo : ''),
       period: `${pNum || c.period}교시`,
       target: targetStr,
-      subject: c.changed_subject || (prev ? prev.subject : ''),
+      subject: resolvedSubject,
       changed: true
     });
   });
