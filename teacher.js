@@ -193,7 +193,7 @@ function renderTeacherHome() {
     let cat = 'absent';
     if (t === '출석') cat = 'present';
     else if (t.includes('체험학습')) cat = 'field';
-    else if (t.includes('지각') || t.includes('조퇴')) cat = 'late';
+    else if (t.includes('지각') || t.includes('조퇴') || t.includes('외출')) cat = 'late';
     else cat = 'absent';
 
     const prev = studentStatusMap.get(sid);
@@ -260,15 +260,22 @@ function renderTeacherHome() {
     list.innerHTML = `<div class="p-4 bg-slate-50 rounded-xl border border-slate-200/70 text-center text-xs text-slate-400">오늘 접수된 출결 변동 내역이 없습니다.</div>`;
   } else {
     list.innerHTML = activeAttList.map(item => {
-      const typeLabel = item.periodInfo ? `${item.type}(${item.periodInfo})` : item.type;
+      const isOuting = (item.type || '').includes('외출');
+      const typeLabel = isOuting
+        ? item.type
+        : (item.periodInfo ? `${item.type}(${item.periodInfo})` : item.type);
+      const badgeCls = isOuting
+        ? 'bg-teal-100 text-teal-700'
+        : 'bg-red-100 text-red-700';
+      const subText = item.reason || (isOuting && item.periodInfo ? `교사 출석체크 (${item.periodInfo})` : '사유 미입력');
       return `
       <div class="flex items-center justify-between gap-2 p-2.5 bg-slate-50 rounded-xl border border-slate-200/70">
         <div class="min-w-0">
           <div class="flex items-center gap-1.5 flex-wrap">
             <span class="text-xs font-bold text-slate-800">${item.studentId} ${item.name}</span>
-            <span class="text-[10px] px-1.5 py-0.2 rounded font-bold bg-red-100 text-red-700">${typeLabel}</span>
+            <span class="text-[10px] px-1.5 py-0.2 rounded font-bold ${badgeCls}">${typeLabel}</span>
           </div>
-          <p class="text-[10px] text-slate-500 mt-0.5 truncate">${item.reason || '사유 미입력'}</p>
+          <p class="text-[10px] text-slate-500 mt-0.5 truncate">${subText}</p>
         </div>
         <div class="flex items-center gap-1 shrink-0">
           ${item.confirmed
@@ -597,7 +604,7 @@ function onTeacherAttEditSubTypeChange() {
 
   const isPresentOrField = catEl.value === '출석' || catEl.value === '체험학습';
   subEl.disabled = isPresentOrField;
-  const needsPeriod = !isPresentOrField && (subEl.value === '지각' || subEl.value === '조퇴');
+  const needsPeriod = !isPresentOrField && (subEl.value === '지각' || subEl.value === '조퇴' || subEl.value === '외출');
   periodWrap.classList.toggle('hidden', !needsPeriod);
 }
 
@@ -629,6 +636,7 @@ function editTeacherAtt(id) {
   if (!sub) {
     if (t.includes('지각')) sub = '지각';
     else if (t.includes('조퇴')) sub = '조퇴';
+    else if (t.includes('외출')) sub = '외출';
     else sub = '결석';
   }
 
@@ -663,7 +671,7 @@ async function saveTeacherAttEdit(e) {
   const cat = document.getElementById('teacherAttEditCategory').value;
   const sub = document.getElementById('teacherAttEditSubType').value;
   const isPresentOrField = cat === '출석' || cat === '체험학습';
-  const needsPeriod = !isPresentOrField && (sub === '지각' || sub === '조퇴');
+  const needsPeriod = !isPresentOrField && (sub === '지각' || sub === '조퇴' || sub === '외출');
   const periodInfo = needsPeriod ? document.getElementById('teacherAttEditPeriod').value : '';
   if (needsPeriod && !periodInfo) {
     showToast(`${sub} 교시를 선택해 주세요.`, '⚠️');
@@ -729,6 +737,46 @@ async function saveTeacherAttEdit(e) {
 // --- TEACHER ATTENDANCE CHECK (FULL-SCREEN) ---
 let _attCheckRows = [];
 
+function _formatOutingPeriodInfo(startPeriod, returnPeriod) {
+  const start = String(startPeriod || '').trim();
+  const end = String(returnPeriod || start).trim();
+  if (!start) return '';
+  if (!end || start === end) return start;
+  return `${start}~${end}`;
+}
+
+function _getReturnPeriodOptions(periodOptions, startPeriod) {
+  const list = Array.isArray(periodOptions) ? periodOptions : [];
+  const start = String(startPeriod || '').trim();
+  if (!start) return [];
+  const idx = list.indexOf(start);
+  return idx >= 0 ? list.slice(idx) : [];
+}
+
+function _parseOutingPeriodInfo(periodInfo, periodOptions) {
+  const list = Array.isArray(periodOptions) ? periodOptions : [];
+  const raw = String(periodInfo || '').trim();
+  if (!raw) return { period: '', returnPeriod: '' };
+  if (raw.includes('~')) {
+    const parts = raw.split('~').map(s => s.trim());
+    let rawStart = parts[0] || '';
+    const rawEnd = parts[1] || '';
+    if (/^\d+$/.test(rawStart) && rawEnd.endsWith('교시')) {
+      rawStart = `${rawStart}교시`;
+    }
+    const startOpt = list.find(opt => opt === rawStart) || '';
+    let endOpt = list.find(opt => opt === rawEnd) || '';
+    if (startOpt) {
+      const startIdx = list.indexOf(startOpt);
+      const endIdx = list.indexOf(endOpt);
+      if (!endOpt || endIdx < startIdx) endOpt = startOpt;
+    }
+    return { period: startOpt, returnPeriod: endOpt || startOpt };
+  }
+  const matched = list.find(opt => raw === opt || raw.includes(opt)) || '';
+  return { period: matched, returnPeriod: matched };
+}
+
 function _deriveAttCheckStatus(row) {
   if (row.checked) {
     if (row.period) {
@@ -747,6 +795,17 @@ function _deriveAttCheckStatus(row) {
     };
   }
   if (row.period) {
+    if (row.isOuting) {
+      const retP = row.returnPeriod || row.period;
+      const outingInfo = _formatOutingPeriodInfo(row.period, retP);
+      return {
+        type: '외출',
+        subType: '외출',
+        periodInfo: outingInfo,
+        label: `외출 (${outingInfo})`,
+        badgeClass: 'bg-teal-100 text-teal-700 border-teal-200'
+      };
+    }
     return {
       type: '조퇴',
       subType: '조퇴',
@@ -796,6 +855,8 @@ function openTeacherAttendanceCheck() {
     const existing = mockData.teacherTodayAttendance.find(a => String(a.studentId || '').trim() === sid);
     let checked = false;
     let period = '';
+    let isOuting = false;
+    let returnPeriod = '';
 
     if (existing) {
       const t = String(existing.type || '');
@@ -804,6 +865,12 @@ function openTeacherAttendanceCheck() {
       if (t.includes('지각')) {
         checked = true;
         period = matchedOpt || '';
+      } else if (t.includes('외출')) {
+        checked = false;
+        isOuting = true;
+        const parsed = _parseOutingPeriodInfo(pInfo, periodOptions);
+        period = parsed.period || matchedOpt || '';
+        returnPeriod = parsed.returnPeriod || period;
       } else if (t.includes('조퇴')) {
         checked = false;
         period = matchedOpt || '';
@@ -821,6 +888,8 @@ function openTeacherAttendanceCheck() {
       classNo: stu.class_no || cuClass,
       checked,
       period,
+      isOuting,
+      returnPeriod,
       cameraVerified: false,
       cameraMatchPct: 0,
       cameraVerifiedAt: 0,
@@ -847,11 +916,13 @@ function updateAttCheckSummary() {
   let absent = 0;
   let late = 0;
   let early = 0;
+  let outing = 0;
   let cameraVerifiedCount = 0;
   _attCheckRows.forEach(row => {
     const st = _deriveAttCheckStatus(row);
     if (st.type === '결석') absent++;
     else if (st.type === '지각') late++;
+    else if (st.type === '외출') outing++;
     else if (st.type === '조퇴') early++;
     else present++;
     if (!row.checked && !row.period && row.cameraVerified) cameraVerifiedCount++;
@@ -860,12 +931,14 @@ function updateAttCheckSummary() {
   const elA = document.getElementById('attCheckCntAbsent');
   const elL = document.getElementById('attCheckCntLate');
   const elE = document.getElementById('attCheckCntEarly');
+  const elO = document.getElementById('attCheckCntOuting');
   const elCam = document.getElementById('attFaceRecognizedSummary');
   const elBadge = document.getElementById('attFaceVerifiedCountBadge');
   if (elP) elP.innerText = `${present}명`;
   if (elA) elA.innerText = `${absent}명`;
   if (elL) elL.innerText = `${late}명`;
   if (elE) elE.innerText = `${early}명`;
+  if (elO) elO.innerText = `${outing}명`;
   if (elCam) elCam.innerText = `카메라 확인: ${cameraVerifiedCount}명`;
   if (elBadge) elBadge.innerText = `${cameraVerifiedCount}/${_attCheckRows.length}명 확인`;
   _renderAttFaceVerifiedChips();
@@ -886,19 +959,40 @@ function renderAttCheckStudentList() {
     const st = _deriveAttCheckStatus(row);
     const isCamVerified = !row.checked && !row.period && Boolean(row.cameraVerified);
     const defaultOptLabel = row.checked ? '전체(결석)' : '해당 없음(출석)';
-    const promptLabel = row.checked ? '어디까지 결과인지' : '어디서부터 결과인지';
+    const promptLabel = row.checked
+      ? '어디까지 결과인지'
+      : (row.isOuting ? '외출 시작 교시' : '어디서부터 결과인지');
     const cardBorder = row.checked
       ? 'border-red-200 bg-red-50/30'
-      : (row.period
-        ? 'border-purple-200 bg-purple-50/30'
-        : (isCamVerified ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200/80 bg-white'));
+      : (row.period && row.isOuting
+        ? 'border-teal-200 bg-teal-50/30'
+        : (row.period
+          ? 'border-purple-200 bg-purple-50/30'
+          : (isCamVerified ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200/80 bg-white')));
+
+    const outingControlHtml = !row.checked
+      ? `<label class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-bold cursor-pointer select-none transition-colors ${row.isOuting ? 'bg-teal-600 text-white border-teal-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}">
+           <input type="checkbox" ${row.isOuting ? 'checked' : ''} onchange="onAttCheckOutingToggle(${idx}, this.checked)" class="w-3.5 h-3.5 rounded accent-teal-600 cursor-pointer" />
+           <span>외출</span>
+         </label>`
+      : '';
 
     const badgesHtml = isCamVerified
       ? `<div class="flex items-center gap-1 shrink-0">
            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 bg-emerald-100 text-emerald-700 border-emerald-200">카메라 확인됨</span>
            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${st.badgeClass}">${st.label}</span>
+           ${outingControlHtml}
          </div>`
-      : `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${st.badgeClass}">${st.label}</span>`;
+      : `<div class="flex items-center gap-1.5 shrink-0">
+           <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${st.badgeClass}">${st.label}</span>
+           ${outingControlHtml}
+         </div>`;
+
+    const showReturnDropdown = !row.checked && Boolean(row.isOuting) && Boolean(row.period);
+    const returnOptions = showReturnDropdown ? _getReturnPeriodOptions(periodOptions, row.period) : [];
+    const effectiveReturnPeriod = returnOptions.includes(row.returnPeriod)
+      ? row.returnPeriod
+      : (returnOptions[0] || row.period || '');
 
     return `
       <div class="rounded-2xl p-3 border shadow-xs transition-colors ${cardBorder}" id="attCheckRow-${idx}">
@@ -919,6 +1013,14 @@ function renderAttCheckStudentList() {
             ${periodOptions.map(opt => `<option value="${opt}" ${row.period === opt ? 'selected' : ''}>${opt}</option>`).join('')}
           </select>
         </div>
+        ${showReturnDropdown ? `
+        <div class="mt-2 pt-2 border-t border-teal-200/60 flex items-center justify-between gap-2">
+          <span class="text-[11px] font-semibold text-teal-700 shrink-0">복귀 교시</span>
+          <select onchange="onAttCheckReturnPeriodChange(${idx}, this.value)" class="text-xs px-2.5 py-1.5 bg-white border border-teal-200 rounded-xl focus:ring-2 focus:ring-teal-500 focus:outline-none text-slate-800 font-medium min-w-[130px]">
+            ${returnOptions.map(opt => `<option value="${opt}" ${effectiveReturnPeriod === opt ? 'selected' : ''}>${opt}</option>`).join('')}
+          </select>
+        </div>
+        ` : ''}
       </div>
     `;
   }).join('');
@@ -928,6 +1030,8 @@ function onAttCheckToggle(idx, isChecked) {
   if (!_attCheckRows[idx]) return;
   _attCheckRows[idx].checked = Boolean(isChecked);
   _attCheckRows[idx].period = '';
+  _attCheckRows[idx].isOuting = false;
+  _attCheckRows[idx].returnPeriod = '';
   if (_attCheckRows[idx].checked) {
     _attCheckRows[idx].cameraVerified = false;
     _attCheckRows[idx].cameraVerifiedAt = 0;
@@ -936,12 +1040,57 @@ function onAttCheckToggle(idx, isChecked) {
 }
 
 function onAttCheckPeriodChange(idx, periodVal) {
-  if (!_attCheckRows[idx]) return;
-  _attCheckRows[idx].period = periodVal || '';
-  if (_attCheckRows[idx].checked || _attCheckRows[idx].period) {
-    _attCheckRows[idx].cameraVerified = false;
-    _attCheckRows[idx].cameraVerifiedAt = 0;
+  const row = _attCheckRows[idx];
+  if (!row) return;
+  row.period = periodVal || '';
+  if (!row.period) {
+    row.isOuting = false;
+    row.returnPeriod = '';
+  } else if (row.isOuting) {
+    const periodOptions = getPeriodOptionsList();
+    const startIdx = periodOptions.indexOf(row.period);
+    const retIdx = periodOptions.indexOf(row.returnPeriod);
+    if (!row.returnPeriod || retIdx < startIdx) {
+      row.returnPeriod = row.period;
+    }
   }
+  if (row.checked || row.period) {
+    row.cameraVerified = false;
+    row.cameraVerifiedAt = 0;
+  }
+  renderAttCheckStudentList();
+}
+
+function onAttCheckOutingToggle(idx, isOuting) {
+  const row = _attCheckRows[idx];
+  if (!row || row.checked) return;
+  if (isOuting) {
+    row.isOuting = true;
+    const periodOptions = getPeriodOptionsList();
+    if (!row.period) {
+      row.period = periodOptions.find(p => p !== '조회') || periodOptions[0] || '';
+    }
+    const startIdx = periodOptions.indexOf(row.period);
+    const retIdx = periodOptions.indexOf(row.returnPeriod);
+    if (!row.returnPeriod || retIdx < startIdx) {
+      row.returnPeriod = row.period;
+    }
+    row.cameraVerified = false;
+    row.cameraVerifiedAt = 0;
+  } else {
+    row.isOuting = false;
+    row.returnPeriod = '';
+  }
+  renderAttCheckStudentList();
+}
+
+function onAttCheckReturnPeriodChange(idx, returnPeriodVal) {
+  const row = _attCheckRows[idx];
+  if (!row) return;
+  const periodOptions = getPeriodOptionsList();
+  const startIdx = periodOptions.indexOf(row.period);
+  const retIdx = periodOptions.indexOf(returnPeriodVal);
+  row.returnPeriod = (returnPeriodVal && retIdx >= startIdx) ? returnPeriodVal : row.period;
   renderAttCheckStudentList();
 }
 
@@ -1118,10 +1267,12 @@ function applyCameraFaceRecognitionToAttRows(rows, studentId, matchPct = 100, mi
   }
 
   const prevPct = Number(row.cameraMatchPct || 0);
-  const changed = Boolean(row.checked) || Boolean(row.period) || !row.cameraVerified;
+  const changed = Boolean(row.checked) || Boolean(row.period) || Boolean(row.isOuting) || !row.cameraVerified;
 
   row.checked = false;
   row.period = '';
+  row.isOuting = false;
+  row.returnPeriod = '';
   row.cameraVerified = true;
   row.cameraMatchPct = Math.max(prevPct, pct);
   if (changed || !row.cameraVerifiedAt) {
@@ -1808,15 +1959,21 @@ async function saveTeacherAttendanceCheck(btnEl) {
 
   const records = _attCheckRows.map(row => {
     const st = _deriveAttCheckStatus(row);
-    const periodInfo = row.period
-      ? (row.checked ? `${row.period}까지 결과` : `${row.period}부터 결과`)
-      : '';
+    const periodInfo = st.type === '외출'
+      ? (st.periodInfo || _formatOutingPeriodInfo(row.period, row.returnPeriod || row.period))
+      : (row.period
+        ? (row.checked ? `${row.period}까지 결과` : `${row.period}부터 결과`)
+        : '');
     const finalType = (row.existingType && st.type === '결석' && row.existingType.includes('결석'))
       ? row.existingType
       : st.type;
+    const defaultReason = periodInfo ? `교사 출석체크 (${periodInfo})` : `교사 출석체크 (${finalType})`;
+    const preservedReason = (row.existingReason && !String(row.existingReason).startsWith('교사 출석체크'))
+      ? row.existingReason
+      : '';
     const reason = st.type === '출석'
       ? ''
-      : (row.existingReason || (periodInfo ? `교사 출석체크 (${periodInfo})` : `교사 출석체크 (${finalType})`));
+      : (preservedReason || defaultReason);
 
     return {
       remote_id: row.existingId || `ATT_CHK_${todayStr}_${row.studentId}`,
@@ -3536,6 +3693,9 @@ async function saveTeacherLessonProgress(btnEl) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     _deriveAttCheckStatus,
+    _formatOutingPeriodInfo,
+    _getReturnPeriodOptions,
+    _parseOutingPeriodInfo,
     _computeFaceMatchPercent,
     _normalizeFaceMinMatchPct,
     _computeFaceDistanceThreshold,
