@@ -3415,6 +3415,10 @@ if (typeof globalThis !== 'undefined') {
     _extractClassTokens,
     _expandSubjectTokens,
     _findBestSubjectRoster,
+    _normalizeLessonAttendanceStatus,
+    _getRecentLessonProgressDates,
+    _getDefaultLessonImportDate,
+    _getLessonProgressByDate,
   };
 }
 
@@ -3454,6 +3458,12 @@ function _resolveLessonRosterStudents(rosterKey) {
   })).filter((s) => s.student_id);
 }
 
+function _normalizeLessonAttendanceStatus(rawStatus) {
+  const trimmed = String(rawStatus ?? '').trim();
+  if (!trimmed || trimmed === '출석') return '출석';
+  return '결과';
+}
+
 function _renderLessonAttStudentList() {
   const listEl = document.getElementById('lessonAttStudentList');
   if (!listEl) return;
@@ -3462,15 +3472,15 @@ function _renderLessonAttStudentList() {
     listEl.innerHTML = `<div class="py-8 text-center text-xs text-slate-400">표시할 학생 명렬표가 없습니다. 상단 드롭다운에서 교과 명렬표를 선택해 주세요.</div>`;
     return;
   }
-  const statuses = ['출석', '결석', '지각', '조퇴', '공결'];
+  const statuses = ['출석', '결과'];
   listEl.innerHTML = students.map((st, idx) => {
+    const currentStatus = _normalizeLessonAttendanceStatus(st.status);
     const btns = statuses.map((label) => {
-      const active = st.status === label;
-      let activeCls = 'bg-emerald-600 text-white border-emerald-600';
-      if (label === '결석') activeCls = 'bg-rose-600 text-white border-rose-600';
-      else if (label === '지각' || label === '조퇴') activeCls = 'bg-amber-500 text-white border-amber-500';
-      else if (label === '공결') activeCls = 'bg-indigo-600 text-white border-indigo-600';
-      return `<button type="button" onclick="setLessonStudentStatus(${idx}, '${label}')" class="px-2 py-1 rounded-lg text-[10px] font-bold border transition ${active ? activeCls : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">${label}</button>`;
+      const active = currentStatus === label;
+      const activeCls = label === '결과'
+        ? 'bg-rose-600 text-white border-rose-600'
+        : 'bg-emerald-600 text-white border-emerald-600';
+      return `<button type="button" onclick="setLessonStudentStatus(${idx}, '${label}')" class="px-2.5 py-1 rounded-lg text-[10px] font-bold border transition ${active ? activeCls : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">${label}</button>`;
     }).join('');
     return `
       <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200/70 space-y-1.5">
@@ -3486,7 +3496,7 @@ function _renderLessonAttStudentList() {
 
 function setLessonStudentStatus(idx, status) {
   if (_lessonModalState.students[idx]) {
-    _lessonModalState.students[idx].status = status;
+    _lessonModalState.students[idx].status = _normalizeLessonAttendanceStatus(status);
     _renderLessonAttStudentList();
   }
 }
@@ -3513,7 +3523,7 @@ function _hydrateLessonAttendanceStudents(rosterKey) {
     return {
       student_id: s.student_id,
       student_name: s.student_name,
-      status: prev ? String(prev.status || '출석') : '출석',
+      status: prev ? _normalizeLessonAttendanceStatus(prev.status) : '출석',
       memo: prev ? String(prev.memo || '') : '',
     };
   });
@@ -3597,18 +3607,31 @@ function openTeacherLessonModal(scheduleIndex) {
   _lessonModalState.progressRemoteId = todayProg ? String(todayProg.remote_id || '') : '';
   const prevBox = document.getElementById('lessonPrevProgressBox');
   if (prevBox) {
+    const esc = typeof _escapeNoticeHtml === 'function'
+      ? _escapeNoticeHtml
+      : (s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
+    const importBtnHtml = `<button type="button" id="lessonImportProgBtn" onclick="openLessonProgressImportModal()" class="shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[10px] font-bold shadow-2xs transition">진도 불러오기</button>`;
     if (prevProg) {
       prevBox.innerHTML = `
-        <div class="flex items-center justify-between">
-          <span class="font-bold text-indigo-900">직전 수업 진도 (${prevProg.date || '-'} · ${prevProg.period ? prevProg.period + '교시' : '-'})</span>
-          <span class="text-[10px] font-semibold text-indigo-700 bg-white px-2 py-0.5 rounded-full border border-indigo-100">${prevProg.lesson_no || '-'}</span>
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0 flex-1">
+            <span class="font-bold text-indigo-900">직전 수업 진도 (${esc(prevProg.date || '-')} · ${prevProg.period ? esc(prevProg.period) + '교시' : '-'})</span>
+            ${prevProg.lesson_no ? `<span class="inline-block ml-1.5 text-[10px] font-semibold text-indigo-700 bg-white px-2 py-0.5 rounded-full border border-indigo-100 align-middle">${esc(prevProg.lesson_no)}</span>` : ''}
+          </div>
+          ${importBtnHtml}
         </div>
-        <div class="text-slate-700 font-semibold mt-1">${prevProg.unit || '-'}</div>
-        <div class="text-slate-600 text-[11px]">${prevProg.content || '-'}</div>
-        ${prevProg.next_note ? `<div class="text-[11px] text-indigo-700 mt-1">💡 다음 안내: ${prevProg.next_note}</div>` : ''}
+        <div class="text-slate-700 font-semibold mt-1">${esc(prevProg.unit || '-')}</div>
+        <div class="text-slate-600 text-[11px]">${esc(prevProg.content || '-')}</div>
+        ${prevProg.next_note ? `<div class="text-[11px] text-indigo-700 mt-1">💡 다음 안내: ${esc(prevProg.next_note)}</div>` : ''}
       `;
     } else {
-      prevBox.innerHTML = `<div class="font-bold text-indigo-900">직전 수업 진도</div><p class="text-slate-500">기록된 직전 진도가 없습니다.</p>`;
+      prevBox.innerHTML = `
+        <div class="flex items-start justify-between gap-2">
+          <div class="font-bold text-indigo-900">직전 수업 진도</div>
+          ${importBtnHtml}
+        </div>
+        <p class="text-slate-500">기록된 직전 진도가 없습니다.</p>
+      `;
     }
   }
 
@@ -3650,6 +3673,140 @@ async function saveTeacherLessonAttendance(btnEl) {
     }
     showToast(`${_lessonModalState.classLabel} ${_lessonModalState.subject} 출결이 저장되었습니다.`, '✅');
   });
+}
+
+function _getRecentLessonProgressDates(progressList, limit = 5) {
+  const seen = new Set();
+  const dates = [];
+  (Array.isArray(progressList) ? progressList : []).forEach((p) => {
+    const d = String((p && p.date) || '').trim().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d) && !seen.has(d)) {
+      seen.add(d);
+      dates.push(d);
+    }
+  });
+  dates.sort((a, b) => b.localeCompare(a));
+  return dates.slice(0, limit);
+}
+
+function _getDefaultLessonImportDate(progressList, fallbackDate) {
+  const fallback = String(fallbackDate || '').trim().slice(0, 10);
+  const recent = _getRecentLessonProgressDates(progressList, 50);
+  if (fallback && recent.includes(fallback)) return fallback;
+  if (recent.length > 0) return recent[0];
+  return fallback;
+}
+
+function _getLessonProgressByDate(progressList, dateStr) {
+  const target = String(dateStr || '').trim().slice(0, 10);
+  if (!target) return [];
+  return (Array.isArray(progressList) ? progressList : [])
+    .filter((p) => p && String(p.date || '').trim().slice(0, 10) === target)
+    .slice()
+    .sort((a, b) => {
+      const pa = parseInt(String(a.period || '').replace(/[^0-9]/g, ''), 10);
+      const pb = parseInt(String(b.period || '').replace(/[^0-9]/g, ''), 10);
+      const na = Number.isFinite(pa) ? pa : 999;
+      const nb = Number.isFinite(pb) ? pb : 999;
+      if (na !== nb) return na - nb;
+      const clsCmp = String(a.class_label || '').localeCompare(String(b.class_label || ''), 'ko');
+      if (clsCmp !== 0) return clsCmp;
+      return String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
+    });
+}
+
+function _renderLessonImportRecentDateChips(activeDate) {
+  const container = document.getElementById('lessonProgImportRecentDates');
+  if (!container) return;
+  const esc = typeof _escapeNoticeHtml === 'function'
+    ? _escapeNoticeHtml
+    : (s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
+  const recentDates = _getRecentLessonProgressDates(mockData.lessonProgress || [], 5);
+  if (recentDates.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = recentDates.map((d) => {
+    const isActive = d === activeDate;
+    return `<button type="button" onclick="selectLessonImportDate('${esc(d)}')" class="px-2 py-0.5 rounded-full text-[10px] font-semibold border transition ${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50'}">${esc(d)}</button>`;
+  }).join('');
+}
+
+function selectLessonImportDate(dateStr) {
+  const inputEl = document.getElementById('lessonProgImportDate');
+  if (inputEl) inputEl.value = dateStr;
+  renderLessonProgressImportList(dateStr);
+}
+
+function renderLessonProgressImportList(dateStr) {
+  const targetDate = String(dateStr || '').trim().slice(0, 10);
+  _renderLessonImportRecentDateChips(targetDate);
+  const listEl = document.getElementById('lessonProgImportList');
+  if (!listEl) return;
+
+  const esc = typeof _escapeNoticeHtml === 'function'
+    ? _escapeNoticeHtml
+    : (s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
+  const items = _getLessonProgressByDate(mockData.lessonProgress || [], targetDate);
+  _lessonModalState.importCandidates = items;
+
+  if (items.length === 0) {
+    listEl.innerHTML = `<div class="py-10 text-center text-xs text-slate-400">선택한 날짜(${esc(targetDate || '-')})에 등록된 수업 진도가 없습니다.</div>`;
+    return;
+  }
+
+  listEl.innerHTML = items.map((item, idx) => {
+    const metaParts = [];
+    if (item.period !== undefined && item.period !== null && String(item.period).trim() !== '') {
+      const pText = String(item.period).trim();
+      metaParts.push(pText.endsWith('교시') ? pText : `${pText}교시`);
+    }
+    if (String(item.class_label || '').trim()) metaParts.push(String(item.class_label).trim());
+    if (String(item.subject || '').trim()) metaParts.push(String(item.subject).trim());
+    const metaLabel = metaParts.join(' · ') || '수업 기록';
+    const lessonNo = String(item.lesson_no || '').trim();
+    const unit = String(item.unit || '').trim() || '(단원명 없음)';
+    const content = String(item.content || '').trim() || '(수업 내용 없음)';
+    const nextNote = String(item.next_note || '').trim();
+
+    return `
+      <button type="button" onclick="applyImportedLessonProgress(${idx})" class="w-full text-left p-3 rounded-2xl border border-slate-200 bg-slate-50/70 hover:border-indigo-400 hover:bg-indigo-50/40 active:scale-[0.99] transition space-y-1">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[11px] font-bold text-indigo-700 truncate">${esc(metaLabel)}</span>
+          ${lessonNo ? `<span class="shrink-0 text-[10px] font-semibold text-slate-600 bg-white px-2 py-0.5 rounded-full border border-slate-200">${esc(lessonNo)}</span>` : ''}
+        </div>
+        <div class="text-xs font-bold text-slate-800 truncate">${esc(unit)}</div>
+        <p class="text-[11px] text-slate-600 line-clamp-2">${esc(content)}</p>
+        ${nextNote ? `<div class="text-[10px] text-indigo-600 truncate">💡 ${esc(nextNote)}</div>` : ''}
+      </button>
+    `;
+  }).join('');
+}
+
+function openLessonProgressImportModal() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const localToday = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const defaultDate = _getDefaultLessonImportDate(mockData.lessonProgress || [], _lessonModalState.dateStr || localToday);
+  const inputEl = document.getElementById('lessonProgImportDate');
+  if (inputEl) inputEl.value = defaultDate;
+  renderLessonProgressImportList(defaultDate);
+  openModal('lessonProgressImportModal');
+}
+
+function applyImportedLessonProgress(idx) {
+  const item = (_lessonModalState.importCandidates || [])[idx];
+  if (!item) return;
+  const unitEl = document.getElementById('lessonProgUnit');
+  const noEl = document.getElementById('lessonProgNo');
+  const contentEl = document.getElementById('lessonProgContent');
+  const nextEl = document.getElementById('lessonProgNext');
+  if (unitEl) unitEl.value = String(item.unit || '');
+  if (noEl) noEl.value = String(item.lesson_no || '');
+  if (contentEl) contentEl.value = String(item.content || '');
+  if (nextEl) nextEl.value = String(item.next_note || '');
+  closeModal('lessonProgressImportModal');
+  showToast('진도 내용을 불러왔습니다. 확인 후 저장해 주세요.', '📋');
 }
 
 async function saveTeacherLessonProgress(btnEl) {
@@ -3717,5 +3874,9 @@ if (typeof module !== 'undefined' && module.exports) {
     _extractClassTokens,
     _expandSubjectTokens,
     _findBestSubjectRoster,
+    _normalizeLessonAttendanceStatus,
+    _getRecentLessonProgressDates,
+    _getDefaultLessonImportDate,
+    _getLessonProgressByDate,
   };
 }

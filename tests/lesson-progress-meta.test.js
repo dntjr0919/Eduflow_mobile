@@ -271,3 +271,54 @@ test('admin/index.html #lesson-progress-modal prevents mobile date truncation', 
   assert.ok(modalSnippet.includes('col-span-2 sm:col-span-1 min-w-0'), 'date wrapper should use col-span-2 sm:col-span-1 min-w-0');
   assert.ok(modalSnippet.includes('id="lp-date" type="date" required class="w-full min-w-0'), 'lp-date should have min-w-0');
 });
+
+test('teacher.js lesson progress import helpers select default date and filter/sort by date', () => {
+  const {
+    _getRecentLessonProgressDates,
+    _getDefaultLessonImportDate,
+    _getLessonProgressByDate,
+  } = require('../teacher.js');
+
+  const progressList = [
+    { remote_id: 'p1', date: '2026-11-20', period: 3, class_label: '1-2', subject: '물리학Ⅰ', unit: '단원1' },
+    { remote_id: 'p2', date: '2026-11-23', period: 5, class_label: '1-4', subject: '물리학Ⅰ', unit: '단원2' },
+    { remote_id: 'p3', date: '2026-11-23', period: 2, class_label: '1-1', subject: '물리학Ⅰ', unit: '단원2' },
+    { remote_id: 'p4', date: '2026-11-21', period: 1, class_label: '1-3', subject: '물리학Ⅰ', unit: '단원1' },
+  ];
+
+  assert.deepEqual(_getRecentLessonProgressDates(progressList, 3), ['2026-11-23', '2026-11-21', '2026-11-20']);
+  assert.equal(_getDefaultLessonImportDate(progressList, '2026-11-21'), '2026-11-21');
+  assert.equal(_getDefaultLessonImportDate(progressList, '2026-11-24'), '2026-11-23');
+  assert.equal(_getDefaultLessonImportDate([], '2026-11-24'), '2026-11-24');
+
+  const on23 = _getLessonProgressByDate(progressList, '2026-11-23');
+  assert.deepEqual(on23.map((p) => p.remote_id), ['p3', 'p2']);
+  assert.deepEqual(_getLessonProgressByDate(progressList, '2026-11-19'), []);
+});
+
+test('teacher.js lesson attendance simplifies to 출석/결과 and maps legacy non-출석 statuses', () => {
+  const { _normalizeLessonAttendanceStatus } = require('../teacher.js');
+  assert.equal(_normalizeLessonAttendanceStatus('출석'), '출석');
+  assert.equal(_normalizeLessonAttendanceStatus(''), '출석');
+  assert.equal(_normalizeLessonAttendanceStatus(null), '출석');
+  assert.equal(_normalizeLessonAttendanceStatus('결과'), '결과');
+  assert.equal(_normalizeLessonAttendanceStatus('결석'), '결과');
+  assert.equal(_normalizeLessonAttendanceStatus('지각'), '결과');
+  assert.equal(_normalizeLessonAttendanceStatus('조퇴'), '결과');
+  assert.equal(_normalizeLessonAttendanceStatus('공결'), '결과');
+
+  const teacherSrc = fs.readFileSync(path.resolve(__dirname, '../teacher.js'), 'utf8');
+  assert.ok(teacherSrc.includes("const statuses = ['출석', '결과'];"), 'should render only 출석 and 결과 buttons');
+  assert.ok(!teacherSrc.includes("['출석', '결석', '지각', '조퇴', '공결']"), 'legacy 5-button array should be removed');
+
+  const indexHtml = fs.readFileSync(path.resolve(__dirname, '../index.html'), 'utf8');
+  assert.ok(indexHtml.includes('id="lessonImportProgBtn"'), '진도 불러오기 button should exist');
+  assert.ok(indexHtml.includes('id="lessonProgressImportModal"'), 'lessonProgressImportModal should exist');
+  assert.ok(indexHtml.includes('id="lessonProgImportDate"'), 'date picker should exist');
+  assert.ok(indexHtml.includes('id="lessonProgImportList"'), 'import list container should exist');
+
+  const adminJs = fs.readFileSync(path.resolve(__dirname, '../admin/admin.js'), 'utf8');
+  assert.ok(adminJs.includes("st.includes('결과')"), 'admin.js should style 결과 badge');
+  const adminHtml = fs.readFileSync(path.resolve(__dirname, '../admin/index.html'), 'utf8');
+  assert.ok(adminHtml.includes('<option value="결과">결과</option>'), 'admin/index.html should include 결과 option');
+});

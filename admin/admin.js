@@ -1941,7 +1941,7 @@ function renderLessonsTab() {
           const rid = String(a.remote_id || '');
           const st = String(a.status || '출석');
           let badgeCls = 'bg-emerald-100 text-emerald-700';
-          if (st.includes('결석')) badgeCls = 'bg-rose-100 text-rose-700';
+          if (st.includes('결석') || st.includes('결과')) badgeCls = 'bg-rose-100 text-rose-700';
           else if (st.includes('지각') || st.includes('조퇴')) badgeCls = 'bg-amber-100 text-amber-800';
           else if (st.includes('공결')) badgeCls = 'bg-indigo-100 text-indigo-700';
           const displayCls = canonicalizeClassLabel(a.class_label) || a.class_label || '-';

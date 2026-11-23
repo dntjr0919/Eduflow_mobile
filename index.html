@@ -1432,7 +1432,10 @@
     <!-- Panel 2: 수업 진도 기록 -->
     <div id="lessonPanel-prog" class="hidden flex-1 flex flex-col min-h-0 space-y-2.5 overflow-y-auto">
       <div id="lessonPrevProgressBox" class="bg-indigo-50/70 border border-indigo-100 rounded-xl p-3 text-xs space-y-1 shrink-0">
-        <div class="font-bold text-indigo-900">직전 수업 진도</div>
+        <div class="flex items-start justify-between gap-2">
+          <div class="font-bold text-indigo-900">직전 수업 진도</div>
+          <button type="button" id="lessonImportProgBtn" onclick="openLessonProgressImportModal()" class="shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[10px] font-bold shadow-2xs transition">진도 불러오기</button>
+        </div>
         <p class="text-slate-500">기록된 직전 진도가 없습니다.</p>
       </div>
       <div class="space-y-2">
@@ -1457,6 +1460,31 @@
       </div>
       <button type="button" onclick="saveTeacherLessonProgress(this)" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm shrink-0">수업 진도 저장</button>
     </div>
+  </div>
+</div>
+
+<!-- Modal: Import Lesson Progress by Date -->
+<div class="hidden absolute inset-0 z-[60] bg-black/45 backdrop-blur-xs flex flex-col justify-end sm:justify-center p-3" id="lessonProgressImportModal" onclick="if (event.target === this) closeModal('lessonProgressImportModal')">
+  <div class="bg-white rounded-3xl p-4 shadow-2xl max-h-[82vh] flex flex-col space-y-3">
+    <div class="flex items-center justify-between pb-2 border-b border-slate-100 shrink-0">
+      <div>
+        <h4 class="font-bold text-slate-800 text-sm">수업 진도 불러오기</h4>
+        <p class="text-[11px] text-slate-400 mt-0.5">날짜를 선택하면 등록된 진도 내용을 현재 폼에 복사합니다.</p>
+      </div>
+      <button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeModal('lessonProgressImportModal')" type="button">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+      </button>
+    </div>
+
+    <div class="space-y-2 shrink-0">
+      <div class="flex items-center gap-2">
+        <label for="lessonProgImportDate" class="text-[11px] font-bold text-slate-600 shrink-0">조회 날짜</label>
+        <input id="lessonProgImportDate" type="date" onchange="renderLessonProgressImportList(this.value)" class="flex-1 min-w-0 px-2.5 py-1.5 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl text-slate-800">
+      </div>
+      <div id="lessonProgImportRecentDates" class="flex flex-wrap gap-1.5"></div>
+    </div>
+
+    <div id="lessonProgImportList" class="flex-1 overflow-y-auto space-y-2 pr-0.5 min-h-[160px] max-h-[48vh]"></div>
   </div>
 </div>
 
