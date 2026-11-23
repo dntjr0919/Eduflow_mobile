@@ -159,6 +159,7 @@ const gasApi = {
     const qs = new URLSearchParams({ action, ...params });
     const resp = await fetch(`${GAS_PROXY_ENDPOINT}?${qs.toString()}`, {
       method: 'GET',
+      cache: 'no-store',
       redirect: 'follow'
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);

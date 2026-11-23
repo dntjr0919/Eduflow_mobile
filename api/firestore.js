@@ -716,7 +716,11 @@ function _parseTimestampMs(raw) {
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
   const s = String(raw || '').trim();
   if (!s) return NaN;
-  const normalized = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(s) ? s.replace(' ', 'T') : s;
+  let normalized = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(s) ? s.replace(' ', 'T') : s;
+  // 타임존 표기가 없는 YYYY-MM-DDTHH:mm(:ss) 문자열은 한국 표준시(+09:00)로 해석
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(normalized)) {
+    normalized += '+09:00';
+  }
   const ms = Date.parse(normalized);
   return Number.isFinite(ms) ? ms : NaN;
 }
@@ -998,10 +1002,10 @@ async function _handleGetMobileBundle(db, params) {
       .filter((d) => _belongsToTeacher(d, teacherScope))
       .sort((a, b) => String(b.date || b.updated_at || '').localeCompare(String(a.date || a.updated_at || '')));
     const rawPcStatus = pcAgentStatusDoc || (teachersRaw[0] ? {
-      pc_online: teachersRaw[0].pc_online,
-      pc_last_seen_at: teachersRaw[0].pc_last_seen_at,
-      pc_hostname: teachersRaw[0].pc_hostname,
-      pc_app_version: teachersRaw[0].pc_app_version,
+      pc_online: teachersRaw[0].pc_online !== undefined ? teachersRaw[0].pc_online : teachersRaw[0].pc_agent_online,
+      pc_last_seen_at: teachersRaw[0].pc_last_seen_at || teachersRaw[0].pc_agent_last_seen,
+      pc_hostname: teachersRaw[0].pc_hostname || teachersRaw[0].pc_agent_hostname,
+      pc_app_version: teachersRaw[0].pc_app_version || teachersRaw[0].pc_agent_version,
     } : null);
     bundle.pc_agent_status = {
       pc_online: Boolean(rawPcStatus && _toBool(rawPcStatus.pc_online)),
@@ -2552,12 +2556,54 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     const changeRows = Array.isArray(params.change_rows) ? params.change_rows : [];
     const deleteBaseIds = Array.isArray(params.delete_base_ids) ? params.delete_base_ids : [];
     const deleteChangeIds = Array.isArray(params.delete_change_ids) ? params.delete_change_ids : [];
+    const reconcileChanges = _toBool(params.reconcile_changes);
+    const reconcileDates = Array.isArray(params.reconcile_dates)
+      ? params.reconcile_dates.map((d) => String(d || '').trim().slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+      : [];
     const baseWritten = await _batchUpsertDocs(db, '시간표_기본', baseRows, scopeDefaults);
     if (baseWritten > 0 || deleteBaseIds.length > 0) _invalidateStaticCache('tt_base');
     const changeWritten = await _batchUpsertDocs(db, '시간표_변동', changeRows, scopeDefaults);
     let baseDeleted = 0;
     let changeDeleted = 0;
-    for (const [colName, idList, isBase] of [['시간표_기본', deleteBaseIds, true], ['시간표_변동', deleteChangeIds, false]]) {
+
+    // 컴시간 변동 동기화 시, 최신 파싱 결과에서 사라진(취소/원복된) 기존 컴시간 변동 문서를 정리
+    const extraDeleteChangeIds = [];
+    if (reconcileChanges) {
+      const keepIds = new Set([
+        ...changeRows.map((r) => String((r && r.remote_id) || '').trim()),
+        ...(Array.isArray(params.keep_change_ids) ? params.keep_change_ids.map((x) => String(x || '').trim()) : []),
+      ].filter(Boolean));
+      const sc = String(params.school_code || auth.schoolCode || '').trim();
+      const cc = String(params.comcigan_school_code || '').trim();
+      const sn = String(params.school_name || auth.schoolName || '').trim();
+      let existingSnap = null;
+      if (sc) {
+        existingSnap = await db.collection('시간표_변동').where('school_code', '==', sc).get().catch(() => null);
+      } else if (cc) {
+        existingSnap = await db.collection('시간표_변동').where('comcigan_school_code', '==', cc).get().catch(() => null);
+      } else if (sn) {
+        existingSnap = await db.collection('시간표_변동').where('school_name', '==', sn).get().catch(() => null);
+      }
+      if (existingSnap && !existingSnap.empty) {
+        const minDate = reconcileDates.length > 0 ? reconcileDates.slice().sort()[0] : '';
+        existingSnap.forEach((docSnap) => {
+          const rid = String(docSnap.id || '').trim();
+          if (!rid || keepIds.has(rid)) return;
+          const data = typeof docSnap.data === 'function' ? (docSnap.data() || {}) : {};
+          const src = String(data.source || '').trim().toLowerCase();
+          const isComciganDoc = src === 'comcigan' || src === 'comcigan_playwright' || rid.startsWith('tc_');
+          if (!isComciganDoc) return;
+          const docDate = String(data.date || data.target_date || '').trim().slice(0, 10);
+          if (reconcileDates.length > 0 && docDate && !reconcileDates.includes(docDate) && (!minDate || docDate < minDate)) {
+            return;
+          }
+          extraDeleteChangeIds.push(rid);
+        });
+      }
+    }
+
+    const mergedDeleteChangeIds = Array.from(new Set([...deleteChangeIds, ...extraDeleteChangeIds]));
+    for (const [colName, idList, isBase] of [['시간표_기본', deleteBaseIds, true], ['시간표_변동', mergedDeleteChangeIds, false]]) {
       const cleanIds = idList.map((x) => String(x || '').trim()).filter(Boolean);
       for (let i = 0; i < cleanIds.length; i += 400) {
         const batch = db.batch();
@@ -3909,11 +3955,14 @@ async function _handleDesktopApiAction(db, action, params, auth) {
   }
 
   if (action === 'update_pc_agent_status') {
-    const pcOnline = params.pc_online === undefined ? true : _toBool(params.pc_online);
+    const rawOnline = params.pc_online !== undefined
+      ? params.pc_online
+      : (params.pc_agent_online !== undefined ? params.pc_agent_online : params.online);
+    const pcOnline = rawOnline === undefined ? true : _toBool(rawOnline);
     const nowIso = new Date().toISOString();
-    const lastSeenAt = String(params.pc_last_seen_at || nowIso).trim();
-    const hostname = String(params.pc_hostname || params.hostname || '').trim();
-    const appVersion = String(params.pc_app_version || params.app_version || '').trim();
+    const lastSeenAt = String(params.pc_last_seen_at || params.pc_agent_last_seen || params.last_seen || nowIso).trim();
+    const hostname = String(params.pc_hostname || params.pc_agent_hostname || params.hostname || '').trim();
+    const appVersion = String(params.pc_app_version || params.pc_agent_version || params.app_version || '').trim();
     const nowStr = _nowStr();
 
     const statusPayload = {

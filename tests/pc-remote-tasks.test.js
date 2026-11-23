@@ -84,10 +84,25 @@ function createMockDb(initialCollections = {}) {
 
   return {
     _store: store,
+    batch() {
+      const ops = [];
+      return {
+        set(docRef, data, opts) {
+          ops.push(() => docRef.set(data, opts));
+        },
+        delete(docRef) {
+          ops.push(() => docRef.delete());
+        },
+        async commit() {
+          for (const fn of ops) await fn();
+        },
+      };
+    },
     collection(colName) {
       return {
         doc(docId) {
           return {
+            id: docId,
             async get() {
               const colMap = getColMap(colName);
               return makeSnap(docId, colMap.get(docId));
@@ -99,6 +114,10 @@ function createMockDb(initialCollections = {}) {
               } else {
                 colMap.set(docId, { ...data });
               }
+            },
+            async delete() {
+              const colMap = getColMap(colName);
+              colMap.delete(docId);
             },
           };
         },
@@ -304,4 +323,79 @@ test('index.html remote tab has dynamic status banner, 4 practical tasks, and sc
   }
   assert.ok(snippet.includes('id="remoteTaskTime"'));
   assert.ok(snippet.includes('type="time"'));
+});
+
+test('naive KST heartbeat timestamps and legacy pc_agent_* aliases evaluate online properly', async () => {
+  // 2026-11-23 15:00:00 KST == 2026-11-23T06:00:00Z
+  const nowUtcMs = Date.UTC(2026, 10, 23, 6, 1, 0);
+  assert.equal(_evaluatePcAgentOnline({ pc_online: true, pc_last_seen_at: '2026-11-23 15:00:00' }, nowUtcMs), true);
+  assert.equal(isPcAgentOnline({ pc_online: true, pc_last_seen_at: '2026-11-23 15:00:00' }, nowUtcMs), true);
+
+  const db = createMockDb({
+    '계정_교사': {
+      teacher_a: { teacher_id: 'teacher_a', name: '김교사', grade: 1, class_no: 4, school_code: '8140246' },
+    },
+  });
+
+  const res = await _handleDesktopApiAction(db, 'update_pc_agent_status', {
+    online: false,
+    pc_agent_online: false,
+    last_seen: new Date().toISOString(),
+    hostname: 'LEGACY-PC',
+    app_version: '2.0',
+  }, teacherAuth);
+  assert.equal(res.status, 200);
+  assert.equal(res.json.status.pc_online, false);
+  assert.equal(res.json.status.pc_hostname, 'LEGACY-PC');
+});
+
+test('sync_timetables_batch reconcile_changes deletes cancelled comcigan changes and keeps manual ones', async () => {
+  const db = createMockDb({
+    '시간표_변동': {
+      tc_20261123_1_4_3: {
+        remote_id: 'tc_20261123_1_4_3',
+        school_code: '8140246',
+        date: '2026-11-23',
+        grade: 1,
+        class_no: 4,
+        period: 3,
+        source: 'comcigan',
+      },
+      tc_20261123_1_4_5: {
+        remote_id: 'tc_20261123_1_4_5',
+        school_code: '8140246',
+        date: '2026-11-23',
+        grade: 1,
+        class_no: 4,
+        period: 5,
+        source: 'comcigan',
+      },
+      manual_1: {
+        remote_id: 'manual_1',
+        school_code: '8140246',
+        date: '2026-11-23',
+        grade: 1,
+        class_no: 4,
+        period: 6,
+        source: 'manual',
+      },
+    },
+  });
+
+  const res = await _handleDesktopApiAction(db, 'sync_timetables_batch', {
+    change_rows: [],
+    reconcile_changes: true,
+    reconcile_dates: ['2026-11-23'],
+    keep_change_ids: ['tc_20261123_1_4_3'],
+    school_code: '8140246',
+  }, teacherAuth);
+
+  assert.equal(res.status, 200);
+  assert.equal(res.json.ok, true);
+  assert.equal(res.json.change_deleted, 1);
+
+  const chgStore = db._store.get('시간표_변동');
+  assert.equal(chgStore.has('tc_20261123_1_4_3'), true);
+  assert.equal(chgStore.has('tc_20261123_1_4_5'), false);
+  assert.equal(chgStore.has('manual_1'), true);
 });

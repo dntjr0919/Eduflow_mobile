@@ -2884,7 +2884,10 @@ function isPcAgentOnline(statusObj, nowMs = Date.now()) {
     seenMs = raw;
   } else {
     const s = String(raw).trim();
-    const normalized = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(s) ? s.replace(' ', 'T') : s;
+    let normalized = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(s) ? s.replace(' ', 'T') : s;
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(normalized)) {
+      normalized += '+09:00';
+    }
     seenMs = Date.parse(normalized);
   }
   if (!Number.isFinite(seenMs)) return false;
