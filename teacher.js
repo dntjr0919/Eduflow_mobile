@@ -3728,7 +3728,7 @@ function _renderLessonImportRecentDateChips(activeDate) {
   }
   container.innerHTML = recentDates.map((d) => {
     const isActive = d === activeDate;
-    return `<button type="button" onclick="selectLessonImportDate('${esc(d)}')" class="px-2 py-0.5 rounded-full text-[10px] font-semibold border transition ${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50'}">${esc(d)}</button>`;
+    return `<button type="button" onclick="selectLessonImportDate('${esc(d)}')" class="shrink-0 whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-semibold border transition ${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50'}">${esc(d)}</button>`;
   }).join('');
 }
 
