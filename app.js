@@ -975,6 +975,20 @@ function _rowMatchesTeacher(row, tName) {
   );
 }
 
+function _isComciganChangeRow(c) {
+  if (!c || typeof c !== 'object') return false;
+  const src = String(c.source || '').trim().toLowerCase();
+  const rid = String(c.remote_id || '').trim();
+  return src === 'comcigan' || src === 'comcigan_playwright' || rid.startsWith('tc_');
+}
+
+function _findSnapshotForDate(snapshots, targetDate) {
+  if (!Array.isArray(snapshots) || snapshots.length === 0) return null;
+  const d = String(targetDate || '').trim().slice(0, 10);
+  if (!d) return snapshots[0] || null;
+  return snapshots.find((s) => s && typeof s === 'object' && String(s.date || '').trim().slice(0, 10) === d) || null;
+}
+
 function mergeTimetableForDay(timetableBase, timetableChanges, options = {}) {
   const mode = options.mode === 'teacher' ? 'teacher' : 'class';
   const g = String(options.grade || '').trim();
@@ -985,6 +999,175 @@ function mergeTimetableForDay(timetableBase, timetableChanges, options = {}) {
 
   const baseArr = Array.isArray(timetableBase) ? timetableBase : [];
   const changesArr = Array.isArray(timetableChanges) ? timetableChanges : [];
+  const snapshot = options.snapshot || _findSnapshotForDate(options.snapshots, targetDate);
+
+  const todayChangesAll = changesArr.filter(c => {
+    if (!c || typeof c !== 'object') return false;
+    const cDate = String(c.date || c.target_date || '').trim();
+    return !cDate || cDate === targetDate;
+  });
+
+  // 스냅샷이 존재하는 날짜는 컴시간 스냅샷을 단일 원천(Single Source of Truth)으로 사용하고,
+  // 시간표_기본 폴백과 과거 컴시간 출처 시간표_변동 문서는 무시하며 수동 변동 건만 마지막에 오버레이합니다.
+  if (snapshot && typeof snapshot === 'object') {
+    const manualChanges = todayChangesAll.filter((c) => !_isComciganChangeRow(c));
+
+    if (mode === 'class') {
+      const periodMap = new Map();
+      const classesMap = snapshot.classes && typeof snapshot.classes === 'object' ? snapshot.classes : {};
+      const classKey = (g && cNo) ? `${g}-${cNo}` : '';
+      const classSlots = classKey && classesMap[classKey] && typeof classesMap[classKey] === 'object'
+        ? classesMap[classKey]
+        : {};
+
+      Object.entries(classSlots).forEach(([slotPeriodKey, slot]) => {
+        if (!slot || typeof slot !== 'object') return;
+        const pNum = Number(slot.period || slotPeriodKey || 0);
+        const pKey = pNum > 0 ? pNum : String(slot.period || slotPeriodKey || '').trim();
+        if (!pKey) return;
+        const subj = String(slot.subject || '').trim();
+        const isChanged = Boolean(slot.is_changed);
+        if (!subj && !isChanged) return;
+        periodMap.set(pKey, {
+          period: pNum || slotPeriodKey,
+          subject: subj,
+          teacher: subj ? _normalizeTeacherName(slot.teacher_name || slot.teacher || '') : '',
+          isChanged,
+          original: '',
+          originalSubject: '',
+          changedReason: isChanged ? '컴시간 변동 반영' : '',
+          time: `${8 + (pNum || 1)}:50`
+        });
+      });
+
+      const classManualChanges = (g && cNo)
+        ? manualChanges.filter(c => String(c.grade || '').trim() === g && String(c.class_no || '').trim() === cNo)
+        : manualChanges;
+
+      classManualChanges.forEach(c => {
+        const pNum = Number(c.period || 0);
+        const pKey = pNum > 0 ? pNum : String(c.period || '').trim();
+        if (!pKey) return;
+        const prev = periodMap.get(pKey);
+        const rawOrigSubj = String(c.original_subject || '').trim();
+        const cleanOrigSubj = rawOrigSubj === '(기존수업)' ? '' : rawOrigSubj;
+        const resolvedOrig = cleanOrigSubj || (prev ? prev.subject : '');
+        const hasChangedSubject = c.changed_subject !== undefined && c.changed_subject !== null;
+        const resolvedSubject = hasChangedSubject ? String(c.changed_subject) : (prev ? prev.subject : '');
+        const isDeletedLesson = hasChangedSubject && String(c.changed_subject).trim() === '';
+        const resolvedTeacher = isDeletedLesson
+          ? _normalizeTeacherName(c.changed_teacher || '')
+          : _normalizeTeacherName(c.changed_teacher || (prev ? prev.teacher : '') || c.original_teacher || '');
+        periodMap.set(pKey, {
+          period: pNum || c.period,
+          subject: resolvedSubject,
+          teacher: resolvedTeacher,
+          isChanged: true,
+          original: resolvedOrig,
+          originalSubject: resolvedOrig,
+          changedReason: c.reason || c.changed_reason || c.memo || '',
+          time: `${8 + (pNum || 1)}:50`
+        });
+      });
+
+      return Array.from(periodMap.values()).sort((a, b) => Number(a.period || 0) - Number(b.period || 0));
+    }
+
+    // mode === 'teacher' (snapshot)
+    if (!tName) return [];
+    const periodMap = new Map();
+    const teachersMap = snapshot.teachers && typeof snapshot.teachers === 'object' ? snapshot.teachers : {};
+    let teacherSlots = null;
+    for (const [k, v] of Object.entries(teachersMap)) {
+      if (_normalizeTeacherName(k) === tName && v && typeof v === 'object') {
+        teacherSlots = v;
+        break;
+      }
+    }
+
+    if (teacherSlots) {
+      Object.entries(teacherSlots).forEach(([slotPeriodKey, slot]) => {
+        if (!slot || typeof slot !== 'object') return;
+        const pNum = Number(slot.period || slotPeriodKey || 0);
+        const pKey = pNum > 0 ? pNum : String(slot.period || slotPeriodKey || '').trim();
+        if (!pKey) return;
+        const subj = String(slot.subject || '').trim();
+        const isChanged = Boolean(slot.is_changed);
+        if (!subj && !isChanged) return;
+        const sGrade = String(slot.grade || '').trim();
+        const sClass = String(slot.class_no || '').trim();
+        const targetStr = !subj ? '' : ((sGrade && sClass) ? `${sGrade}학년 ${sClass}반` : '');
+        periodMap.set(pKey, {
+          _periodNum: pNum || 0,
+          _grade: sGrade,
+          _classNo: sClass,
+          period: `${pNum || slotPeriodKey}교시`,
+          target: targetStr,
+          subject: subj,
+          changed: isChanged
+        });
+      });
+    } else {
+      const classesMap = snapshot.classes && typeof snapshot.classes === 'object' ? snapshot.classes : {};
+      Object.entries(classesMap).forEach(([classKey, classSlots]) => {
+        if (!classSlots || typeof classSlots !== 'object') return;
+        const [cGrade, cClass] = String(classKey).split('-');
+        Object.entries(classSlots).forEach(([slotPeriodKey, slot]) => {
+          if (!slot || typeof slot !== 'object') return;
+          if (_normalizeTeacherName(slot.teacher_name || slot.teacher || '') !== tName) return;
+          const subj = String(slot.subject || '').trim();
+          const isChanged = Boolean(slot.is_changed);
+          if (!subj && !isChanged) return;
+          const pNum = Number(slot.period || slotPeriodKey || 0);
+          const pKey = pNum > 0 ? pNum : String(slot.period || slotPeriodKey || '').trim();
+          if (!pKey) return;
+          periodMap.set(pKey, {
+            _periodNum: pNum || 0,
+            _grade: String(cGrade || '').trim(),
+            _classNo: String(cClass || '').trim(),
+            period: `${pNum || slotPeriodKey}교시`,
+            target: !subj ? '' : ((cGrade && cClass) ? `${cGrade}학년 ${cClass}반` : ''),
+            subject: subj,
+            changed: isChanged
+          });
+        });
+      });
+    }
+
+    manualChanges.forEach(c => {
+      const pNum = Number(c.period || 0);
+      const pKey = pNum > 0 ? pNum : String(c.period || '').trim();
+      if (!pKey) return;
+      const cChgTeacher = _normalizeTeacherName(c.changed_teacher || '');
+      const cOrigTeacher = _normalizeTeacherName(c.original_teacher || '');
+      const cGrade = String(c.grade || '').trim();
+      const cClass = String(c.class_no || '').trim();
+      const prev = periodMap.get(pKey);
+      const matchesTeacher = cChgTeacher === tName || cOrigTeacher === tName;
+      const matchesPrevClass = prev && cGrade && cClass && prev._grade === cGrade && prev._classNo === cClass;
+      if (!matchesTeacher && !matchesPrevClass) return;
+
+      const hasChangedSubject = c.changed_subject !== undefined && c.changed_subject !== null;
+      const resolvedSubject = hasChangedSubject ? String(c.changed_subject) : (prev ? prev.subject : '');
+      const isDeletedLesson = hasChangedSubject && String(c.changed_subject).trim() === '';
+      const targetStr = isDeletedLesson
+        ? ''
+        : ((cGrade && cClass) ? `${cGrade}학년 ${cClass}반` : (prev ? prev.target : ''));
+      periodMap.set(pKey, {
+        _periodNum: pNum || (prev ? prev._periodNum : 0),
+        _grade: cGrade || (prev ? prev._grade : ''),
+        _classNo: cClass || (prev ? prev._classNo : ''),
+        period: `${pNum || c.period}교시`,
+        target: targetStr,
+        subject: resolvedSubject,
+        changed: true
+      });
+    });
+
+    return Array.from(periodMap.values())
+      .sort((a, b) => Number(a._periodNum || 0) - Number(b._periodNum || 0))
+      .map(({ _periodNum, _grade, _classNo, ...item }) => item);
+  }
 
   const todayBase = baseArr.filter(tb => {
     if (!tb || typeof tb !== 'object') return false;
@@ -992,11 +1175,7 @@ function mergeTimetableForDay(timetableBase, timetableChanges, options = {}) {
     return !d || d.startsWith(dayChar);
   });
 
-  const todayChanges = changesArr.filter(c => {
-    if (!c || typeof c !== 'object') return false;
-    const cDate = String(c.date || c.target_date || '').trim();
-    return !cDate || cDate === targetDate;
-  });
+  const todayChanges = todayChangesAll;
 
   if (mode === 'class') {
     const classBase = (g && cNo)
@@ -1126,14 +1305,19 @@ function mergeTimetableForDay(timetableBase, timetableChanges, options = {}) {
     .map(({ _periodNum, _grade, _classNo, ...item }) => item);
 }
 
-function buildHomeroomSchedule(timetableBase, timetableChanges, grade, classNo) {
+function buildHomeroomSchedule(timetableBase, timetableChanges, grade, classNo, options = {}) {
   const g = String(grade || '').trim();
   const cNo = String(classNo || '').trim();
-  if (!g || !cNo || (!Array.isArray(timetableBase) && !Array.isArray(timetableChanges))) return [];
+  const snapshots = Array.isArray(options.snapshots)
+    ? options.snapshots
+    : (typeof mockData !== 'undefined' && Array.isArray(mockData.rawTimetableSnapshots) ? mockData.rawTimetableSnapshots : []);
+  if (!g || !cNo || (!Array.isArray(timetableBase) && !Array.isArray(timetableChanges) && snapshots.length === 0)) return [];
   return mergeTimetableForDay(timetableBase, timetableChanges, {
     mode: 'class',
     grade: g,
-    classNo: cNo
+    classNo: cNo,
+    snapshots,
+    targetDate: options.targetDate
   });
 }
 
@@ -1289,13 +1473,15 @@ function hydrateMockDataFromBundle(bundle) {
       .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   }
 
-  // 6. 시간표 (오늘 요일 필터 + period 기준 Union 병합)
-  if (Array.isArray(bundle.timetable_base) || Array.isArray(bundle.timetable_changes)) {
+  // 6. 시간표 (날짜별 스냅샷 1순위 + 수동 변동 오버레이, 스냅샷 미존재 날짜만 시간표_기본 폴백)
+  if (Array.isArray(bundle.timetable_snapshots) || Array.isArray(bundle.timetable_base) || Array.isArray(bundle.timetable_changes)) {
     const todayStr = _getLocalTodayStr();
     const dayChar = _getKoreanTodayDayChar();
+    const rawSnapshots = Array.isArray(bundle.timetable_snapshots) ? bundle.timetable_snapshots : [];
     const rawBase = Array.isArray(bundle.timetable_base) ? bundle.timetable_base : [];
     const changes = Array.isArray(bundle.timetable_changes) ? bundle.timetable_changes : [];
     const cu = mockData.currentUser;
+    mockData.rawTimetableSnapshots = rawSnapshots;
     mockData.rawTimetableBase = rawBase;
     mockData.rawTimetableChanges = changes;
 
@@ -1309,20 +1495,25 @@ function hydrateMockDataFromBundle(bundle) {
       grade: cuGrade,
       classNo: cuClass,
       dayChar,
-      targetDate: todayStr
+      targetDate: todayStr,
+      snapshots: rawSnapshots
     });
 
-    // 교사 본인 시간표 구성 (entry_type === 'teacher' 우선, '유우석' vs '유우석T' 정규화, 변동 Union 병합)
+    // 교사 본인 시간표 구성 (스냅샷 1순위 + 수동 변동 오버레이, 폴백 시 기존 시간표_기본 병합)
     mockData.teacherSchedule = mergeTimetableForDay(rawBase, changes, {
       mode: 'teacher',
       teacherName: cu.teacherName || '',
       dayChar,
-      targetDate: todayStr
+      targetDate: todayStr,
+      snapshots: rawSnapshots
     });
 
     // 담임 학급 당일 시간표 구성 (교사 로그인 시 grade + class_no 기준)
     if (cu.role === 'teacher' || state.activeRole === 'teacher') {
-      mockData.homeroomSchedule = buildHomeroomSchedule(rawBase, changes, cu.grade, cu.classNo);
+      mockData.homeroomSchedule = buildHomeroomSchedule(rawBase, changes, cu.grade, cu.classNo, {
+        snapshots: rawSnapshots,
+        targetDate: todayStr
+      });
     } else {
       mockData.homeroomSchedule = [];
     }

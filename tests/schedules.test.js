@@ -292,3 +292,180 @@ test('mergeTimetableForDay preserves empty string changed_subject ("") as delete
   assert.equal(teacherMerged[0].subject, '');
   assert.equal(teacherMerged[0].target, '');
 });
+
+test('mergeTimetableForDay uses date snapshot as Single Source of Truth, ignores legacy comcigan changes, and overlays manual changes', () => {
+  const baseRows = [
+    { remote_id: 'tb_c_1_5_월_1', entry_type: 'class', grade: '1', class_no: '5', day_of_week: '월', period: '1', subject: '국어', teacher_name: '김교사' },
+    { remote_id: 'tb_c_1_5_월_7', entry_type: 'class', grade: '1', class_no: '5', day_of_week: '월', period: '7', subject: '옛보강', teacher_name: '유우석' },
+    { remote_id: 'tb_t_유우석_월_1', entry_type: 'teacher', grade: '1', class_no: '5', day_of_week: '월', period: '1', subject: '정보', teacher_name: '유우석' },
+    { remote_id: 'tb_t_유우석_월_7', entry_type: 'teacher', grade: '1', class_no: '5', day_of_week: '월', period: '7', subject: '옛보강', teacher_name: '유우석' },
+  ];
+  const changeRows = [
+    // 과거 컴시간 찌꺼기 문서 -> 스냅샷이 존재하는 날짜에서는 무시되어야 함
+    { remote_id: 'tc_20261123_1_5_7', date: '2026-11-23', grade: '1', class_no: '5', period: '7', changed_subject: '찌꺼기보강', changed_teacher: '유우석', source: 'comcigan' },
+    // 교사 수동 변동 -> 스냅샷 위에 마지막으로 오버레이되어야 함
+    { remote_id: 'manual_20261123_1_5_2', date: '2026-11-23', grade: '1', class_no: '5', period: '2', original_subject: '수학', changed_subject: '수동자습', changed_teacher: '박교사', reason: '교사 수동 입력', source: 'manual' },
+  ];
+  const snapshots = [
+    {
+      remote_id: 'snap_8140246_20261123',
+      date: '2026-11-23',
+      classes: {
+        '1-5': {
+          '1': { period: 1, subject: '', teacher_name: '', is_changed: true }, // 1교시 수업 삭제/공강
+          '2': { period: 2, subject: '수학', teacher_name: '이교사', is_changed: false },
+          '7': { period: 7, subject: '', teacher_name: '', is_changed: false }, // 7교시 보강 취소(빈 슬롯)
+        },
+      },
+      teachers: {
+        '유우석': {
+          '1': { period: 1, grade: '', class_no: '', subject: '', teacher_name: '유우석', is_changed: true },
+          '2': { period: 2, grade: '1', class_no: '3', subject: '정보', teacher_name: '유우석', is_changed: false },
+          '7': { period: 7, grade: '', class_no: '', subject: '', teacher_name: '유우석', is_changed: false },
+        },
+      },
+    },
+  ];
+
+  // 1) 학급 시간표: 1교시 공강([변경]), 2교시 수동자습([변경]), 7교시 취소된 보강은 제거됨
+  const classRes = mergeTimetableForDay(baseRows, changeRows, {
+    mode: 'class',
+    grade: '1',
+    classNo: '5',
+    dayChar: '월',
+    targetDate: '2026-11-23',
+    snapshots,
+  });
+  assert.equal(classRes.length, 2);
+  const p1 = classRes.find((r) => Number(r.period) === 1);
+  assert.equal(p1.subject, '');
+  assert.equal(p1.isChanged, true);
+  const p2 = classRes.find((r) => Number(r.period) === 2);
+  assert.equal(p2.subject, '수동자습');
+  assert.equal(p2.teacher, '박교사');
+  assert.equal(p2.isChanged, true);
+  assert.equal(classRes.some((r) => Number(r.period) === 7), false);
+
+  // 2) 교사 시간표: 1교시 공강([변경]), 2교시 정보, 7교시 취소된 보강은 제거됨
+  const teacherRes = mergeTimetableForDay(baseRows, changeRows, {
+    mode: 'teacher',
+    teacherName: '유우석',
+    dayChar: '월',
+    targetDate: '2026-11-23',
+    snapshots,
+  });
+  assert.equal(teacherRes.length, 2);
+  assert.equal(teacherRes[0].period, '1교시');
+  assert.equal(teacherRes[0].subject, '');
+  assert.equal(teacherRes[0].changed, true);
+  assert.equal(teacherRes[1].period, '2교시');
+  assert.equal(teacherRes[1].subject, '정보');
+  assert.equal(teacherRes[1].changed, false);
+
+  // 3) 스냅샷이 없는 날짜는 기존 시간표_기본 폴백 동작
+  const fallbackRes = mergeTimetableForDay(baseRows, [], {
+    mode: 'class',
+    grade: '1',
+    classNo: '5',
+    dayChar: '월',
+    targetDate: '2026-11-24',
+    snapshots,
+  });
+  assert.equal(fallbackRes.length, 2);
+  assert.equal(fallbackRes[0].subject, '국어');
+});
+
+test('sync_timetable_snapshots overwrites snapshot docs and cleans up legacy comcigan changes while preserving manual changes', async () => {
+  const { _testHelpers } = require('../api/firestore');
+  const { _handleDesktopApiAction } = _testHelpers;
+  const store = new Map();
+  const makeCol = (colName) => {
+    if (!store.has(colName)) store.set(colName, new Map());
+    return store.get(colName);
+  };
+  makeCol('시간표_변동').set('tc_20261123_1_5_7', {
+    remote_id: 'tc_20261123_1_5_7',
+    date: '2026-11-23',
+    school_code: '8140246',
+    source: 'comcigan',
+    changed_subject: '찌꺼기',
+  });
+  makeCol('시간표_변동').set('manual_20261123_1_5_2', {
+    remote_id: 'manual_20261123_1_5_2',
+    date: '2026-11-23',
+    school_code: '8140246',
+    source: 'manual',
+    changed_subject: '수동자습',
+  });
+  makeCol('시간표_스냅샷').set('snap_8140246_20261123', {
+    remote_id: 'snap_8140246_20261123',
+    date: '2026-11-23',
+    school_code: '8140246',
+    stale_field: 'should_be_overwritten',
+  });
+
+  const db = {
+    collection(name) {
+      const col = makeCol(name);
+      return {
+        doc: (id) => ({ _col: name, _id: id }),
+        where(field, op, val) {
+          return {
+            async get() {
+              const docs = [];
+              for (const [id, data] of col.entries()) {
+                if (op === '==' && data[field] === val) {
+                  docs.push({ id, data: () => ({ ...data }) });
+                }
+              }
+              return { empty: docs.length === 0, forEach: (fn) => docs.forEach(fn) };
+            },
+          };
+        },
+      };
+    },
+    batch() {
+      const ops = [];
+      return {
+        set(ref, data) { ops.push({ type: 'set', ref, data }); },
+        delete(ref) { ops.push({ type: 'delete', ref }); },
+        async commit() {
+          for (const op of ops) {
+            const col = makeCol(op.ref._col);
+            if (op.type === 'set') col.set(op.ref._id, { ...op.data });
+            else if (op.type === 'delete') col.delete(op.ref._id);
+          }
+        },
+      };
+    },
+  };
+
+  const res = await _handleDesktopApiAction(
+    db,
+    'sync_timetable_snapshots',
+    {
+      school_code: '8140246',
+      snapshots: [
+        {
+          remote_id: 'snap_8140246_20261123',
+          date: '2026-11-23',
+          school_code: '8140246',
+          classes: { '1-5': { '1': { period: 1, subject: '', teacher_name: '', is_changed: true } } },
+          teachers: {},
+        },
+      ],
+    },
+    { schoolCode: '8140246', schoolName: '천안오성고' }
+  );
+
+  assert.equal(res.status, 200);
+  assert.equal(res.json.ok, true);
+  assert.equal(res.json.snapshots_written, 1);
+  assert.equal(res.json.change_deleted, 1);
+
+  const savedSnap = makeCol('시간표_스냅샷').get('snap_8140246_20261123');
+  assert.equal(savedSnap.stale_field, undefined);
+  assert.equal(savedSnap.classes['1-5']['1'].is_changed, true);
+  assert.equal(makeCol('시간표_변동').has('tc_20261123_1_5_7'), false);
+  assert.equal(makeCol('시간표_변동').has('manual_20261123_1_5_2'), true);
+});

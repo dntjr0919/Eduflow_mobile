@@ -301,7 +301,8 @@ function renderTeacherHome() {
 
   if (
     typeof mergeTimetableForDay === 'function' &&
-    ((Array.isArray(mockData.rawTimetableBase) && mockData.rawTimetableBase.length > 0) ||
+    ((Array.isArray(mockData.rawTimetableSnapshots) && mockData.rawTimetableSnapshots.length > 0) ||
+      (Array.isArray(mockData.rawTimetableBase) && mockData.rawTimetableBase.length > 0) ||
       (Array.isArray(mockData.rawTimetableChanges) && mockData.rawTimetableChanges.length > 0))
   ) {
     mockData.teacherSchedule = mergeTimetableForDay(
@@ -311,7 +312,8 @@ function renderTeacherHome() {
         mode: 'teacher',
         teacherName: cu.teacherName || '',
         dayChar,
-        targetDate
+        targetDate,
+        snapshots: mockData.rawTimetableSnapshots || []
       }
     );
     if (cu.grade && cu.classNo) {
@@ -323,7 +325,8 @@ function renderTeacherHome() {
           grade: cu.grade,
           classNo: cu.classNo,
           dayChar,
-          targetDate
+          targetDate,
+          snapshots: mockData.rawTimetableSnapshots || []
         }
       );
     }
@@ -353,8 +356,8 @@ function renderTeacherHome() {
           <span class="text-[10px] font-semibold ${s.changed ? 'text-amber-700' : 'text-slate-400'}">${s.period}</span>
           ${s.changed ? `<span class="text-[9px] font-bold px-1 py-0.2 rounded bg-amber-500 text-white">변경</span>` : ''}
         </div>
-        <p class="text-xs font-bold text-slate-800 mt-0.5">${s.target}</p>
-        <p class="text-[10px] ${s.changed ? 'text-amber-800 font-bold' : 'text-slate-500'}">${s.subject}</p>
+        <p class="text-xs font-bold text-slate-800 mt-0.5">${s.target || (s.subject ? '-' : '공강')}</p>
+        <p class="text-[10px] ${s.changed ? 'text-amber-800 font-bold' : 'text-slate-500'}">${s.subject || '수업 없음'}</p>
       </button>
     `).join('');
   }
@@ -522,19 +525,20 @@ async function saveTeacherProfile(e) {
       mockData.homeroomSchedule = mergeTimetableForDay(
         mockData.rawTimetableBase || [],
         mockData.rawTimetableChanges || [],
-        { mode: 'class', grade: payload.grade, classNo: payload.class_no }
+        { mode: 'class', grade: payload.grade, classNo: payload.class_no, snapshots: mockData.rawTimetableSnapshots || [] }
       );
       mockData.teacherSchedule = mergeTimetableForDay(
         mockData.rawTimetableBase || [],
         mockData.rawTimetableChanges || [],
-        { mode: 'teacher', teacherName: payload.name }
+        { mode: 'teacher', teacherName: payload.name, snapshots: mockData.rawTimetableSnapshots || [] }
       );
     } else if (typeof buildHomeroomSchedule === 'function') {
       mockData.homeroomSchedule = buildHomeroomSchedule(
         mockData.rawTimetableBase || [],
         mockData.rawTimetableChanges || [],
         payload.grade,
-        payload.class_no
+        payload.class_no,
+        { snapshots: mockData.rawTimetableSnapshots || [] }
       );
     }
 
@@ -3561,7 +3565,7 @@ function openTeacherLessonModal(scheduleIndex) {
   _lessonModalState.subject = subject;
   _lessonModalState.classLabel = classLabel;
 
-  document.getElementById('teacherLessonTitle').innerText = `${item.period} · ${classLabel} · ${subject}`;
+  document.getElementById('teacherLessonTitle').innerText = `${item.period} · ${classLabel || '공강'} · ${subject || '수업 없음'}`;
   document.getElementById('teacherLessonSub').innerText = `${todayStr} 수업 출결 및 진도 관리`;
 
   // 1) 명렬표 자동 매칭 또는 localStorage 기억 매핑

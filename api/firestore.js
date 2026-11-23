@@ -790,7 +790,8 @@ async function _handleGetMobileBundle(db, params) {
     lessonProgressRaw,
     pcAgentStatusDoc,
     remoteTasksRaw,
-    schedulesRaw
+    schedulesRaw,
+    timetableSnapshotsRaw
   ] = await Promise.all([
     _getCachedOrFetch(teacherCacheKey, forceRefresh, () => (
       role === 'teacher' && userId
@@ -864,6 +865,7 @@ async function _handleGetMobileBundle(db, params) {
       ? db.collection('Tasks').where('teacher_id', '==', userId).limit(100).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
     db.collection('Schedules').limit(150).get().then(_snapToRows).catch(() => []),
+    db.collection('시간표_스냅샷').where('date', '==', todayStr).get().then(_snapToRows).catch(() => []),
   ]);
 
   const effectiveTeacherName = normTeacherParam || (role === 'teacher' && teachersRaw[0] ? _normalizeTeacherName(teachersRaw[0].name || teachersRaw[0].teacher_id || '') : '');
@@ -940,6 +942,17 @@ async function _handleGetMobileBundle(db, params) {
     .map(_withNormalizedNoticeAttachment);
   const noticeIdSet = new Set(filteredNotices.map((n) => String(n.remote_id || '')).filter(Boolean));
 
+  const matchedSnapshots = (timetableSnapshotsRaw || []).filter((d) => _matchesTenant(d, ttTeacherTenant));
+  const snapshotDateSet = new Set(
+    matchedSnapshots.map((s) => String((s && s.date) || '').trim().slice(0, 10)).filter(Boolean)
+  );
+  const _isComciganChangeDoc = (c) => {
+    if (!c || typeof c !== 'object') return false;
+    const src = String(c.source || '').trim().toLowerCase();
+    const rid = String(c.remote_id || '').trim();
+    return src === 'comcigan' || src === 'comcigan_playwright' || rid.startsWith('tc_');
+  };
+
   const bundle = {
     ok: true,
     backend: 'firestore',
@@ -962,7 +975,14 @@ async function _handleGetMobileBundle(db, params) {
       if (studentIdSet.size > 0 && r.student_id && !studentIdSet.has(String(r.student_id))) return false;
       return true;
     }),
-    timetable_changes: timetableChangesRows.filter(_matchesTimetableRow),
+    timetable_snapshots: matchedSnapshots,
+    timetable_changes: timetableChangesRows
+      .filter(_matchesTimetableRow)
+      .filter((c) => {
+        const cDate = String((c && (c.date || c.target_date)) || '').trim().slice(0, 10);
+        if (snapshotDateSet.has(cDate) && _isComciganChangeDoc(c)) return false;
+        return true;
+      }),
     chat_messages: chatRows.filter((d) => _matchesTenant(d, tenant)),
     notifications: notificationsRaw.filter((d) => _matchesTenant(d, tenant)),
     budget: budgetRows.filter((d) => _matchesTenant(d, tenant)),
@@ -2537,18 +2557,96 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     const sc = String(params.school_code || auth.schoolCode || '').trim();
     const cc = String(params.comcigan_school_code || auth.comciganSchoolCode || '').trim();
     const sn = String(params.school_name || auth.schoolName || '').trim();
-    const colRef = db.collection('시간표_기본');
-    for (const [field, val] of [['school_code', sc], ['comcigan_school_code', cc], ['school_name', sn]]) {
-      if (val) {
-        const snap = await colRef.where(field, '==', val).limit(1).get();
-        if (!snap.empty) return { status: 200, json: { ok: true, exists: true } };
+    const requestedCol = String(params.collection || '').trim();
+    const colsToCheck = requestedCol === '시간표_스냅샷'
+      ? ['시간표_스냅샷']
+      : (requestedCol === '시간표_기본' ? ['시간표_기본'] : ['시간표_스냅샷', '시간표_기본']);
+    for (const colName of colsToCheck) {
+      const colRef = db.collection(colName);
+      for (const [field, val] of [['school_code', sc], ['comcigan_school_code', cc], ['school_name', sn]]) {
+        if (val) {
+          const snap = await colRef.where(field, '==', val).limit(1).get();
+          if (!snap.empty) return { status: 200, json: { ok: true, exists: true, collection: colName } };
+        }
+      }
+      if (!sc && !cc && !sn) {
+        const snap = await colRef.limit(1).get();
+        if (!snap.empty) return { status: 200, json: { ok: true, exists: true, collection: colName } };
       }
     }
-    if (!sc && !cc && !sn) {
-      const snap = await colRef.limit(1).get();
-      return { status: 200, json: { ok: true, exists: !snap.empty } };
-    }
     return { status: 200, json: { ok: true, exists: false } };
+  }
+
+  if (action === 'sync_timetable_snapshots') {
+    const snapshots = Array.isArray(params.snapshots) ? params.snapshots : [];
+    const cleanupComciganChanges = params.cleanup_comcigan_changes === undefined ? true : _toBool(params.cleanup_comcigan_changes);
+    const cleanupDates = new Set(
+      (Array.isArray(params.cleanup_dates) ? params.cleanup_dates : snapshots.map((s) => s && s.date))
+        .map((d) => String(d || '').trim().slice(0, 10))
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    );
+    let snapshotsWritten = 0;
+    const now = _nowStr();
+    for (let i = 0; i < snapshots.length; i += 200) {
+      const slice = snapshots.slice(i, i + 200);
+      const batch = db.batch();
+      slice.forEach((rawSnap) => {
+        if (!rawSnap || typeof rawSnap !== 'object') return;
+        const rid = String(rawSnap.remote_id || '').trim().replace(/\//g, '_');
+        if (!rid) return;
+        const docData = {
+          ...rawSnap,
+          remote_id: rid,
+          updated_at: rawSnap.updated_at || now,
+        };
+        if (scopeDefaults.schoolCode && !docData.school_code) docData.school_code = scopeDefaults.schoolCode;
+        if (scopeDefaults.comciganSchoolCode && !docData.comcigan_school_code) docData.comcigan_school_code = scopeDefaults.comciganSchoolCode;
+        if (scopeDefaults.schoolName && !docData.school_name) docData.school_name = scopeDefaults.schoolName;
+        // 날짜별 최종 스냅샷 통째 교체: merge 없이 Set/Overwrite
+        batch.set(db.collection('시간표_스냅샷').doc(rid), docData);
+        snapshotsWritten += 1;
+      });
+      await batch.commit();
+    }
+
+    let changeDeleted = 0;
+    if (cleanupComciganChanges && cleanupDates.size > 0) {
+      const sc = String(params.school_code || auth.schoolCode || '').trim();
+      const cc = String(params.comcigan_school_code || '').trim();
+      const sn = String(params.school_name || auth.schoolName || '').trim();
+      let existingSnap = null;
+      if (sc) {
+        existingSnap = await db.collection('시간표_변동').where('school_code', '==', sc).get().catch(() => null);
+      } else if (cc) {
+        existingSnap = await db.collection('시간표_변동').where('comcigan_school_code', '==', cc).get().catch(() => null);
+      } else if (sn) {
+        existingSnap = await db.collection('시간표_변동').where('school_name', '==', sn).get().catch(() => null);
+      }
+      if (existingSnap && !existingSnap.empty) {
+        const staleIds = [];
+        existingSnap.forEach((docSnap) => {
+          const rid = String(docSnap.id || '').trim();
+          if (!rid) return;
+          const data = typeof docSnap.data === 'function' ? (docSnap.data() || {}) : {};
+          const src = String(data.source || '').trim().toLowerCase();
+          if (src !== 'comcigan' && src !== 'comcigan_playwright' && !rid.startsWith('tc_')) return;
+          const docDate = String(data.date || data.target_date || '').trim().slice(0, 10);
+          if (!docDate || cleanupDates.has(docDate)) staleIds.push(rid);
+        });
+        for (let i = 0; i < staleIds.length; i += 400) {
+          const batch = db.batch();
+          staleIds.slice(i, i + 400).forEach((rid) => {
+            batch.delete(db.collection('시간표_변동').doc(rid));
+            changeDeleted += 1;
+          });
+          await batch.commit();
+        }
+      }
+    }
+    return {
+      status: 200,
+      json: { ok: true, snapshots_written: snapshotsWritten, change_deleted: changeDeleted },
+    };
   }
 
   if (action === 'sync_timetables_batch') {
