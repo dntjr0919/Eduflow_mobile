@@ -278,23 +278,41 @@ async function _queryClassScoped(db, collectionName, gradeNum, classNum) {
   return _snapToRows(snap);
 }
 
+function _validateStringInput(val, { maxLen = 2000, required = false, label = '입력값' } = {}) {
+  if (val !== undefined && val !== null && typeof val === 'object') {
+    return { ok: false, error: `${label}의 형식이 올바르지 않습니다.` };
+  }
+  const s = String(val ?? '').trim();
+  if (required && !s) {
+    return { ok: false, error: `${label}이(가) 필요합니다.` };
+  }
+  if (s.length > maxLen) {
+    return { ok: false, error: `${label}은(는) ${maxLen}자 이내로 입력해 주세요.` };
+  }
+  return { ok: true, value: s };
+}
+
 function _parsePayload(req) {
   let raw = {};
   if (req.method === 'GET') {
-    raw = req.query || {};
+    raw = (req.query && typeof req.query === 'object') ? req.query : {};
   } else if (typeof req.body === 'string') {
+    if (req.body.length > 10 * 1024 * 1024) {
+      return {};
+    }
     try {
-      raw = req.body ? JSON.parse(req.body) : {};
+      const parsed = req.body ? JSON.parse(req.body) : {};
+      raw = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
     } catch (_) {
       raw = {};
     }
-  } else if (req.body && typeof req.body === 'object') {
+  } else if (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) {
     raw = { ...req.body };
   }
-  if (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) {
+  if (raw && raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) {
     return { ...raw, ...raw.data };
   }
-  return raw;
+  return raw || {};
 }
 
 function _matchesTenant(doc, { schoolCode, comciganSchoolCode, schoolName, gradeNum, classNum }) {
@@ -1140,9 +1158,12 @@ module.exports = async function handler(req, res) {
   }
 
   const params = _parsePayload(req);
+  if (params.action !== undefined && typeof params.action !== 'string') {
+    return res.status(400).json({ ok: false, error: 'action 파라미터 형식이 올바르지 않습니다.' });
+  }
   const action = String(params.action || '').trim();
-  if (!action) {
-    return res.status(400).json({ ok: false, error: 'action 파라미터가 필요합니다.' });
+  if (!action || action.length > 100) {
+    return res.status(400).json({ ok: false, error: '유효한 action 파라미터가 필요합니다.' });
   }
 
   try {
@@ -1938,6 +1959,17 @@ module.exports = async function handler(req, res) {
           return res.status(403).json({ ok: false, error: '담당 학급 학생에게만 1:1 상담 메시지를 보낼 수 있습니다.' });
         }
       }
+      const msgCheck = _validateStringInput(params.message, { maxLen: 4000, required: true, label: '상담 메시지(message)' });
+      if (!msgCheck.ok) {
+        return res.status(400).json({ ok: false, error: msgCheck.error });
+      }
+      const senderNameCheck = _validateStringInput(
+        params.sender_name || (teacherAuth && teacherAuth.teacherDoc && teacherAuth.teacherDoc.name) || '',
+        { maxLen: 100, required: false, label: '발신자 이름' }
+      );
+      if (!senderNameCheck.ok) {
+        return res.status(400).json({ ok: false, error: senderNameCheck.error });
+      }
       const rid = String(params.remote_id || `chat_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
       const nowStr = _nowStr();
       const chatDoc = {
@@ -1949,8 +1981,8 @@ module.exports = async function handler(req, res) {
         school_code: String(params.school_code || (teacherAuth ? teacherAuth.schoolCode : '') || ''),
         school_name: String(params.school_name || (teacherAuth ? teacherAuth.schoolName : '') || ''),
         sender_role: senderRole || 'student',
-        sender_name: String(params.sender_name || (teacherAuth && teacherAuth.teacherDoc && teacherAuth.teacherDoc.name) || ''),
-        message: String(params.message || ''),
+        sender_name: senderNameCheck.value,
+        message: msgCheck.value,
         is_read: false,
         created_at: nowStr,
         updated_at: nowStr
@@ -2032,14 +2064,20 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'send_notification') {
+      const titleCheck = _validateStringInput(params.title || 'EduFlow 알림', { maxLen: 200, required: true, label: '알림 제목(title)' });
+      if (!titleCheck.ok) return res.status(400).json({ ok: false, error: titleCheck.error });
+      const msgCheck = _validateStringInput(params.message || '', { maxLen: 2000, required: false, label: '알림 내용(message)' });
+      if (!msgCheck.ok) return res.status(400).json({ ok: false, error: msgCheck.error });
+      const senderCheck = _validateStringInput(params.sender || '', { maxLen: 100, required: false, label: '발신자(sender)' });
+      if (!senderCheck.ok) return res.status(400).json({ ok: false, error: senderCheck.error });
       const rid = String(params.remote_id || `noti_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
       await db.collection('Notifications').doc(rid).set(
         {
           remote_id: rid,
-          title: String(params.title || 'EduFlow 알림'),
-          message: String(params.message || ''),
+          title: titleCheck.value,
+          message: msgCheck.value,
           channel: String(params.channel || 'mobile_pwa'),
-          sender: String(params.sender || ''),
+          sender: senderCheck.value,
           grade: _toIntOrNull(params.grade),
           class_no: _toIntOrNull(params.class_no),
           student_id: String(params.student_id || ''),
@@ -3666,10 +3704,22 @@ async function _handleDesktopApiAction(db, action, params, auth) {
   }
 
   if (action === 'upsert_schedule') {
-    const title = String(params.title || '').trim();
+    const titleCheck = _validateStringInput(params.title, { maxLen: 200, required: true, label: '일정명(title)' });
+    if (!titleCheck.ok) {
+      return { status: 400, json: { ok: false, error: titleCheck.error } };
+    }
+    const title = titleCheck.value;
     const startDate = String(params.start_date || params.date || '').trim();
-    if (!title || !startDate) {
+    if (!startDate) {
       return { status: 400, json: { ok: false, error: '일정명(title)과 시작일(start_date)이 필요합니다.' } };
+    }
+    const memoCheck = _validateStringInput(params.memo || params.description || '', { maxLen: 2000, required: false, label: '일정 메모(memo)' });
+    if (!memoCheck.ok) {
+      return { status: 400, json: { ok: false, error: memoCheck.error } };
+    }
+    const catCheck = _validateStringInput(params.category || '', { maxLen: 50, required: false, label: '일정 구분(category)' });
+    if (!catCheck.ok) {
+      return { status: 400, json: { ok: false, error: catCheck.error } };
     }
     const rid = String(params.remote_id || `sched_${auth.teacherId}_${Date.now()}`).replace(/[\\/:*?"<>|]/g, '_');
     const docRef = db.collection('Schedules').doc(rid);
@@ -4192,6 +4242,19 @@ async function _upsertBoardNotice(db, params, auth = null) {
   if (!existingSnap.exists && !resolvedTitle) {
     return { status: 400, json: { ok: false, error: '공지 제목(title)이 필요합니다.' } };
   }
+  if (resolvedTitle.length > 200) {
+    return { status: 400, json: { ok: false, error: '공지 제목(title)은 200자 이내로 입력해 주세요.' } };
+  }
+  if (resolvedSummary.length > 500) {
+    return { status: 400, json: { ok: false, error: '공지 요약(summary)은 500자 이내로 입력해 주세요.' } };
+  }
+  if (resolvedContent.length > 20000) {
+    return { status: 400, json: { ok: false, error: '공지 본문(content)은 20000자 이내로 입력해 주세요.' } };
+  }
+  const rawSourceUrl = params.source_url !== undefined ? String(params.source_url || '').trim() : String(existing.source_url || '').trim();
+  if (rawSourceUrl && !/^https?:\/\//i.test(rawSourceUrl)) {
+    return { status: 400, json: { ok: false, error: '원문 링크(source_url)는 http:// 또는 https:// 주소만 허용됩니다.' } };
+  }
 
   const rawSource = (params.source_type !== undefined || params.source !== undefined)
     ? (params.source_type !== undefined ? params.source_type : params.source)
@@ -4434,6 +4497,8 @@ function _buildNoticeReplyLedger(students, notice, replies) {
 }
 
 module.exports._testHelpers = {
+  _parsePayload,
+  _validateStringInput,
   _handleGetMobileBundle,
   _handleLogin,
   _handleUpdateMyPhone,

@@ -469,11 +469,32 @@ async function deleteNoticeReplyRow(noticeId, studentId, replyRemoteId, studentN
   }
 }
 
+function _safeAdminUrl(rawUrl, allowDataImage = false) {
+  const s = String(rawUrl || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  if (allowDataImage && /^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(s)) return s;
+  return '';
+}
+
 function openSignatureModal(signer, timestamp, url) {
+  const safeImgUrl = _safeAdminUrl(url, true);
+  const safeLinkUrl = _safeAdminUrl(url, false);
   document.getElementById('sig-signer').textContent = `${signer} 서명`;
   document.getElementById('sig-timestamp').textContent = timestamp || '-';
-  document.getElementById('sig-image').src = url;
-  document.getElementById('sig-open-link').href = url;
+  if (safeImgUrl) {
+    document.getElementById('sig-image').src = safeImgUrl;
+  } else {
+    document.getElementById('sig-image').removeAttribute('src');
+  }
+  const openLinkEl = document.getElementById('sig-open-link');
+  if (safeLinkUrl) {
+    openLinkEl.href = safeLinkUrl;
+    openLinkEl.classList.remove('hidden');
+  } else {
+    openLinkEl.removeAttribute('href');
+    openLinkEl.classList.add('hidden');
+  }
   document.getElementById('signature-modal').classList.remove('hidden');
 }
 
@@ -1175,8 +1196,9 @@ function renderLedgerTab() {
         const type = String(row.type || row.tx_type || '').trim();
         const isInc = type.includes('수입') || type.includes('입금') || type.toLowerCase() === 'income' || type.toLowerCase() === 'in';
         const storeCard = [row.store, row.card || row.payment_method, row.memo].filter(Boolean).join(' · ') || '-';
-        const receiptHtml = row.receipt_url
-          ? `<a href="${escapeHtml(row.receipt_url)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:underline font-semibold">보기</a>`
+        const safeReceiptUrl = _safeAdminUrl(row.receipt_url, false);
+        const receiptHtml = safeReceiptUrl
+          ? `<a href="${escapeHtml(safeReceiptUrl)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:underline font-semibold">보기</a>`
           : '<span class="text-slate-300">-</span>';
         return `
           <tr class="hover:bg-slate-50">

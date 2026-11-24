@@ -3,6 +3,25 @@
    [홈], [출결·서류], [가정통신·회비], [1:1 상담채팅]
    ========================================================= */
 
+function _escStudentHtml(val) {
+  if (typeof escapeHtml === 'function') return escapeHtml(val);
+  return String(val ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function _safeStudentImageUrl(rawUrl) {
+  if (typeof safeImageUrl === 'function') return safeImageUrl(rawUrl);
+  const s = String(rawUrl || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(s)) return s;
+  return '';
+}
+
 function switchBottomTab(tabName) {
   const studentTabs = ['home', 'attendance', 'letters', 'counseling'];
   const teacherTabs = ['home', 'documents', 'circulars', 'remote', 'chat'];
@@ -57,6 +76,7 @@ function renderUrgentDocuments() {
   }
 
   container.innerHTML = myDocs.map(doc => {
+    const safeDocId = _escStudentHtml(doc.id);
     if (doc.status === 'submitted') {
       return `
         <div class="bg-emerald-50/90 border border-emerald-300/80 rounded-2xl p-3.5 transition-all duration-300 shadow-sm">
@@ -66,11 +86,11 @@ function renderUrgentDocuments() {
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>
               </div>
               <div>
-                <h4 class="text-xs font-bold text-emerald-900">${doc.title} (${doc.docName})</h4>
+                <h4 class="text-xs font-bold text-emerald-900">${_escStudentHtml(doc.title)} (${_escStudentHtml(doc.docName)})</h4>
                 <p class="text-[10px] text-emerald-700 font-medium">제출 확인 완료 (교사 나이스 검수 대기 중)</p>
               </div>
             </div>
-            <span class="text-[10px] font-semibold text-emerald-700 bg-white/80 border border-emerald-200 px-2 py-0.5 rounded-full">${doc.submittedAt || '방금 전 접수'}</span>
+            <span class="text-[10px] font-semibold text-emerald-700 bg-white/80 border border-emerald-200 px-2 py-0.5 rounded-full">${_escStudentHtml(doc.submittedAt || '방금 전 접수')}</span>
           </div>
         </div>
       `;
@@ -79,13 +99,13 @@ function renderUrgentDocuments() {
     const borderColor = isUrgent ? 'border-urgent-500' : 'border-alert-500';
     const bgBadge = isUrgent ? 'bg-urgent-500 text-white' : 'bg-alert-500 text-white';
     return `
-      <div id="doc-card-${doc.id}" class="bg-white border-2 ${borderColor} rounded-2xl p-4 shadow-sm transition-all relative overflow-hidden">
+      <div id="doc-card-${safeDocId}" class="bg-white border-2 ${borderColor} rounded-2xl p-4 shadow-sm transition-all relative overflow-hidden">
         <div class="flex items-center justify-between mb-1.5">
-          <span class="text-[11px] font-bold px-2 py-0.5 rounded-md ${bgBadge} shadow-xs">${doc.dDayText}</span>
-          <span class="text-[11px] font-medium text-slate-400">마감: ${doc.deadline}</span>
+          <span class="text-[11px] font-bold px-2 py-0.5 rounded-md ${bgBadge} shadow-xs">${_escStudentHtml(doc.dDayText)}</span>
+          <span class="text-[11px] font-medium text-slate-400">마감: ${_escStudentHtml(doc.deadline)}</span>
         </div>
-        <h4 class="text-xs font-bold text-slate-900 mt-1">${doc.title} · ${doc.docName}</h4>
-        <p class="text-[11px] text-slate-600 mt-0.5 leading-relaxed">${doc.description}</p>
+        <h4 class="text-xs font-bold text-slate-900 mt-1">${_escStudentHtml(doc.title)} · ${_escStudentHtml(doc.docName)}</h4>
+        <p class="text-[11px] text-slate-600 mt-0.5 leading-relaxed">${_escStudentHtml(doc.description)}</p>
         <div class="mt-3 pt-3 border-t border-slate-100">
           <p class="text-[10px] text-slate-500 mb-1.5 flex items-center gap-1 font-medium">
             <span>나이스(NEIS) 제출 후</span>
@@ -93,10 +113,10 @@ function renderUrgentDocuments() {
             <span>를 입력하면 독촉 알림이 중지됩니다.</span>
           </p>
           <div class="flex gap-1.5">
-            <input type="text" id="input-${doc.id}" data-doc-confirm-input="1" autocomplete="off" placeholder="&quot;제출했습니다&quot;를 입력하세요" class="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
-            <button onclick="handleDocSubmit('${doc.id}', this)" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl whitespace-nowrap shadow-xs transition-all">제출 완료 확인</button>
+            <input type="text" id="input-${safeDocId}" data-doc-confirm-input="1" autocomplete="off" placeholder="&quot;제출했습니다&quot;를 입력하세요" class="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+            <button onclick="handleDocSubmit('${safeDocId}', this)" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl whitespace-nowrap shadow-xs transition-all">제출 완료 확인</button>
           </div>
-          <p id="error-${doc.id}" class="hidden text-[10px] text-urgent-500 mt-1 font-medium">⚠️ 정확히 "제출했습니다" 문구를 입력해야 확인 처리됩니다.</p>
+          <p id="error-${safeDocId}" class="hidden text-[10px] text-urgent-500 mt-1 font-medium">⚠️ 정확히 "제출했습니다" 문구를 입력해야 확인 처리됩니다.</p>
         </div>
       </div>
     `;
@@ -200,7 +220,7 @@ function renderTimetable() {
   if (changeBadge) {
     if (changedItems.length > 0) {
       changeBadge.classList.remove('hidden');
-      changeBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>${changedItems.map(c => c.period + '교시').join(', ')} 변동`;
+      changeBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>${changedItems.map(c => _escStudentHtml(c.period) + '교시').join(', ')} 변동`;
     } else {
       changeBadge.classList.add('hidden');
     }
@@ -215,18 +235,18 @@ function renderTimetable() {
     <div class="shrink-0 w-24 bg-amber-50/90 border border-amber-300 rounded-xl p-2.5 flex flex-col justify-between text-center relative shadow-xs">
       <span class="absolute -top-1.5 -right-1.5 px-1.5 py-0.2 bg-amber-500 text-white text-[9px] font-bold rounded-full shadow-xs">변동</span>
       <div>
-        <span class="text-[10px] font-semibold text-amber-700">${t.period}교시</span>
-        <p class="text-xs font-extrabold text-amber-900 mt-0.5">${t.subject}</p>
-        <p class="text-[10px] text-amber-700 font-medium truncate">${t.teacher}</p>
+        <span class="text-[10px] font-semibold text-amber-700">${_escStudentHtml(t.period)}교시</span>
+        <p class="text-xs font-extrabold text-amber-900 mt-0.5">${_escStudentHtml(t.subject)}</p>
+        <p class="text-[10px] text-amber-700 font-medium truncate">${_escStudentHtml(t.teacher)}</p>
       </div>
-      <div class="mt-2 pt-1 border-t border-amber-200/80"><span class="text-[9px] text-slate-400 line-through block">기존: ${t.original}</span></div>
+      <div class="mt-2 pt-1 border-t border-amber-200/80"><span class="text-[9px] text-slate-400 line-through block">기존: ${_escStudentHtml(t.original)}</span></div>
     </div>
   ` : `
     <div class="shrink-0 w-24 bg-slate-50 border border-slate-100 rounded-xl p-2.5 flex flex-col justify-center text-center">
       <div>
-        <span class="text-[10px] font-semibold text-slate-400">${t.period}교시</span>
-        <p class="text-xs font-bold text-slate-800 mt-0.5">${t.subject}</p>
-        <p class="text-[10px] text-slate-500 font-medium truncate">${t.teacher}</p>
+        <span class="text-[10px] font-semibold text-slate-400">${_escStudentHtml(t.period)}교시</span>
+        <p class="text-xs font-bold text-slate-800 mt-0.5">${_escStudentHtml(t.subject)}</p>
+        <p class="text-[10px] text-slate-500 font-medium truncate">${_escStudentHtml(t.teacher)}</p>
       </div>
     </div>
   `).join('');
@@ -249,18 +269,18 @@ function renderMeals() {
   container.innerHTML = `
     <div class="flex items-center justify-between mb-2">
       <span class="text-[11px] font-bold text-slate-700">🍽️ ${state.activeMealTab === 'lunch' ? '중식 식단' : '석식 식단'}</span>
-      <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">${meal.calories}</span>
+      <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">${_escStudentHtml(meal.calories)}</span>
     </div>
     <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 py-1">
-      ${meal.menu.map(item => `
+      ${(meal.menu || []).map(item => `
         <div class="flex items-center justify-between text-xs py-0.5 border-b border-slate-100/80">
-          <span class="font-medium text-slate-800">${item.name}</span>
-          ${item.allergy ? `<span class="text-[9px] text-slate-400 font-mono">(${item.allergy})</span>` : ''}
+          <span class="font-medium text-slate-800">${_escStudentHtml(item.name)}</span>
+          ${item.allergy ? `<span class="text-[9px] text-slate-400 font-mono">(${_escStudentHtml(item.allergy)})</span>` : ''}
         </div>
       `).join('')}
     </div>
     <div class="mt-2.5 pt-2 border-t border-slate-200/70 text-[9px] text-slate-400 leading-tight">
-      ℹ️ <span class="font-semibold">알레르기 번호 안내:</span> ${meal.allergyNotice}
+      ℹ️ <span class="font-semibold">알레르기 번호 안내:</span> ${_escStudentHtml(meal.allergyNotice)}
     </div>
   `;
   if (typeof renderAcademicSchedules === 'function') renderAcademicSchedules();
@@ -300,7 +320,7 @@ function selectAttSubType(sub) {
       const prevVal = periodSelect.value;
       const options = getPeriodOptionsList();
       periodSelect.innerHTML = `<option value="">교시를 선택해 주세요</option>` +
-        options.map(opt => `<option value="${opt}">${opt}</option>`).join('');
+        options.map(opt => `<option value="${_escStudentHtml(opt)}">${_escStudentHtml(opt)}</option>`).join('');
       if (prevVal && options.includes(prevVal)) {
         periodSelect.value = prevVal;
       }
@@ -757,21 +777,22 @@ function renderAttendanceHistory() {
     const delTone = isLocked
       ? 'text-slate-300 cursor-not-allowed'
       : 'text-slate-400 hover:text-red-600 hover:bg-red-50';
+    const safeId = _escStudentHtml(item.id);
     return `
       <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-1.5">
         <div class="flex items-center justify-between gap-2">
-          <span class="text-xs font-bold text-slate-800">${item.type} <span class="text-[11px] font-normal text-slate-400">(${periodLabel})</span></span>
+          <span class="text-xs font-bold text-slate-800">${_escStudentHtml(item.type)} <span class="text-[11px] font-normal text-slate-400">(${_escStudentHtml(periodLabel)})</span></span>
           <div class="flex items-center gap-1 shrink-0">
-            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeStyle}">${item.docStatus}</span>
-            <button type="button" onclick="editStudentAttendance('${item.id}')" title="${isLocked ? '교사 확인 완료 건은 수정 불가' : '수정'}" class="p-1 rounded-lg transition-colors ${btnTone}" aria-label="출결 수정">
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeStyle}">${_escStudentHtml(item.docStatus)}</span>
+            <button type="button" onclick="editStudentAttendance('${safeId}')" title="${isLocked ? '교사 확인 완료 건은 수정 불가' : '수정'}" class="p-1 rounded-lg transition-colors ${btnTone}" aria-label="출결 수정">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
             </button>
-            <button type="button" onclick="deleteStudentAttendance('${item.id}')" title="${isLocked ? '교사 확인 완료 건은 삭제 불가' : '삭제'}" class="p-1 rounded-lg transition-colors ${delTone}" aria-label="출결 삭제">
+            <button type="button" onclick="deleteStudentAttendance('${safeId}')" title="${isLocked ? '교사 확인 완료 건은 삭제 불가' : '삭제'}" class="p-1 rounded-lg transition-colors ${delTone}" aria-label="출결 삭제">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
             </button>
           </div>
         </div>
-        <p class="text-[11px] text-slate-600">${item.reason}</p>
+        <p class="text-[11px] text-slate-600">${_escStudentHtml(item.reason)}</p>
       </div>
     `;
   }).join('');
@@ -966,11 +987,14 @@ function openBoardNoticeModal(noticeId) {
     const imgUrls = _extractBoardImageUrls(n);
     if (imgUrls.length > 0) {
       imagesEl.innerHTML = imgUrls
-        .map((url) => (
-          `<a href="${url}" target="_blank" rel="noopener noreferrer" class="block rounded-xl overflow-hidden border border-slate-200 bg-white hover:border-indigo-300 transition-all">` +
-          `<img src="${url}" alt="공지 미리보기 이미지" loading="lazy" class="w-full max-h-64 object-contain bg-white" />` +
-          `</a>`
-        ))
+        .map((url) => {
+          const safeUrl = _escStudentHtml(url);
+          return (
+            `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="block rounded-xl overflow-hidden border border-slate-200 bg-white hover:border-indigo-300 transition-all">` +
+            `<img src="${safeUrl}" alt="공지 미리보기 이미지" loading="lazy" class="w-full max-h-64 object-contain bg-white" />` +
+            `</a>`
+          );
+        })
         .join('');
       imagesBoxEl.classList.remove('hidden');
     } else {
@@ -1233,12 +1257,14 @@ function openCircularModal(id) {
     const parentSigBox = document.getElementById('modalCircularSubmittedParentSigBox');
     const sigLabel = document.getElementById('modalCircularSubmittedSigLabel');
     const sigImg = document.getElementById('modalCircularSubmittedSigImg');
-    const hasStudentSig = Boolean(reply.studentSignatureUrl);
-    const hasParentSig = Boolean(reply.signatureUrl);
+    const safeStudentSigUrl = _safeStudentImageUrl(reply.studentSignatureUrl);
+    const safeParentSigUrl = _safeStudentImageUrl(reply.signatureUrl);
+    const hasStudentSig = Boolean(safeStudentSigUrl);
+    const hasParentSig = Boolean(safeParentSigUrl);
 
     if (studentSigBox && studentSigImg) {
       if (hasStudentSig) {
-        studentSigImg.src = reply.studentSignatureUrl;
+        studentSigImg.src = safeStudentSigUrl;
         studentSigBox.classList.remove('hidden');
       } else {
         studentSigImg.removeAttribute('src');
@@ -1247,7 +1273,7 @@ function openCircularModal(id) {
     }
     if (parentSigBox && sigImg) {
       if (hasParentSig) {
-        sigImg.src = reply.signatureUrl;
+        sigImg.src = safeParentSigUrl;
         parentSigBox.classList.remove('hidden');
       } else {
         sigImg.removeAttribute('src');
@@ -1514,14 +1540,14 @@ function renderBudget() {
   list.innerHTML = mockData.budget.transactions.map(tx => `
     <div class="bg-white p-3 rounded-xl border border-slate-200/80 flex items-center justify-between">
       <div>
-        <span class="text-[10px] text-slate-400">${tx.date} · ${tx.store}</span>
-        <p class="text-xs font-bold text-slate-800">${tx.title}</p>
+        <span class="text-[10px] text-slate-400">${_escStudentHtml(tx.date)} · ${_escStudentHtml(tx.store)}</span>
+        <p class="text-xs font-bold text-slate-800">${_escStudentHtml(tx.title)}</p>
       </div>
       <div class="text-right">
         <p class="text-xs font-bold ${tx.type === 'income' ? 'text-indigo-600' : 'text-slate-800'}">
           ${tx.type === 'income' ? '+' : '-'}${(Number(tx.amount) || 0).toLocaleString()}원
         </p>
-        <button onclick="openReceiptModal('${tx.id}')" class="text-[10px] text-indigo-600 hover:underline font-medium">영수증 보기</button>
+        <button onclick="openReceiptModal('${_escStudentHtml(tx.id)}')" class="text-[10px] text-indigo-600 hover:underline font-medium">영수증 보기</button>
       </div>
     </div>
   `).join('');
@@ -1530,12 +1556,13 @@ function renderBudget() {
 function openReceiptModal(txId) {
   const tx = mockData.budget.transactions.find(t => t.id === txId);
   if (!tx) return;
+  const safeReceiptUrl = _safeHttpUrl(tx.receiptUrl);
   document.getElementById('receiptModalBody').innerHTML = `
-    <p class="font-bold text-slate-800 text-sm border-b border-slate-200 pb-2">${tx.store}</p>
-    <p>거래일자: ${tx.date}</p>
-    <p>적요항목: ${tx.title}</p>
-    <p>결제수단: ${tx.card}</p>
-    ${tx.receiptUrl ? `<p>증빙링크: <a href="${tx.receiptUrl}" target="_blank" rel="noopener" class="text-indigo-600 underline">영수증 원본 보기</a></p>` : ''}
+    <p class="font-bold text-slate-800 text-sm border-b border-slate-200 pb-2">${_escStudentHtml(tx.store)}</p>
+    <p>거래일자: ${_escStudentHtml(tx.date)}</p>
+    <p>적요항목: ${_escStudentHtml(tx.title)}</p>
+    <p>결제수단: ${_escStudentHtml(tx.card)}</p>
+    ${safeReceiptUrl ? `<p>증빙링크: <a href="${_escStudentHtml(safeReceiptUrl)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 underline">영수증 원본 보기</a></p>` : ''}
     <p class="font-bold text-indigo-700 pt-2 border-t border-slate-200">합계금액: ${(Number(tx.amount) || 0).toLocaleString()}원</p>
   `;
   openModal('receiptModal');
@@ -1575,20 +1602,20 @@ function renderStudentChat() {
   const container = document.getElementById('chatMessagesContainer');
 
   if (!room.messages || room.messages.length === 0) {
-    container.innerHTML = `<div class="text-center py-10 text-xs text-slate-400">${teacherLabel}과의 1:1 비공개 상담방입니다. 메시지를 입력해 대화를 시작해 보세요.</div>`;
+    container.innerHTML = `<div class="text-center py-10 text-xs text-slate-400">${_escStudentHtml(teacherLabel)}과의 1:1 비공개 상담방입니다. 메시지를 입력해 대화를 시작해 보세요.</div>`;
     return;
   }
 
   container.innerHTML = room.messages.map(m => m.sender === 'user' ? `
     <div class="flex flex-col items-end">
-      <div class="bg-indigo-600 text-white text-xs px-3.5 py-2.5 rounded-2xl rounded-tr-xs max-w-[80%] shadow-xs leading-relaxed">${m.text}</div>
-      <span class="text-[9px] text-slate-400 mt-1">${m.time}</span>
+      <div class="bg-indigo-600 text-white text-xs px-3.5 py-2.5 rounded-2xl rounded-tr-xs max-w-[80%] shadow-xs leading-relaxed">${_escStudentHtml(m.text)}</div>
+      <span class="text-[9px] text-slate-400 mt-1">${_escStudentHtml(m.time)}</span>
     </div>
   ` : `
     <div class="flex flex-col items-start">
-      <span class="text-[10px] font-semibold text-slate-500 mb-1">${teacherLabel}</span>
-      <div class="bg-white text-slate-800 border border-slate-200/80 text-xs px-3.5 py-2.5 rounded-2xl rounded-tl-xs max-w-[80%] shadow-xs leading-relaxed">${m.text}</div>
-      <span class="text-[9px] text-slate-400 mt-1">${m.time}</span>
+      <span class="text-[10px] font-semibold text-slate-500 mb-1">${_escStudentHtml(teacherLabel)}</span>
+      <div class="bg-white text-slate-800 border border-slate-200/80 text-xs px-3.5 py-2.5 rounded-2xl rounded-tl-xs max-w-[80%] shadow-xs leading-relaxed">${_escStudentHtml(m.text)}</div>
+      <span class="text-[9px] text-slate-400 mt-1">${_escStudentHtml(m.time)}</span>
     </div>
   `).join('');
   container.scrollTop = container.scrollHeight;
@@ -1667,4 +1694,16 @@ async function handleCounselingBooking(e) {
     }
   }
   showToast('상담 면담 신청이 담임선생님께 전송되었습니다.');
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    renderUrgentDocuments,
+    renderTimetable,
+    renderMeals,
+    renderAttendanceHistory,
+    renderBudget,
+    openReceiptModal,
+    renderStudentChat,
+  };
 }

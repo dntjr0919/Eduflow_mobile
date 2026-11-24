@@ -3,6 +3,16 @@
    [홈·출결], [서류·규정], [가정통신·공지], [PC 원격예약], [1:1 채팅]
    ========================================================= */
 
+function _escTeacherHtml(val) {
+  if (typeof escapeHtml === 'function') return escapeHtml(val);
+  return String(val ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function switchTeacherBottomTab(tabName) {
   const studentTabs = ['home', 'attendance', 'letters', 'counseling'];
   const teacherTabs = ['home', 'documents', 'circulars', 'remote', 'chat'];
@@ -105,6 +115,7 @@ async function openPendingRegistrationsModal() {
     return;
   }
   listEl.innerHTML = items.map((it) => {
+    const safeRid = _escTeacherHtml(it.remote_id);
     if (it.role === 'teacher') {
       const codeInfo = [it.neis_office_code, it.neis_school_code].filter(Boolean).join('/');
       return `
@@ -112,30 +123,31 @@ async function openPendingRegistrationsModal() {
           <div>
             <div class="flex items-center gap-1.5 mb-0.5">
               <span class="px-1.5 py-0.5 rounded bg-purple-600 text-white text-[9px] font-bold">교사 가입 신청</span>
-              <p class="text-xs font-bold text-slate-800">${it.name || ''} <span class="text-slate-500 font-normal">(${it.teacher_id || it.login_id || it.remote_id})</span></p>
+              <p class="text-xs font-bold text-slate-800">${_escTeacherHtml(it.name || '')} <span class="text-slate-500 font-normal">(${_escTeacherHtml(it.teacher_id || it.login_id || it.remote_id)})</span></p>
             </div>
-            <p class="text-[10px] text-slate-600">${it.school_name || '학교 미입력'}${codeInfo ? ` (${codeInfo})` : ''} · ${it.grade || '-'}학년 ${it.class_no || '-'}반 · ${it.subject || '과목 미입력'}</p>
+            <p class="text-[10px] text-slate-600">${_escTeacherHtml(it.school_name || '학교 미입력')}${codeInfo ? ` (${_escTeacherHtml(codeInfo)})` : ''} · ${_escTeacherHtml(it.grade || '-')}학년 ${_escTeacherHtml(it.class_no || '-')}반 · ${_escTeacherHtml(it.subject || '과목 미입력')}</p>
           </div>
           <div class="flex items-center gap-1.5 shrink-0">
-            <button type="button" onclick="reviewRegistrationItem('teacher', '${it.remote_id}', 'approve', this)" class="px-2.5 py-1.5 bg-purple-600 text-white rounded-lg text-[10px] font-bold">승인</button>
-            <button type="button" onclick="reviewRegistrationItem('teacher', '${it.remote_id}', 'reject', this)" class="px-2.5 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold">반려</button>
+            <button type="button" onclick="reviewRegistrationItem('teacher', '${safeRid}', 'approve', this)" class="px-2.5 py-1.5 bg-purple-600 text-white rounded-lg text-[10px] font-bold">승인</button>
+            <button type="button" onclick="reviewRegistrationItem('teacher', '${safeRid}', 'reject', this)" class="px-2.5 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold">반려</button>
           </div>
         </div>
       `;
     }
     const roleLbl = it.role === 'parent' ? '학부모' : '학생';
+    const safeRole = _escTeacherHtml(it.role);
     const subInfo = it.role === 'parent'
-      ? `자녀: ${it.student_name || ''} (${it.student_id || ''})`
-      : `${it.grade || ''}학년 ${it.class_no || ''}반 ${it.student_no || ''}번`;
+      ? `자녀: ${_escTeacherHtml(it.student_name || '')} (${_escTeacherHtml(it.student_id || '')})`
+      : `${_escTeacherHtml(it.grade || '')}학년 ${_escTeacherHtml(it.class_no || '')}반 ${_escTeacherHtml(it.student_no || '')}번`;
     return `
       <div class="p-3 rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
         <div>
-          <p class="text-xs font-bold text-slate-800">[${roleLbl}] ${it.name || ''} <span class="text-slate-400 font-normal">(${it.login_id || it.remote_id})</span></p>
-          <p class="text-[10px] text-slate-500">${it.school_name || ''} · ${subInfo}</p>
+          <p class="text-xs font-bold text-slate-800">[${roleLbl}] ${_escTeacherHtml(it.name || '')} <span class="text-slate-400 font-normal">(${_escTeacherHtml(it.login_id || it.remote_id)})</span></p>
+          <p class="text-[10px] text-slate-500">${_escTeacherHtml(it.school_name || '')} · ${subInfo}</p>
         </div>
         <div class="flex items-center gap-1.5 shrink-0">
-          <button type="button" onclick="reviewRegistrationItem('${it.role}', '${it.remote_id}', 'approve', this)" class="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-bold">승인</button>
-          <button type="button" onclick="reviewRegistrationItem('${it.role}', '${it.remote_id}', 'reject', this)" class="px-2.5 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold">반려</button>
+          <button type="button" onclick="reviewRegistrationItem('${safeRole}', '${safeRid}', 'approve', this)" class="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-bold">승인</button>
+          <button type="button" onclick="reviewRegistrationItem('${safeRole}', '${safeRid}', 'reject', this)" class="px-2.5 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold">반려</button>
         </div>
       </div>
     `;
@@ -353,11 +365,11 @@ function renderTeacherHome() {
     sched.innerHTML = mockData.teacherSchedule.map((s, idx) => `
       <button type="button" onclick="openTeacherLessonModal(${idx})" class="p-2 rounded-xl border text-center transition-all hover:border-indigo-400 hover:shadow-xs active:scale-[0.98] cursor-pointer ${s.changed ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200/70'}">
         <div class="flex items-center justify-center gap-1">
-          <span class="text-[10px] font-semibold ${s.changed ? 'text-amber-700' : 'text-slate-400'}">${s.period}</span>
+          <span class="text-[10px] font-semibold ${s.changed ? 'text-amber-700' : 'text-slate-400'}">${_escTeacherHtml(s.period)}</span>
           ${s.changed ? `<span class="text-[9px] font-bold px-1 py-0.2 rounded bg-amber-500 text-white">변경</span>` : ''}
         </div>
-        <p class="text-xs font-bold text-slate-800 mt-0.5">${s.target || (s.subject ? '-' : '공강')}</p>
-        <p class="text-[10px] ${s.changed ? 'text-amber-800 font-bold' : 'text-slate-500'}">${s.subject || '수업 없음'}</p>
+        <p class="text-xs font-bold text-slate-800 mt-0.5">${_escTeacherHtml(s.target || (s.subject ? '-' : '공강'))}</p>
+        <p class="text-[10px] ${s.changed ? 'text-amber-800 font-bold' : 'text-slate-500'}">${_escTeacherHtml(s.subject || '수업 없음')}</p>
       </button>
     `).join('');
   }
@@ -378,7 +390,7 @@ function renderTeacherHome() {
   if (hrChgBadge) {
     if (changedHomeroom.length > 0) {
       hrChgBadge.classList.remove('hidden');
-      hrChgBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>${changedHomeroom.map(item => `${item.period}교시`).join(', ')} 변동`;
+      hrChgBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>${changedHomeroom.map(item => `${_escTeacherHtml(item.period)}교시`).join(', ')} 변동`;
     } else {
       hrChgBadge.classList.add('hidden');
     }
@@ -393,16 +405,16 @@ function renderTeacherHome() {
       hrList.innerHTML = homeroomRows.map(item => `
         <div class="flex items-center justify-between px-3 py-2 rounded-xl border ${item.isChanged ? 'bg-amber-50/90 border-amber-300' : 'bg-slate-50 border-slate-200/70'}">
           <div class="flex items-center gap-2.5 min-w-0">
-            <span class="text-[11px] font-bold px-2 py-0.5 rounded-lg shrink-0 ${item.isChanged ? 'bg-amber-200/80 text-amber-900' : 'bg-white text-slate-600 border border-slate-200/80'}">${item.period}교시</span>
+            <span class="text-[11px] font-bold px-2 py-0.5 rounded-lg shrink-0 ${item.isChanged ? 'bg-amber-200/80 text-amber-900' : 'bg-white text-slate-600 border border-slate-200/80'}">${_escTeacherHtml(item.period)}교시</span>
             <div class="min-w-0">
               <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="text-xs font-bold ${item.isChanged ? 'text-amber-950' : 'text-slate-800'}">${item.subject || '-'}</span>
+                <span class="text-xs font-bold ${item.isChanged ? 'text-amber-950' : 'text-slate-800'}">${_escTeacherHtml(item.subject || '-')}</span>
                 ${item.isChanged ? `<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500 text-white">변경</span>` : ''}
               </div>
-              ${item.isChanged && item.changedReason ? `<p class="text-[10px] text-amber-700 mt-0.5 truncate">${item.changedReason}</p>` : ''}
+              ${item.isChanged && item.changedReason ? `<p class="text-[10px] text-amber-700 mt-0.5 truncate">${_escTeacherHtml(item.changedReason)}</p>` : ''}
             </div>
           </div>
-          <span class="text-[11px] font-medium ${item.isChanged ? 'text-amber-800' : 'text-slate-500'} shrink-0 ml-2">${item.teacher ? `${item.teacher}T` : '-'}</span>
+          <span class="text-[11px] font-medium ${item.isChanged ? 'text-amber-800' : 'text-slate-500'} shrink-0 ml-2">${item.teacher ? `${_escTeacherHtml(item.teacher)}T` : '-'}</span>
         </div>
       `).join('');
     }
@@ -422,19 +434,19 @@ function renderTeacherHome() {
       mealList.innerHTML = mealEntries.map(({ label, meal }) => `
         <div class="bg-slate-50/80 rounded-xl p-3 border border-slate-100">
           <div class="flex items-center justify-between mb-2">
-            <span class="text-[11px] font-bold text-slate-700">🍽️ ${label}</span>
-            <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">${meal.calories || '-'}</span>
+            <span class="text-[11px] font-bold text-slate-700">🍽️ ${_escTeacherHtml(label)}</span>
+            <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">${_escTeacherHtml(meal.calories || '-')}</span>
           </div>
           <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 py-1">
             ${(meal.menu || []).map(item => `
               <div class="flex items-center justify-between text-xs py-0.5 border-b border-slate-100/80">
-                <span class="font-medium text-slate-800">${item.name}</span>
-                ${item.allergy ? `<span class="text-[9px] text-slate-400 font-mono">(${item.allergy})</span>` : ''}
+                <span class="font-medium text-slate-800">${_escTeacherHtml(item.name)}</span>
+                ${item.allergy ? `<span class="text-[9px] text-slate-400 font-mono">(${_escTeacherHtml(item.allergy)})</span>` : ''}
               </div>
             `).join('')}
           </div>
           <div class="mt-2.5 pt-2 border-t border-slate-200/70 text-[9px] text-slate-400 leading-tight">
-            ℹ️ <span class="font-semibold">알레르기 번호 안내:</span> ${meal.allergyNotice || '나이스(NEIS) 식단 연동됨'}
+            ℹ️ <span class="font-semibold">알레르기 번호 안내:</span> ${_escTeacherHtml(meal.allergyNotice || '나이스(NEIS) 식단 연동됨')}
           </div>
         </div>
       `).join('');
@@ -1004,8 +1016,8 @@ function renderAttCheckStudentList() {
           <label class="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0 py-0.5">
             <input type="checkbox" ${row.checked ? 'checked' : ''} onchange="onAttCheckToggle(${idx}, this.checked)" class="w-5 h-5 rounded-md border-slate-300 text-red-600 focus:ring-red-500 shrink-0 cursor-pointer" />
             <div class="min-w-0">
-              <span class="text-xs font-bold text-slate-900 truncate block">${row.studentNo ? row.studentNo + '번 ' : ''}${row.name}</span>
-              <span class="text-[10px] text-slate-400">${row.studentId}</span>
+              <span class="text-xs font-bold text-slate-900 truncate block">${row.studentNo ? _escTeacherHtml(row.studentNo) + '번 ' : ''}${_escTeacherHtml(row.name)}</span>
+              <span class="text-[10px] text-slate-400">${_escTeacherHtml(row.studentId)}</span>
             </div>
           </label>
           ${badgesHtml}
@@ -1014,14 +1026,14 @@ function renderAttCheckStudentList() {
           <span class="text-[11px] font-semibold text-slate-600 shrink-0">${promptLabel}</span>
           <select onchange="onAttCheckPeriodChange(${idx}, this.value)" class="text-xs px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-800 font-medium min-w-[130px]">
             <option value="" ${!row.period ? 'selected' : ''}>${defaultOptLabel}</option>
-            ${periodOptions.map(opt => `<option value="${opt}" ${row.period === opt ? 'selected' : ''}>${opt}</option>`).join('')}
+            ${periodOptions.map(opt => `<option value="${_escTeacherHtml(opt)}" ${row.period === opt ? 'selected' : ''}>${_escTeacherHtml(opt)}</option>`).join('')}
           </select>
         </div>
         ${showReturnDropdown ? `
         <div class="mt-2 pt-2 border-t border-teal-200/60 flex items-center justify-between gap-2">
           <span class="text-[11px] font-semibold text-teal-700 shrink-0">복귀 교시</span>
           <select onchange="onAttCheckReturnPeriodChange(${idx}, this.value)" class="text-xs px-2.5 py-1.5 bg-white border border-teal-200 rounded-xl focus:ring-2 focus:ring-teal-500 focus:outline-none text-slate-800 font-medium min-w-[130px]">
-            ${returnOptions.map(opt => `<option value="${opt}" ${effectiveReturnPeriod === opt ? 'selected' : ''}>${opt}</option>`).join('')}
+            ${returnOptions.map(opt => `<option value="${_escTeacherHtml(opt)}" ${effectiveReturnPeriod === opt ? 'selected' : ''}>${_escTeacherHtml(opt)}</option>`).join('')}
           </select>
         </div>
         ` : ''}
@@ -2065,26 +2077,29 @@ function renderTeacherDocs() {
     return;
   }
 
-  container.innerHTML = filtered.map(doc => `
+  container.innerHTML = filtered.map(doc => {
+    const safeDocId = _escTeacherHtml(doc.id);
+    return `
     <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
       <div class="flex items-center justify-between">
-        <span class="text-xs font-bold text-slate-800">${doc.studentId} ${doc.studentName} · ${doc.docName}</span>
-        <span class="text-[10px] font-semibold text-slate-400">마감 ${doc.deadline}</span>
+        <span class="text-xs font-bold text-slate-800">${_escTeacherHtml(doc.studentId)} ${_escTeacherHtml(doc.studentName)} · ${_escTeacherHtml(doc.docName)}</span>
+        <span class="text-[10px] font-semibold text-slate-400">마감 ${_escTeacherHtml(doc.deadline)}</span>
       </div>
-      <p class="text-[11px] text-slate-600">${doc.title} — ${doc.description}</p>
+      <p class="text-[11px] text-slate-600">${_escTeacherHtml(doc.title)} — ${_escTeacherHtml(doc.description)}</p>
       ${doc.status === 'submitted' ? `
         <div class="flex gap-2 pt-1">
-          <button onclick="finalizeTeacherDoc('${doc.id}', 'closed', this)" class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-xl">나이스 확인 후 최종종결</button>
-          <button onclick="finalizeTeacherDoc('${doc.id}', 'pending', this)" class="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[11px] font-bold rounded-xl">미제출 반려(재알림)</button>
+          <button onclick="finalizeTeacherDoc('${safeDocId}', 'closed', this)" class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-xl">나이스 확인 후 최종종결</button>
+          <button onclick="finalizeTeacherDoc('${safeDocId}', 'pending', this)" class="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[11px] font-bold rounded-xl">미제출 반려(재알림)</button>
         </div>
       ` : doc.status === 'pending' ? `
         <div class="flex items-center justify-between pt-1">
           <span class="text-[10px] text-urgent-600 font-semibold">매일 아침 자동 독촉 알림 발송 중</span>
-          <button onclick="sendDocReminderNotification('${doc.id}', this)" class="text-[10px] px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg">수동 재알림</button>
+          <button onclick="sendDocReminderNotification('${safeDocId}', this)" class="text-[10px] px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg">수동 재알림</button>
         </div>
-      ` : `<span class="inline-block text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-semibold">${doc.submittedAt || '최종 종결됨'}</span>`}
+      ` : `<span class="inline-block text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-semibold">${_escTeacherHtml(doc.submittedAt || '최종 종결됨')}</span>`}
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 async function sendDocReminderNotification(docId, btnEl) {
@@ -2755,10 +2770,10 @@ function openUnsubmittedModal(circularId) {
       listEl.innerHTML = unsubmitted.map(s => `
         <div class="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl">
           <div class="flex items-center gap-2">
-            <span class="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center font-bold text-[10px] text-slate-700">${s.student_no || '-'}</span>
+            <span class="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center font-bold text-[10px] text-slate-700">${_escTeacherHtml(s.student_no || '-')}</span>
             <div>
-              <p class="font-bold text-slate-800 text-xs">${s.student_id || ''} ${s.name || ''}</p>
-              <p class="text-[10px] text-slate-400">${s.phone || '연락처 미등록'}</p>
+              <p class="font-bold text-slate-800 text-xs">${_escTeacherHtml(s.student_id || '')} ${_escTeacherHtml(s.name || '')}</p>
+              <p class="text-[10px] text-slate-400">${_escTeacherHtml(s.phone || '연락처 미등록')}</p>
             </div>
           </div>
           <span class="text-[10px] text-urgent-600 font-semibold">미회신</span>
@@ -3089,18 +3104,18 @@ function renderTeacherChatRooms() {
     : rooms.map(r => {
     const lastMsg = r.messages[r.messages.length - 1];
     return `
-      <div onclick="openTeacherChatDetail('${r.roomId}')" class="p-3.5 bg-white hover:bg-slate-50 cursor-pointer flex items-center justify-between gap-3 transition-colors">
+      <div onclick="openTeacherChatDetail('${_escTeacherHtml(r.roomId)}')" class="p-3.5 bg-white hover:bg-slate-50 cursor-pointer flex items-center justify-between gap-3 transition-colors">
         <div class="flex items-center gap-2.5 min-w-0">
-          <div class="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs shrink-0">${r.studentName[0]}</div>
+          <div class="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs shrink-0">${_escTeacherHtml((r.studentName || '?')[0])}</div>
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <p class="text-xs font-bold text-slate-800 truncate">${r.partnerLabel}</p>
-              <span class="text-[10px] text-slate-400">${lastMsg ? lastMsg.time : ''}</span>
+              <p class="text-xs font-bold text-slate-800 truncate">${_escTeacherHtml(r.partnerLabel)}</p>
+              <span class="text-[10px] text-slate-400">${lastMsg ? _escTeacherHtml(lastMsg.time) : ''}</span>
             </div>
-            <p class="text-[11px] text-slate-500 truncate mt-0.5">${lastMsg ? lastMsg.text : ''}</p>
+            <p class="text-[11px] text-slate-500 truncate mt-0.5">${lastMsg ? _escTeacherHtml(lastMsg.text) : ''}</p>
           </div>
         </div>
-        ${r.unread > 0 ? `<span class="w-5 h-5 rounded-full bg-urgent-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0">${r.unread}</span>` : ''}
+        ${r.unread > 0 ? `<span class="w-5 h-5 rounded-full bg-urgent-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0">${_escTeacherHtml(r.unread)}</span>` : ''}
       </div>
     `;
   }).join('');
@@ -3138,14 +3153,14 @@ function renderTeacherChatMessages() {
   const container = document.getElementById('teacherLiveChatMessages');
   container.innerHTML = room.messages.map(m => m.sender === 'teacher' ? `
     <div class="flex flex-col items-end">
-      <div class="bg-indigo-600 text-white text-xs px-3.5 py-2.5 rounded-2xl rounded-tr-xs max-w-[80%] shadow-xs leading-relaxed">${m.text}</div>
-      <span class="text-[9px] text-slate-400 mt-1">${m.time}</span>
+      <div class="bg-indigo-600 text-white text-xs px-3.5 py-2.5 rounded-2xl rounded-tr-xs max-w-[80%] shadow-xs leading-relaxed">${_escTeacherHtml(m.text)}</div>
+      <span class="text-[9px] text-slate-400 mt-1">${_escTeacherHtml(m.time)}</span>
     </div>
   ` : `
     <div class="flex flex-col items-start">
-      <span class="text-[10px] font-semibold text-slate-500 mb-1">${room.partnerLabel}</span>
-      <div class="bg-white text-slate-800 border border-slate-200/80 text-xs px-3.5 py-2.5 rounded-2xl rounded-tl-xs max-w-[80%] shadow-xs leading-relaxed">${m.text}</div>
-      <span class="text-[9px] text-slate-400 mt-1">${m.time}</span>
+      <span class="text-[10px] font-semibold text-slate-500 mb-1">${_escTeacherHtml(room.partnerLabel)}</span>
+      <div class="bg-white text-slate-800 border border-slate-200/80 text-xs px-3.5 py-2.5 rounded-2xl rounded-tl-xs max-w-[80%] shadow-xs leading-relaxed">${_escTeacherHtml(m.text)}</div>
+      <span class="text-[9px] text-slate-400 mt-1">${_escTeacherHtml(m.time)}</span>
     </div>
   `).join('');
   container.scrollTop = container.scrollHeight;
@@ -3426,6 +3441,10 @@ if (typeof globalThis !== 'undefined') {
     _getRecentLessonProgressDates,
     _getDefaultLessonImportDate,
     _getLessonProgressByDate,
+    renderTeacherHome,
+    renderTeacherDocs,
+    renderTeacherChatRooms,
+    renderTeacherChatMessages,
   };
 }
 
@@ -3492,10 +3511,10 @@ function _renderLessonAttStudentList() {
     return `
       <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200/70 space-y-1.5">
         <div class="flex items-center justify-between gap-2">
-          <div class="text-xs font-bold text-slate-800 truncate">${st.student_name} <span class="text-[10px] font-mono text-slate-400 font-normal">${st.student_id}</span></div>
+          <div class="text-xs font-bold text-slate-800 truncate">${_escTeacherHtml(st.student_name)} <span class="text-[10px] font-mono text-slate-400 font-normal">${_escTeacherHtml(st.student_id)}</span></div>
           <div class="flex items-center gap-1 shrink-0">${btns}</div>
         </div>
-        <input type="text" value="${String(st.memo || '').replace(/"/g, '&quot;')}" oninput="setLessonStudentMemo(${idx}, this.value)" placeholder="비고/메모 (선택)" class="w-full px-2 py-1 text-[11px] bg-white border border-slate-200 rounded-lg text-slate-700">
+        <input type="text" value="${_escTeacherHtml(st.memo || '')}" oninput="setLessonStudentMemo(${idx}, this.value)" placeholder="비고/메모 (선택)" class="w-full px-2 py-1 text-[11px] bg-white border border-slate-200 rounded-lg text-slate-700">
       </div>
     `;
   }).join('');
@@ -3885,5 +3904,9 @@ if (typeof module !== 'undefined' && module.exports) {
     _getRecentLessonProgressDates,
     _getDefaultLessonImportDate,
     _getLessonProgressByDate,
+    renderTeacherHome,
+    renderTeacherDocs,
+    renderTeacherChatRooms,
+    renderTeacherChatMessages,
   };
 }

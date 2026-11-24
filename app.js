@@ -420,7 +420,7 @@ async function withButtonLoading(btnElement, loadingText, asyncFn) {
   btnElement.classList.add('opacity-75', 'cursor-not-allowed');
 
   if (loadingText) {
-    btnElement.innerHTML = `<span class="inline-flex items-center justify-center gap-1.5"><span class="spinner" aria-hidden="true"></span><span>${loadingText}</span></span>`;
+    btnElement.innerHTML = `<span class="inline-flex items-center justify-center gap-1.5"><span class="spinner" aria-hidden="true"></span><span>${escapeHtml(loadingText)}</span></span>`;
   } else {
     btnElement.innerHTML = `<span class="spinner" aria-hidden="true"></span>`;
   }
@@ -446,13 +446,32 @@ function closeModal(modalId) {
   if (el) el.classList.add('hidden');
 }
 
-function _escapeNoticeHtml(val) {
+function escapeHtml(val) {
   return String(val ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function _escapeNoticeHtml(val) {
+  return escapeHtml(val);
+}
+
+function safeHttpUrl(rawUrl) {
+  const s = String(rawUrl || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  return '';
+}
+
+function safeImageUrl(rawUrl) {
+  const s = String(rawUrl || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(s)) return s;
+  return '';
 }
 
 function normalizeCircularAttachmentUrl(input) {
@@ -582,14 +601,14 @@ function renderNotificationsModal() {
       badgeCls = 'text-amber-700';
     }
     return `
-      <div onclick="markNotificationRead('${n.remote_id}')" class="p-3 ${boxCls} border rounded-xl cursor-pointer transition-all hover:opacity-90">
+      <div onclick="markNotificationRead('${escapeHtml(n.remote_id)}')" class="p-3 ${boxCls} border rounded-xl cursor-pointer transition-all hover:opacity-90">
         <div class="flex items-center justify-between mb-0.5">
-          <span class="text-[10px] font-bold ${badgeCls}">${n.sender || '학급 알림'}</span>
+          <span class="text-[10px] font-bold ${badgeCls}">${escapeHtml(n.sender || '학급 알림')}</span>
           ${isUnread ? '<span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>' : ''}
         </div>
-        <p class="font-semibold text-slate-800">${n.title || ''}</p>
-        ${n.message ? `<p class="text-[11px] text-slate-600 mt-0.5 leading-relaxed">${n.message}</p>` : ''}
-        <p class="text-[10px] text-slate-400 mt-1">${n.created_at || ''}</p>
+        <p class="font-semibold text-slate-800">${escapeHtml(n.title || '')}</p>
+        ${n.message ? `<p class="text-[11px] text-slate-600 mt-0.5 leading-relaxed">${escapeHtml(n.message)}</p>` : ''}
+        <p class="text-[10px] text-slate-400 mt-1">${escapeHtml(n.created_at || '')}</p>
       </div>
     `;
   }).join('');
@@ -2969,6 +2988,12 @@ if (typeof module !== 'undefined' && module.exports) {
     resolvePwaPushGateDecision,
     computeScheduleDday,
     getUpcomingSchedules,
+    _buildScheduleItemsHtml,
+    renderAcademicSchedules,
+    renderNotificationsModal,
+    escapeHtml,
+    safeHttpUrl,
+    safeImageUrl,
     normalizeCircularAttachmentUrl,
     hydrateMockDataFromBundle,
     mockData,
