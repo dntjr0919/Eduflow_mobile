@@ -1041,9 +1041,12 @@ async function _handleGetMobileBundle(db, params) {
             )
           : Promise.resolve(studentsCacheKey ? undefined : [])),
     isStudentScoped && sidIn.length > 0
-      ? db.collection('일일_출결').where('student_id', 'in', sidIn).limit(30).get().then(_snapToRows)
+      ? db.collection('일일_출결').where('student_id', 'in', sidIn).limit(200).get().then(_snapToRows)
       : (gradeIn.length > 0
-          ? _queryTeacherClassScoped(db, '일일_출결', gradeNum, classNum, gradeIn, 35)
+          ? Promise.all([
+              db.collection('일일_출결').where('date', '==', todayStr).limit(300).get().then(_snapToRows).catch(() => []),
+              db.collection('일일_출결').where('teacher_confirmed', '==', false).limit(100).get().then(_snapToRows).catch(() => []),
+            ]).then(([todayRows, unconfirmedRows]) => _mergeRowsById(todayRows, unconfirmedRows))
           : Promise.resolve([])),
     isStudentScoped && sidIn.length > 0
       ? db.collection('서류_추적').where('student_id', 'in', sidIn).limit(20).get().then(_snapToRows)

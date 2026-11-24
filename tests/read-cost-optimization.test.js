@@ -241,3 +241,74 @@ test('fetch_pending_remote_tasks queries active exec_status and falls back safel
   assert.equal(res2.status, 200);
   assert.deepEqual(res2.json.tasks.map((x) => x.remote_id), ['t_pending']);
 });
+
+test('_handleGetMobileBundle fetches 100% of today attendance and unconfirmed records even when 50+ past docs exist', async () => {
+  const todayStr = _kstDateStr();
+  const attendanceDocs = {};
+  for (let i = 1; i <= 50; i += 1) {
+    const sid = `104${String(i).padStart(2, '0')}`;
+    attendanceDocs[`att_20261101_${sid}`] = {
+      remote_id: `att_20261101_${sid}`,
+      date: '2026-11-01',
+      student_id: sid,
+      grade: 1,
+      class_no: 4,
+      school_code: '8140246',
+      attendance_type: '출석',
+      teacher_confirmed: true,
+    };
+  }
+  attendanceDocs.att_unconfirmed_old = {
+    remote_id: 'att_unconfirmed_old',
+    date: '2026-11-10',
+    student_id: '10401',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+    attendance_type: '결석',
+    teacher_confirmed: false,
+  };
+  attendanceDocs.att_today_1 = {
+    remote_id: 'att_today_1',
+    date: todayStr,
+    student_id: '10402',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+    attendance_type: '지각',
+    teacher_confirmed: true,
+  };
+  attendanceDocs.att_today_2 = {
+    remote_id: 'att_today_2',
+    date: todayStr,
+    student_id: '10403',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+    attendance_type: '출석',
+    teacher_confirmed: true,
+  };
+
+  const db = createTrackedDb({
+    '계정_교사': {
+      teacher_1: { teacher_id: 'teacher_1', name: '김교사', grade: 1, class_no: 4, school_code: '8140246' },
+    },
+    '일일_출결': attendanceDocs,
+  });
+
+  const res = await _handleGetMobileBundle(db, {
+    role: 'teacher',
+    user_id: 'teacher_1',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+    force: '1',
+  });
+
+  assert.equal(res.status, 200);
+  const returnedIds = new Set(res.json.attendance.map((a) => a.remote_id));
+  assert.equal(returnedIds.has('att_unconfirmed_old'), true);
+  assert.equal(returnedIds.has('att_today_1'), true);
+  assert.equal(returnedIds.has('att_today_2'), true);
+  assert.equal(returnedIds.size, 3);
+});
