@@ -1,5 +1,5 @@
-// 배포 시 버전을 올리면(예: v4 -> v5) activate 단계에서 이전 캐시가 자동 정리됩니다.
-const CACHE_VERSION = 'v5';
+// 배포 시 버전을 올리면(예: v5 -> v6) activate 단계에서 이전 캐시가 자동 정리됩니다.
+const CACHE_VERSION = 'v6';
 const CACHE_NAME = `eduflow-mobile-${CACHE_VERSION}`;
 const STATIC_ASSETS = [
   '/',
@@ -18,9 +18,23 @@ const STATIC_ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS)).catch(() => {})
+    caches.open(CACHE_NAME)
+      .then((cache) => Promise.all(
+        STATIC_ASSETS.map((asset) =>
+          fetch(asset, { cache: 'no-store' })
+            .then((resp) => (resp && resp.ok ? cache.put(asset, resp) : undefined))
+            .catch(() => {})
+        )
+      ))
+      .catch(() => {})
   );
   self.skipWaiting();
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (event) => {
@@ -42,10 +56,14 @@ self.addEventListener('fetch', (event) => {
   ) {
     return;
   }
+  const isSameOrigin = url.startsWith(self.location.origin);
+  const fetchReq = isSameOrigin && event.request.cache !== 'only-if-cached'
+    ? new Request(event.request, { cache: 'no-cache' })
+    : event.request;
   event.respondWith(
-    fetch(event.request)
+    fetch(fetchReq)
       .then((resp) => {
-        if (resp && resp.status === 200 && url.startsWith(self.location.origin)) {
+        if (resp && resp.status === 200 && isSameOrigin) {
           const clone = resp.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }

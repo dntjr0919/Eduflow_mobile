@@ -3080,15 +3080,20 @@ let _lastForegroundSyncAt = 0;
 function initServiceWorkerAndAutoSync() {
   if ('serviceWorker' in navigator) {
     let swReadyForReload = Boolean(navigator.serviceWorker.controller);
-    let refreshing = false;
+    let reloading = false;
 
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!swReadyForReload) {
         swReadyForReload = true;
         return;
       }
-      if (refreshing) return;
-      refreshing = true;
+      if (reloading) return;
+      try {
+        const lastReload = Number(sessionStorage.getItem('eduflow_sw_reloaded_at') || 0);
+        if (lastReload && Date.now() - lastReload < 5000) return;
+        sessionStorage.setItem('eduflow_sw_reloaded_at', String(Date.now()));
+      } catch (_) {}
+      reloading = true;
       showToast('새 버전이 적용되어 앱을 새로고침합니다.', '🔄');
       setTimeout(() => {
         window.location.reload();
@@ -3096,9 +3101,14 @@ function initServiceWorkerAndAutoSync() {
     });
 
     navigator.serviceWorker
-      .register('/sw.js')
+      .register('/sw.js', { updateViaCache: 'none' })
       .then((registration) => {
         _swRegistration = registration;
+        if (registration && registration.waiting) {
+          try {
+            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+          } catch (_) {}
+        }
       })
       .catch(() => {});
   }
@@ -3110,6 +3120,15 @@ function initServiceWorkerAndAutoSync() {
 
     if (_swRegistration && typeof _swRegistration.update === 'function') {
       _swRegistration.update().catch(() => {});
+    } else if ('serviceWorker' in navigator && typeof navigator.serviceWorker.getRegistration === 'function') {
+      navigator.serviceWorker.getRegistration('/sw.js')
+        .then((reg) => {
+          if (reg) {
+            _swRegistration = reg;
+            return reg.update();
+          }
+        })
+        .catch(() => {});
     }
 
     const dash = document.getElementById('dashboardScreen');
@@ -3167,6 +3186,7 @@ if (typeof module !== 'undefined' && module.exports) {
     safeImageUrl,
     normalizeCircularAttachmentUrl,
     hydrateMockDataFromBundle,
+    initServiceWorkerAndAutoSync,
     _startRealtimeListeners,
     _stopRealtimeListeners,
     _setChatTabRealtimeActive,
