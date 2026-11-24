@@ -506,3 +506,88 @@ test('sync_timetable_snapshots overwrites snapshot docs and cleans up legacy com
   assert.equal(makeCol('시간표_변동').has('tc_20261123_1_5_7'), false);
   assert.equal(makeCol('시간표_변동').has('manual_20261123_1_5_2'), true);
 });
+
+test('admin/index.html and admin/admin.js switchTab("tab-schedules") reveals tab and renderSchedulesTab renders 9 items and empty state', (t) => {
+  const adminHtml = fs.readFileSync(path.resolve(__dirname, '../admin/index.html'), 'utf8');
+  assert.match(adminHtml, /id="tab-schedules"[^>]*class="tab-content hidden/);
+  assert.match(adminHtml, /data-tab="tab-schedules"[^>]*id="nav-item-schedules"/);
+  assert.match(adminHtml, /data-tab="tab-schedules"[^>]*id="mobile-tab-btn-schedules"/);
+  assert.match(adminHtml, /id="badge-schedules-count"/);
+  assert.match(adminHtml, /id="schedules-tbody"/);
+
+  const { TAB_LIST, switchTab, renderSchedulesTab, adminState } = require('../admin/admin.js');
+  assert.ok(TAB_LIST.some((tItem) => tItem.tabId === 'tab-schedules' && tItem.navId === 'nav-item-schedules' && tItem.mobId === 'mobile-tab-btn-schedules'));
+
+  const makeMockEl = (initialClasses = []) => {
+    const cls = new Set(initialClasses);
+    return {
+      className: initialClasses.join(' '),
+      textContent: '',
+      innerHTML: '',
+      classList: {
+        contains: (c) => cls.has(c),
+        add: (c) => cls.add(c),
+        remove: (c) => cls.delete(c),
+        toggle: (c, force) => {
+          if (force === true) cls.add(c);
+          else if (force === false) cls.delete(c);
+          else if (cls.has(c)) cls.delete(c);
+          else cls.add(c);
+        },
+      },
+    };
+  };
+
+  const elements = {
+    'tab-letters': makeMockEl(['tab-content']),
+    'nav-item-letters': makeMockEl([]),
+    'mobile-tab-btn-letters': makeMockEl([]),
+    'tab-schedules': makeMockEl(['tab-content', 'hidden']),
+    'nav-item-schedules': makeMockEl([]),
+    'mobile-tab-btn-schedules': makeMockEl([]),
+    'badge-schedules-count': makeMockEl([]),
+    'schedules-tbody': makeMockEl([]),
+  };
+
+  const prevDocument = global.document;
+  const prevOverview = adminState.overview;
+  t.after(() => {
+    global.document = prevDocument;
+    adminState.overview = prevOverview;
+  });
+
+  global.document = {
+    getElementById: (id) => elements[id] || null,
+  };
+
+  const nineSchedules = Array.from({ length: 9 }, (_, idx) => ({
+    remote_id: `sc_${idx + 1}`,
+    title: idx === 8 ? null : `학사일정 ${idx + 1}`,
+    start_date: `2026-11-${String(10 + idx).padStart(2, '0')}`,
+    end_date: idx % 2 === 0 ? undefined : `2026-11-${String(11 + idx).padStart(2, '0')}`,
+    category: idx === 0 ? '업무' : idx === 1 ? '수행평가' : undefined,
+    is_private: idx === 0 ? true : 'false',
+    memo: idx === 2 ? null : `메모 ${idx + 1}`,
+  }));
+
+  adminState.overview = { schedules: nineSchedules };
+  switchTab('tab-schedules');
+
+  assert.equal(elements['tab-schedules'].classList.contains('hidden'), false);
+  assert.equal(elements['tab-letters'].classList.contains('hidden'), true);
+  assert.match(elements['nav-item-schedules'].className, /bg-indigo-600/);
+  assert.match(elements['mobile-tab-btn-schedules'].className, /bg-indigo-600/);
+  assert.equal(elements['badge-schedules-count'].textContent, '9');
+
+  const rowMatches = elements['schedules-tbody'].innerHTML.match(/<tr\b/g) || [];
+  assert.equal(rowMatches.length, 9);
+  assert.match(elements['schedules-tbody'].innerHTML, /학사일정 1/);
+  assert.match(elements['schedules-tbody'].innerHTML, /교사 개인/);
+  assert.match(elements['schedules-tbody'].innerHTML, /수행평가/);
+  assert.match(elements['schedules-tbody'].innerHTML, /공개/);
+
+  adminState.overview = { schedules: [] };
+  renderSchedulesTab();
+  assert.equal(elements['badge-schedules-count'].textContent, '0');
+  assert.match(elements['schedules-tbody'].innerHTML, /등록된 학사일정이 없습니다\./);
+});

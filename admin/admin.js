@@ -2239,6 +2239,7 @@ const TAB_LIST = [
   { tabId: 'tab-ledger', navId: 'nav-item-ledger', mobId: 'mobile-tab-btn-ledger' },
   { tabId: 'tab-counsel', navId: 'nav-item-counsel', mobId: 'mobile-tab-btn-counsel' },
   { tabId: 'tab-lessons', navId: 'nav-item-lessons', mobId: 'mobile-tab-btn-lessons' },
+  { tabId: 'tab-schedules', navId: 'nav-item-schedules', mobId: 'mobile-tab-btn-schedules' },
 ];
 
 function toggleMobileSidebar(forceClose = false) {
@@ -2274,6 +2275,9 @@ function switchTab(activeTabId) {
         : 'px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:bg-slate-100 whitespace-nowrap flex items-center space-x-1.5';
     }
   });
+  if (activeTabId === 'tab-schedules') {
+    renderSchedulesTab();
+  }
   toggleMobileSidebar(true);
 }
 
@@ -2944,7 +2948,11 @@ async function deleteSubjectAttRow(remoteId, studentName) {
 }
 
 function renderSchedulesTab() {
-  const schedules = (adminState.overview && adminState.overview.schedules) || [];
+  if (typeof document === 'undefined') return;
+  const rawSchedules = (adminState && adminState.overview && Array.isArray(adminState.overview.schedules))
+    ? adminState.overview.schedules
+    : [];
+  const schedules = rawSchedules.filter((s) => s && typeof s === 'object');
   const badgeEl = document.getElementById('badge-schedules-count');
   if (badgeEl) badgeEl.textContent = String(schedules.length);
   const tbody = document.getElementById('schedules-tbody');
@@ -2956,7 +2964,9 @@ function renderSchedulesTab() {
         const start = String(s.start_date || s.date || '-');
         const end = String(s.end_date || start);
         const periodText = start === end ? start : `${start} ~ ${end}`;
-        const isPriv = Boolean(s.is_private || String(s.visibility || '').toLowerCase() === 'private');
+        const isPriv = s.is_private === true ||
+          String(s.is_private || '').trim().toLowerCase() === 'true' ||
+          String(s.visibility || '').trim().toLowerCase() === 'private';
         return `
           <tr class="hover:bg-slate-50">
             <td class="py-2.5 px-4 font-mono text-[11px] text-slate-600 whitespace-nowrap">${escapeHtml(periodText)}</td>
@@ -2974,17 +2984,37 @@ function renderSchedulesTab() {
 }
 
 function openScheduleModal(remoteId = '') {
-  const list = (adminState.overview && adminState.overview.schedules) || [];
+  if (typeof document === 'undefined') return;
+  const modal = document.getElementById('schedule-modal');
+  if (!modal) return;
+  const rawList = (adminState && adminState.overview && Array.isArray(adminState.overview.schedules))
+    ? adminState.overview.schedules
+    : [];
+  const list = rawList.filter((s) => s && typeof s === 'object');
   const target = remoteId ? list.find((s) => String(s.remote_id || s.id || '') === String(remoteId)) : null;
-  document.getElementById('schedule-modal-title').textContent = target ? '학사일정 수정' : '학사일정 추가';
-  document.getElementById('sc-remote-id').value = target ? String(target.remote_id || target.id || '') : '';
-  document.getElementById('sc-title').value = target ? String(target.title || '') : '';
-  document.getElementById('sc-start-date').value = target ? String(target.start_date || target.date || '') : getLocalTodayStr();
-  document.getElementById('sc-end-date').value = target ? String(target.end_date || target.start_date || target.date || '') : getLocalTodayStr();
-  document.getElementById('sc-category').value = target ? String(target.category || '학사일정') : '학사일정';
-  document.getElementById('sc-is-private').checked = Boolean(target && (target.is_private || String(target.visibility || '').toLowerCase() === 'private'));
-  document.getElementById('sc-memo').value = target ? String(target.memo || target.description || '') : '';
-  document.getElementById('schedule-modal').classList.remove('hidden');
+  const titleEl = document.getElementById('schedule-modal-title');
+  const ridEl = document.getElementById('sc-remote-id');
+  const scTitleEl = document.getElementById('sc-title');
+  const startEl = document.getElementById('sc-start-date');
+  const endEl = document.getElementById('sc-end-date');
+  const catEl = document.getElementById('sc-category');
+  const privEl = document.getElementById('sc-is-private');
+  const memoEl = document.getElementById('sc-memo');
+  if (titleEl) titleEl.textContent = target ? '학사일정 수정' : '학사일정 추가';
+  if (ridEl) ridEl.value = target ? String(target.remote_id || target.id || '') : '';
+  if (scTitleEl) scTitleEl.value = target ? String(target.title || '') : '';
+  if (startEl) startEl.value = target ? String(target.start_date || target.date || '') : getLocalTodayStr();
+  if (endEl) endEl.value = target ? String(target.end_date || target.start_date || target.date || '') : getLocalTodayStr();
+  if (catEl) catEl.value = target ? String(target.category || '학사일정') : '학사일정';
+  if (privEl) {
+    privEl.checked = Boolean(target && (
+      target.is_private === true ||
+      String(target.is_private || '').trim().toLowerCase() === 'true' ||
+      String(target.visibility || '').trim().toLowerCase() === 'private'
+    ));
+  }
+  if (memoEl) memoEl.value = target ? String(target.memo || target.description || '') : '';
+  modal.classList.remove('hidden');
 }
 
 function closeScheduleModal() {
@@ -3033,5 +3063,9 @@ if (typeof module !== 'undefined' && module.exports) {
     normalizeLessonRecord,
     buildLessonMatrixModel,
     _naturalClassSort,
+    TAB_LIST,
+    switchTab,
+    renderSchedulesTab,
+    adminState,
   };
 }
