@@ -356,6 +356,112 @@ function _sha256Hex(val) {
   return crypto.createHash('sha256').update(String(val || ''), 'utf8').digest('hex');
 }
 
+const DEFAULT_SESSION_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+function _getSessionTokenSecret() {
+  const envSecret = String(
+    process.env.AUTH_TOKEN_SECRET ||
+    process.env.JWT_SECRET ||
+    process.env.SESSION_SECRET ||
+    ''
+  ).trim();
+  if (envSecret) return envSecret;
+  const keyMaterial = String(
+    process.env.FIREBASE_PRIVATE_KEY ||
+    process.env.FIREBASE_SERVICE_ACCOUNT_KEY ||
+    'eduflow_mobile_dev_fallback_secret'
+  );
+  return crypto.createHash('sha256').update(`eduflow_session:${keyMaterial}`, 'utf8').digest('hex');
+}
+
+function _base64UrlEncode(input) {
+  const buf = Buffer.isBuffer(input) ? input : Buffer.from(String(input), 'utf8');
+  return buf.toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+function _base64UrlDecode(str) {
+  const s = String(str || '').replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
+  return Buffer.from(s + pad, 'base64');
+}
+
+function _signSessionToken(claims = {}, ttlSeconds = DEFAULT_SESSION_TOKEN_TTL_SECONDS) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const ttl = Number.isFinite(Number(ttlSeconds)) && Number(ttlSeconds) > 0
+    ? Math.floor(Number(ttlSeconds))
+    : DEFAULT_SESSION_TOKEN_TTL_SECONDS;
+  const headerB64 = _base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const payload = {
+    ...claims,
+    iat: nowSec,
+    exp: nowSec + ttl,
+  };
+  const payloadB64 = _base64UrlEncode(JSON.stringify(payload));
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const sig = crypto.createHmac('sha256', _getSessionTokenSecret()).update(signingInput, 'utf8').digest();
+  return {
+    token: `${signingInput}.${_base64UrlEncode(sig)}`,
+    expiresAt: payload.exp * 1000,
+  };
+}
+
+function _verifySessionToken(token) {
+  const raw = String(token || '').trim();
+  if (!raw) return { ok: false, error: '인증 토큰이 필요합니다.' };
+  const parts = raw.split('.');
+  if (parts.length !== 3) {
+    return { ok: false, error: '유효하지 않은 인증 토큰 형식입니다.' };
+  }
+  const [headerB64, payloadB64, sigB64] = parts;
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const expectedSig = crypto.createHmac('sha256', _getSessionTokenSecret()).update(signingInput, 'utf8').digest();
+  let providedSig;
+  try {
+    providedSig = _base64UrlDecode(sigB64);
+  } catch (_) {
+    return { ok: false, error: '인증 토큰 서명을 디코딩할 수 없습니다.' };
+  }
+  if (providedSig.length !== expectedSig.length || !crypto.timingSafeEqual(providedSig, expectedSig)) {
+    return { ok: false, error: '인증 토큰 서명이 유효하지 않습니다.' };
+  }
+  let claims;
+  try {
+    claims = JSON.parse(_base64UrlDecode(payloadB64).toString('utf8'));
+  } catch (_) {
+    return { ok: false, error: '인증 토큰 페이로드가 손상되었습니다.' };
+  }
+  if (!claims || typeof claims !== 'object' || !claims.sub || !claims.role) {
+    return { ok: false, error: '인증 토큰 클레임이 올바르지 않습니다.' };
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(Number(claims.exp)) || Number(claims.exp) <= nowSec) {
+    return { ok: false, error: '세션이 만료되었습니다. 다시 로그인해 주세요.' };
+  }
+  return { ok: true, claims };
+}
+
+function _extractSessionToken(params, req = null) {
+  const fromParams = String((params && (params.auth_token || params.token || params._bearer_token)) || '').trim();
+  if (fromParams) return fromParams;
+  if (req && req.headers) {
+    const authHeader = String(req.headers.authorization || req.headers.Authorization || '').trim();
+    if (/^Bearer\s+/i.test(authHeader)) {
+      return authHeader.replace(/^Bearer\s+/i, '').trim();
+    }
+  }
+  return '';
+}
+
+function _hasTeacherAuthCredentials(params) {
+  if (!params || typeof params !== 'object') return false;
+  return Boolean(
+    _extractSessionToken(params) ||
+    params.auth_teacher_id ||
+    params.auth_password ||
+    params.auth_password_hash
+  );
+}
+
 function _verifyPassword(storedHash, rawPassword, providedHash) {
   const stored = String(storedHash || '').trim();
   if (!stored) return true;
@@ -457,7 +563,45 @@ async function _handleLogin(db, body) {
 
   const safeUser = { ...userDoc, role, phone: String(userDoc.phone || '') };
   delete safeUser.password_hash;
-  return { status: 200, json: { ok: true, user: safeUser } };
+  const canonicalSub = String(
+    userDoc.teacher_id || userDoc.student_id || userDoc.parent_id || userDoc.remote_id || userId
+  ).trim();
+  const { token, expiresAt } = _signSessionToken({
+    sub: canonicalSub,
+    role,
+    sc: String(userDoc.school_code || userDoc.neis_school_code || '').trim(),
+  });
+  return { status: 200, json: { ok: true, user: safeUser, token, expires_at: expiresAt } };
+}
+
+async function _handleVerifySession(db, params, req = null) {
+  const token = _extractSessionToken(params, req);
+  const verified = _verifySessionToken(token);
+  if (!verified.ok) {
+    return { status: 401, json: { ok: false, error: verified.error } };
+  }
+  const { claims } = verified;
+  const role = String(claims.role || '').trim().toLowerCase();
+  const userId = String(claims.sub || '').trim();
+  const { userDoc } = await _findAccountDoc(db, role, userId);
+  if (!userDoc) {
+    return { status: 401, json: { ok: false, error: '등록되지 않은 계정입니다.' } };
+  }
+  const accStatus = String(userDoc.status || 'active').trim().toLowerCase();
+  if (accStatus === 'pending' || accStatus === 'rejected' || (accStatus !== '' && accStatus !== 'active')) {
+    return { status: 403, json: { ok: false, error: '활성화(active)된 계정만 사용할 수 있습니다.' } };
+  }
+  const safeUser = { ...userDoc, role, phone: String(userDoc.phone || '') };
+  delete safeUser.password_hash;
+  return {
+    status: 200,
+    json: {
+      ok: true,
+      user: safeUser,
+      token,
+      expires_at: Number(claims.exp) * 1000,
+    },
+  };
 }
 
 async function _handleChangePassword(db, body) {
@@ -489,7 +633,15 @@ async function _handleChangePassword(db, body) {
     { merge: true }
   );
 
-  return { status: 200, json: { ok: true, message: '비밀번호가 안전하게 변경되었습니다.' } };
+  const canonicalSub = String(
+    userDoc.teacher_id || userDoc.student_id || userDoc.parent_id || userDoc.remote_id || userId
+  ).trim();
+  const { token, expiresAt } = _signSessionToken({
+    sub: canonicalSub,
+    role,
+    sc: String(userDoc.school_code || userDoc.neis_school_code || '').trim(),
+  });
+  return { status: 200, json: { ok: true, message: '비밀번호가 안전하게 변경되었습니다.', token, expires_at: expiresAt } };
 }
 
 async function _handleChangeCustomId(db, body) {
@@ -1159,6 +1311,10 @@ module.exports = async function handler(req, res) {
   }
 
   const params = _parsePayload(req);
+  const bearerToken = _extractSessionToken(params, req);
+  if (bearerToken && !params._bearer_token) {
+    params._bearer_token = bearerToken;
+  }
   if (params.action !== undefined && typeof params.action !== 'string') {
     return res.status(400).json({ ok: false, error: 'action 파라미터 형식이 올바르지 않습니다.' });
   }
@@ -1172,6 +1328,11 @@ module.exports = async function handler(req, res) {
 
     if (action === 'login') {
       const result = await _handleLogin(db, params);
+      return res.status(result.status).json(result.json);
+    }
+
+    if (action === 'verify_session') {
+      const result = await _handleVerifySession(db, params, req);
       return res.status(result.status).json(result.json);
     }
 
@@ -1225,7 +1386,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'review_registration') {
-      const hasAdminAuth = Boolean(params.auth_teacher_id && (params.auth_password || params.auth_password_hash));
+      const hasAdminAuth = Boolean(_extractSessionToken(params) || (params.auth_teacher_id && (params.auth_password || params.auth_password_hash)));
       let adminAuth = null;
       if (hasAdminAuth) {
         adminAuth = await _verifyActiveTeacherAuth(db, params);
@@ -1306,7 +1467,7 @@ module.exports = async function handler(req, res) {
       const attDate = String(params.date || new Date().toISOString().slice(0, 10));
       const sid = String(params.student_id || '').trim();
       const actorRole = String(params.role || '').trim().toLowerCase();
-      const hasTeacherAuth = Boolean(params.auth_teacher_id || params.auth_password || params.auth_password_hash);
+      const hasTeacherAuth = _hasTeacherAuthCredentials(params);
       let teacherAuth = null;
       if (actorRole === 'teacher' || hasTeacherAuth) {
         teacherAuth = await _verifyActiveTeacherAuth(db, params);
@@ -1409,7 +1570,7 @@ module.exports = async function handler(req, res) {
       const rid = String(params.remote_id || '').trim();
       if (!rid) return res.status(400).json({ ok: false, error: 'remote_id가 필요합니다.' });
       const actorRole = String(params.role || '').trim().toLowerCase();
-      const hasTeacherAuth = Boolean(params.auth_teacher_id || params.auth_password || params.auth_password_hash);
+      const hasTeacherAuth = _hasTeacherAuthCredentials(params);
       const existingDoc = await db.collection('일일_출결').doc(rid).get();
       if (actorRole === 'teacher' || hasTeacherAuth) {
         const adminAuth = await _verifyActiveTeacherAuth(db, params);
@@ -1455,7 +1616,7 @@ module.exports = async function handler(req, res) {
     if (action === 'confirm_attendance') {
       const rid = String(params.remote_id || '').trim();
       if (!rid) return res.status(400).json({ ok: false, error: 'remote_id가 필요합니다.' });
-      if (params.auth_teacher_id && (params.auth_password || params.auth_password_hash)) {
+      if (_extractSessionToken(params) || (params.auth_teacher_id && (params.auth_password || params.auth_password_hash))) {
         const adminAuth = await _verifyActiveTeacherAuth(db, params);
         if (!adminAuth.ok) {
           return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
@@ -1529,7 +1690,7 @@ module.exports = async function handler(req, res) {
 
     if (action === 'upsert_document_tracking' || action === 'mark_document_submitted' || action === 'confirm_document') {
       const actorRole = String(params.role || '').trim().toLowerCase();
-      const hasTeacherAuth = Boolean(params.auth_teacher_id || params.auth_password || params.auth_password_hash);
+      const hasTeacherAuth = _hasTeacherAuthCredentials(params);
       let teacherAuth = null;
       if ((action === 'confirm_document' && hasTeacherAuth) || (action === 'upsert_document_tracking' && (actorRole === 'teacher' || hasTeacherAuth))) {
         teacherAuth = await _verifyActiveTeacherAuth(db, params);
@@ -1940,7 +2101,7 @@ module.exports = async function handler(req, res) {
 
     if (action === 'send_chat_message') {
       const senderRole = String(params.sender_role || 'student').trim().toLowerCase();
-      const hasTeacherAuth = Boolean(params.auth_teacher_id || params.auth_password || params.auth_password_hash);
+      const hasTeacherAuth = _hasTeacherAuthCredentials(params);
       const roomId = String(params.room_id || `ROOM-${params.student_id || 'DEFAULT'}`).trim();
       const inferredSid = String(params.student_id || params.receiver_id || (roomId.startsWith('ROOM-') ? roomId.slice(5) : '')).trim();
       let teacherAuth = null;
@@ -1996,7 +2157,7 @@ module.exports = async function handler(req, res) {
     if (action === 'mark_chat_read') {
       const roomId = String(params.room_id || '').trim();
       const readerRole = String(params.reader_role || 'teacher').trim().toLowerCase();
-      const hasTeacherAuth = Boolean(params.auth_teacher_id || params.auth_password || params.auth_password_hash);
+      const hasTeacherAuth = _hasTeacherAuthCredentials(params);
       let teacherAuth = null;
       if (readerRole === 'teacher' || hasTeacherAuth) {
         teacherAuth = await _verifyActiveTeacherAuth(db, params);
@@ -2194,9 +2355,24 @@ module.exports = async function handler(req, res) {
 };
 
 async function _verifyActiveTeacherAuth(db, params) {
-  const teacherId = String(params.auth_teacher_id || params.teacher_id || params.requester_id || '').trim();
+  const sessionToken = _extractSessionToken(params);
+  let teacherId = String(params.auth_teacher_id || params.teacher_id || params.requester_id || '').trim();
   const rawPw = String(params.auth_password || params.password || '');
   const pwHash = String(params.auth_password_hash || params.password_hash || '');
+
+  let verifiedClaims = null;
+  if (sessionToken) {
+    const verified = _verifySessionToken(sessionToken);
+    if (!verified.ok) {
+      return { ok: false, status: 401, error: verified.error };
+    }
+    verifiedClaims = verified.claims;
+    if (String(verifiedClaims.role || '').trim().toLowerCase() !== 'teacher') {
+      return { ok: false, status: 403, error: '교사 세션 토큰이 아닙니다.' };
+    }
+    teacherId = String(verifiedClaims.sub || teacherId || '').trim();
+  }
+
   if (!teacherId) {
     return { ok: false, status: 401, error: '교사 인증 ID(auth_teacher_id)가 필요합니다.' };
   }
@@ -2208,9 +2384,23 @@ async function _verifyActiveTeacherAuth(db, params) {
   if (accStatus !== '' && accStatus !== 'active') {
     return { ok: false, status: 403, error: '활성화(active)된 교사 계정만 사용할 수 있습니다.' };
   }
-  if (!_verifyPassword(userDoc.password_hash, rawPw, pwHash)) {
+
+  if (verifiedClaims) {
+    const requestedTid = String(params.auth_teacher_id || '').trim();
+    const canonicalTid = String(userDoc.teacher_id || userDoc.remote_id || teacherId).trim();
+    if (
+      requestedTid &&
+      requestedTid !== canonicalTid &&
+      requestedTid !== String(userDoc.login_id || '').trim() &&
+      requestedTid !== String(userDoc.custom_id || '').trim() &&
+      requestedTid !== String(verifiedClaims.sub || '').trim()
+    ) {
+      return { ok: false, status: 403, error: '토큰과 요청된 교사 ID가 일치하지 않습니다.' };
+    }
+  } else if (!_verifyPassword(userDoc.password_hash, rawPw, pwHash)) {
     return { ok: false, status: 401, error: '교사 인증 비밀번호가 일치하지 않습니다.' };
   }
+
   const safeTeacher = { ...userDoc };
   delete safeTeacher.password_hash;
   return {
@@ -4502,6 +4692,10 @@ module.exports._testHelpers = {
   _validateStringInput,
   _handleGetMobileBundle,
   _handleLogin,
+  _handleVerifySession,
+  _signSessionToken,
+  _verifySessionToken,
+  _extractSessionToken,
   _handleUpdateMyPhone,
   _normalizePhoneNumber,
   _matchesTenant,

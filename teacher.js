@@ -3263,10 +3263,12 @@ const _lessonModalState = {
 function _getTeacherAuthParams() {
   const saved = typeof _loadAutoLoginAuth === 'function' ? _loadAutoLoginAuth() : null;
   const cu = mockData.currentUser || {};
+  const token = (typeof state !== 'undefined' && state && state.sessionToken)
+    ? String(state.sessionToken).trim()
+    : String((saved && saved.token) || '').trim();
   return {
     auth_teacher_id: (saved && saved.userId) || cu.userId || '',
-    auth_password: (saved && saved.password) || '',
-    auth_password_hash: (saved && saved.passwordHash) || '',
+    ...(token ? { auth_token: token } : {}),
   };
 }
 
@@ -3441,6 +3443,9 @@ if (typeof globalThis !== 'undefined') {
     _getRecentLessonProgressDates,
     _getDefaultLessonImportDate,
     _getLessonProgressByDate,
+    saveTeacherLessonAttendance,
+    saveTeacherLessonProgress,
+    _lessonModalState,
     renderTeacherHome,
     renderTeacherDocs,
     renderTeacherChatRooms,
@@ -3670,35 +3675,57 @@ function openTeacherLessonModal(scheduleIndex) {
   openModal('teacherLessonModal');
 }
 
+function _restoreLessonSaveButton(btnEl, origHtml, origDisabled) {
+  if (!btnEl) return;
+  if (btnEl.dataset && btnEl.dataset.loading === '1') {
+    btnEl.innerHTML = origHtml;
+    btnEl.disabled = origDisabled;
+    delete btnEl.dataset.loading;
+    if (btnEl.classList) btnEl.classList.remove('opacity-75', 'cursor-not-allowed');
+  }
+}
+
 async function saveTeacherLessonAttendance(btnEl) {
   if (!_lessonModalState.students || _lessonModalState.students.length === 0) {
     showToast('저장할 학생 명렬이 없습니다.', '⚠️');
     return;
   }
-  await withButtonLoading(btnEl, '저장 중...', async () => {
-    const payload = {
-      ..._getTeacherAuthParams(),
-      date: _lessonModalState.dateStr,
-      period: _lessonModalState.periodNum,
-      subject: _lessonModalState.subject,
-      class_label: _lessonModalState.classLabel,
-      roster_key: _lessonModalState.rosterKey,
-      records: _lessonModalState.students,
-    };
-    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
-      const res = await gasApi.post('save_subject_attendance_batch', payload);
-      if (Array.isArray(res.items)) {
-        const rest = (mockData.subjectAttendance || []).filter((a) => !(
-          String(a.date || '').slice(0, 10) === _lessonModalState.dateStr &&
-          String(a.period || '') === String(_lessonModalState.periodNum) &&
-          String(a.subject || '') === _lessonModalState.subject &&
-          String(a.class_label || '') === _lessonModalState.classLabel
-        ));
-        mockData.subjectAttendance = [...res.items, ...rest];
+  const origHtml = btnEl ? btnEl.innerHTML : '';
+  const origDisabled = btnEl ? btnEl.disabled : false;
+  try {
+    await withButtonLoading(btnEl, '저장 중...', async () => {
+      const payload = {
+        ..._getTeacherAuthParams(),
+        date: _lessonModalState.dateStr,
+        period: _lessonModalState.periodNum,
+        subject: _lessonModalState.subject,
+        class_label: _lessonModalState.classLabel,
+        roster_key: _lessonModalState.rosterKey,
+        records: _lessonModalState.students,
+      };
+      if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+        const res = await gasApi.post('save_subject_attendance_batch', payload);
+        if (res && res.ok === false) {
+          throw new Error(res.error || '교과 출결 저장에 실패했습니다.');
+        }
+        if (res && Array.isArray(res.items)) {
+          const rest = (mockData.subjectAttendance || []).filter((a) => !(
+            String(a.date || '').slice(0, 10) === _lessonModalState.dateStr &&
+            String(a.period || '') === String(_lessonModalState.periodNum) &&
+            String(a.subject || '') === _lessonModalState.subject &&
+            String(a.class_label || '') === _lessonModalState.classLabel
+          ));
+          mockData.subjectAttendance = [...res.items, ...rest];
+        }
       }
-    }
-    showToast(`${_lessonModalState.classLabel} ${_lessonModalState.subject} 출결이 저장되었습니다.`, '✅');
-  });
+      showToast(`${_lessonModalState.classLabel} ${_lessonModalState.subject} 출결이 저장되었습니다.`, '✅');
+    });
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : '알 수 없는 오류';
+    showToast(`교과 출결 저장 실패: ${msg}`, '⚠️');
+  } finally {
+    _restoreLessonSaveButton(btnEl, origHtml, origDisabled);
+  }
 }
 
 function _getRecentLessonProgressDates(progressList, limit = 5) {
@@ -3844,33 +3871,45 @@ async function saveTeacherLessonProgress(btnEl) {
     showToast('단원명 또는 수업 내용을 입력해 주세요.', '⚠️');
     return;
   }
-  await withButtonLoading(btnEl, '저장 중...', async () => {
-    const payload = {
-      ..._getTeacherAuthParams(),
-      remote_id: _lessonModalState.progressRemoteId,
-      date: _lessonModalState.dateStr,
-      period: _lessonModalState.periodNum,
-      subject: _lessonModalState.subject,
-      class_label: _lessonModalState.classLabel,
-      roster_key: _lessonModalState.rosterKey,
-      unit,
-      lesson_no: lessonNo,
-      content,
-      next_note: nextNote,
-    };
-    if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
-      const res = await gasApi.post('upsert_lesson_progress', payload);
-      if (res.item) {
-        _lessonModalState.progressRemoteId = res.remote_id;
-        const list = Array.isArray(mockData.lessonProgress) ? mockData.lessonProgress : [];
-        const idx = list.findIndex((p) => String(p.remote_id || '') === res.remote_id);
-        if (idx >= 0) list[idx] = res.item;
-        else list.unshift(res.item);
-        mockData.lessonProgress = list;
+  const origHtml = btnEl ? btnEl.innerHTML : '';
+  const origDisabled = btnEl ? btnEl.disabled : false;
+  try {
+    await withButtonLoading(btnEl, '저장 중...', async () => {
+      const payload = {
+        ..._getTeacherAuthParams(),
+        remote_id: _lessonModalState.progressRemoteId,
+        date: _lessonModalState.dateStr,
+        period: _lessonModalState.periodNum,
+        subject: _lessonModalState.subject,
+        class_label: _lessonModalState.classLabel,
+        roster_key: _lessonModalState.rosterKey,
+        unit,
+        lesson_no: lessonNo,
+        content,
+        next_note: nextNote,
+      };
+      if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+        const res = await gasApi.post('upsert_lesson_progress', payload);
+        if (res && res.ok === false) {
+          throw new Error(res.error || '수업 진도 저장에 실패했습니다.');
+        }
+        if (res && res.item) {
+          _lessonModalState.progressRemoteId = res.remote_id;
+          const list = Array.isArray(mockData.lessonProgress) ? mockData.lessonProgress : [];
+          const idx = list.findIndex((p) => String(p.remote_id || '') === res.remote_id);
+          if (idx >= 0) list[idx] = res.item;
+          else list.unshift(res.item);
+          mockData.lessonProgress = list;
+        }
       }
-    }
-    showToast(`${_lessonModalState.classLabel} ${_lessonModalState.subject} 수업 진도가 저장되었습니다.`, '📖');
-  });
+      showToast(`${_lessonModalState.classLabel} ${_lessonModalState.subject} 수업 진도가 저장되었습니다.`, '📖');
+    });
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : '알 수 없는 오류';
+    showToast(`수업 진도 저장 실패: ${msg}`, '⚠️');
+  } finally {
+    _restoreLessonSaveButton(btnEl, origHtml, origDisabled);
+  }
 }
 
 if (typeof module !== 'undefined' && module.exports) {
@@ -3904,6 +3943,9 @@ if (typeof module !== 'undefined' && module.exports) {
     _getRecentLessonProgressDates,
     _getDefaultLessonImportDate,
     _getLessonProgressByDate,
+    saveTeacherLessonAttendance,
+    saveTeacherLessonProgress,
+    _lessonModalState,
     renderTeacherHome,
     renderTeacherDocs,
     renderTeacherChatRooms,

@@ -154,15 +154,36 @@ const gasApi = {
     }
     return String(text || '');
   },
+  _getSessionToken() {
+    if (typeof state !== 'undefined' && state && state.sessionToken) {
+      return String(state.sessionToken).trim();
+    }
+    const saved = typeof _loadAutoLoginAuth === 'function' ? _loadAutoLoginAuth() : null;
+    return String((saved && saved.token) || '').trim();
+  },
+  _getAuthHeaders() {
+    const token = this._getSessionToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  },
   async get(action, params = {}) {
     if (!this.isConfigured()) throw this._demoError('로컬 실행 또는 데모 모드입니다.');
     const qs = new URLSearchParams({ action, ...params });
     const resp = await fetch(`${GAS_PROXY_ENDPOINT}?${qs.toString()}`, {
       method: 'GET',
+      headers: this._getAuthHeaders(),
       cache: 'no-store',
       redirect: 'follow'
     });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+      let errMsg = `HTTP ${resp.status}`;
+      try {
+        const errJson = await resp.json();
+        if (errJson && errJson.error) errMsg = errJson.error;
+      } catch (_) {}
+      const err = new Error(errMsg);
+      if (resp.status === 401 || resp.status === 403) err.isServerRejection = true;
+      throw err;
+    }
     const json = await resp.json();
     if (json && json.demo === true) {
       this.demoMode = true;
@@ -180,11 +201,20 @@ const gasApi = {
     const body = { action, ...payload };
     const resp = await fetch(GAS_PROXY_ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json;charset=utf-8' },
+      headers: { 'Content-Type': 'application/json;charset=utf-8', ...this._getAuthHeaders() },
       body: JSON.stringify(body),
       redirect: 'follow'
     });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+      let errMsg = `HTTP ${resp.status}`;
+      try {
+        const errJson = await resp.json();
+        if (errJson && errJson.error) errMsg = errJson.error;
+      } catch (_) {}
+      const err = new Error(errMsg);
+      if (resp.status === 401 || resp.status === 403) err.isServerRejection = true;
+      throw err;
+    }
     const json = await resp.json();
     if (json && json.demo === true) {
       this.demoMode = true;
@@ -653,13 +683,14 @@ const BUNDLE_CACHE_STORAGE_KEY = 'eduflow_cached_bundle';
 
 function _saveAutoLoginAuth(auth) {
   try {
-    localStorage.setItem(AUTO_LOGIN_STORAGE_KEY, JSON.stringify({
+    const clean = {
       role: auth.role,
       userId: auth.userId,
-      password: auth.password || '',
-      passwordHash: auth.passwordHash || '',
+      token: String(auth.token || ''),
+      expiresAt: Number(auth.expiresAt || 0),
       savedAt: Date.now()
-    }));
+    };
+    localStorage.setItem(AUTO_LOGIN_STORAGE_KEY, JSON.stringify(clean));
   } catch (err) {
     console.warn('[EduFlow Auth] 자동 로그인 저장 실패:', err);
   }
@@ -671,7 +702,32 @@ function _loadAutoLoginAuth() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || !parsed.role || !parsed.userId) return null;
-    return parsed;
+    // 기존 버전에서 저장된 평문/해시 비밀번호가 남아 있으면 즉시 제거
+    if (parsed.password || parsed.passwordHash) {
+      if (parsed.token) {
+        _saveAutoLoginAuth({
+          role: parsed.role,
+          userId: parsed.userId,
+          token: parsed.token,
+          expiresAt: parsed.expiresAt || 0,
+        });
+      } else {
+        _clearAutoLoginAuth();
+        return null;
+      }
+    }
+    if (!parsed.token) return null;
+    if (parsed.expiresAt && Number(parsed.expiresAt) <= Date.now()) {
+      _clearAutoLoginAuth();
+      return null;
+    }
+    return {
+      role: parsed.role,
+      userId: parsed.userId,
+      token: String(parsed.token),
+      expiresAt: Number(parsed.expiresAt || 0),
+      savedAt: Number(parsed.savedAt || 0),
+    };
   } catch (_) {
     return null;
   }
@@ -736,15 +792,29 @@ async function _performLoginAuth(role, userId, password, precomputedHash = '', o
 
   if (gasApi.isConfigured()) {
     try {
-      if (!pwHash && password) {
-        pwHash = await gasApi.sha256Hex(password);
+      let res;
+      if (options.token) {
+        state.sessionToken = String(options.token);
+        res = await gasApi.post('verify_session', {
+          role,
+          user_id: userId,
+          auth_token: String(options.token),
+        });
+      } else {
+        if (!pwHash && password) {
+          pwHash = await gasApi.sha256Hex(password);
+        }
+        res = await gasApi.post('login', {
+          role,
+          user_id: userId,
+          password: password,
+          password_hash: pwHash
+        });
       }
-      const res = await gasApi.post('login', {
-        role,
-        user_id: userId,
-        password: password,
-        password_hash: pwHash
-      });
+      if (res.token) {
+        state.sessionToken = String(res.token);
+        state.sessionExpiresAt = Number(res.expires_at || 0);
+      }
       if (res.user) {
         _applyAuthenticatedUser(res.user);
       }
@@ -752,7 +822,7 @@ async function _performLoginAuth(role, userId, password, precomputedHash = '', o
       if ('Notification' in window && Notification.permission === 'granted') {
         void subscribeToWebPush(true);
       }
-      return { ok: true, pwHash, isDemo: false };
+      return { ok: true, token: state.sessionToken || '', expiresAt: state.sessionExpiresAt || 0, isDemo: false };
     } catch (err) {
       if (err && err.isDemo) {
         mockData.currentUser.role = role;
@@ -760,7 +830,7 @@ async function _performLoginAuth(role, userId, password, precomputedHash = '', o
         if (!options.isAutoLogin) {
           showToast('데모 모드로 로그인되었습니다 (연동된 시트 없음).', 'ℹ️');
         }
-        return { ok: true, pwHash, isDemo: true };
+        return { ok: true, token: '', expiresAt: 0, isDemo: true };
       }
       return { ok: false, error: err && err.message ? err.message : '인증 실패', isAuthRejected: Boolean(err && err.isServerRejection) };
     }
@@ -796,12 +866,12 @@ async function handleLogin(e) {
 
   if (!authResult.ok) return;
 
-  if (autoLoginChecked) {
+  if (autoLoginChecked && authResult.token) {
     _saveAutoLoginAuth({
       role: state.activeRole,
       userId,
-      password,
-      passwordHash: authResult.pwHash
+      token: authResult.token,
+      expiresAt: authResult.expiresAt || 0,
     });
   } else {
     _clearAutoLoginAuth();
@@ -839,9 +909,9 @@ async function tryAutoLogin() {
       const authResult = await _performLoginAuth(
         role,
         saved.userId,
-        saved.password || '',
-        saved.passwordHash || '',
-        { isAutoLogin: true }
+        '',
+        '',
+        { isAutoLogin: true, token: saved.token }
       );
       if (authResult.ok) {
         if (typeof document !== 'undefined') {
@@ -865,9 +935,9 @@ async function tryAutoLogin() {
     const authResult = await _performLoginAuth(
       role,
       saved.userId,
-      saved.password || '',
-      saved.passwordHash || '',
-      { isAutoLogin: true }
+      '',
+      '',
+      { isAutoLogin: true, token: saved.token }
     );
     if (authResult.ok) {
       _enterDashboardAfterLogin();
@@ -2133,7 +2203,7 @@ async function submitChangePassword(e) {
     try {
       const cu = mockData.currentUser || {};
       const curHash = await gasApi.sha256Hex(currentPassword);
-      await gasApi.post('change_password', {
+      const res = await gasApi.post('change_password', {
         role: cu.role || state.activeRole || 'student',
         user_id: cu.userId || cu.studentId || '',
         current_password: currentPassword,
@@ -2141,14 +2211,19 @@ async function submitChangePassword(e) {
         new_password: newPassword
       });
 
-      // 자동 로그인 정보가 저장된 경우 새 비밀번호 해시로 동기화
+      if (res && res.token) {
+        state.sessionToken = String(res.token);
+        state.sessionExpiresAt = Number(res.expires_at || 0);
+      }
+
+      // 자동 로그인 정보가 저장된 경우 새 세션 토큰으로 동기화 (비밀번호 원문/해시 저장 금지)
       const saved = _loadAutoLoginAuth();
       if (saved && saved.userId === (cu.userId || cu.studentId || '')) {
-        const newHash = await gasApi.sha256Hex(newPassword);
         _saveAutoLoginAuth({
-          ...saved,
-          password: newPassword,
-          passwordHash: newHash
+          role: saved.role,
+          userId: saved.userId,
+          token: (res && res.token) || saved.token || '',
+          expiresAt: (res && res.expires_at) || saved.expiresAt || 0,
         });
       }
 
@@ -2165,6 +2240,8 @@ function logout() {
   _clearAutoLoginAuth();
   _clearBundleCache();
   _hideAllPwaPushUI();
+  state.sessionToken = '';
+  state.sessionExpiresAt = 0;
   state.pwaPushBannerDismissed = false;
   state.pwaPushGuideDismissed = false;
   const pwInput = document.getElementById('loginPwInput');

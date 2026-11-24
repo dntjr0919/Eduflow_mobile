@@ -16,7 +16,7 @@ function shiftDateStr(dateStr, deltaDays) {
 }
 
 const adminState = {
-  auth: null, // { role: 'teacher', userId, password, passwordHash }
+  auth: null, // { role: 'teacher', userId, token, expiresAt }
   overview: null,
   activeTab: 'tab-letters',
   selectedNoticeId: '',
@@ -56,7 +56,31 @@ function loadSavedAuth() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || !parsed.userId || !parsed.role) return null;
-    return parsed;
+    if (parsed.password || parsed.passwordHash) {
+      if (parsed.token) {
+        saveTeacherAuth({
+          role: parsed.role,
+          userId: parsed.userId,
+          token: parsed.token,
+          expiresAt: parsed.expiresAt || 0,
+        });
+      } else {
+        clearSavedAuth();
+        return null;
+      }
+    }
+    if (!parsed.token) return null;
+    if (parsed.expiresAt && Number(parsed.expiresAt) <= Date.now()) {
+      clearSavedAuth();
+      return null;
+    }
+    return {
+      role: parsed.role,
+      userId: parsed.userId,
+      token: String(parsed.token),
+      expiresAt: Number(parsed.expiresAt || 0),
+      savedAt: Number(parsed.savedAt || 0),
+    };
   } catch (_) {
     return null;
   }
@@ -67,8 +91,8 @@ function saveTeacherAuth(auth) {
     localStorage.setItem(AUTO_LOGIN_STORAGE_KEY, JSON.stringify({
       role: 'teacher',
       userId: auth.userId,
-      password: auth.password || '',
-      passwordHash: auth.passwordHash || '',
+      token: String(auth.token || ''),
+      expiresAt: Number(auth.expiresAt || 0),
       savedAt: Date.now(),
     }));
   } catch (_) {}
@@ -82,14 +106,17 @@ function clearSavedAuth() {
 
 async function callApi(action, payload = {}, includeAuth = true) {
   const body = { action, ...payload };
+  const headers = { 'Content-Type': 'application/json' };
   if (includeAuth && adminState.auth) {
     body.auth_teacher_id = adminState.auth.userId;
-    if (adminState.auth.password) body.auth_password = adminState.auth.password;
-    if (adminState.auth.passwordHash) body.auth_password_hash = adminState.auth.passwordHash;
+    if (adminState.auth.token) {
+      body.auth_token = adminState.auth.token;
+      headers.Authorization = `Bearer ${adminState.auth.token}`;
+    }
   }
   const res = await fetch(API_ENDPOINT, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => ({ ok: false, error: '응답 파싱 실패' }));
@@ -2328,8 +2355,13 @@ function bindEvents() {
 
     btn.disabled = true;
     try {
-      await callApi('login', { role: 'teacher', user_id: userId, password }, false);
-      adminState.auth = { role: 'teacher', userId, password, passwordHash: '' };
+      const loginRes = await callApi('login', { role: 'teacher', user_id: userId, password }, false);
+      adminState.auth = {
+        role: 'teacher',
+        userId,
+        token: String((loginRes && loginRes.token) || ''),
+        expiresAt: Number((loginRes && loginRes.expires_at) || 0),
+      };
       saveTeacherAuth(adminState.auth);
       showGate('loading');
       await refreshAdminData();
