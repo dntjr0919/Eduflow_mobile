@@ -700,7 +700,9 @@ function _clearBundleCache() {
 }
 
 function _enterDashboardAfterLogin() {
-  applyRoleUI();
+  if (typeof document !== 'undefined') {
+    applyRoleUI();
+  }
   document.getElementById('loginScreen').classList.add('hidden');
   const dash = document.getElementById('dashboardScreen');
   dash.classList.remove('hidden');
@@ -823,7 +825,9 @@ async function tryAutoLogin() {
         { isAutoLogin: true }
       );
       if (authResult.ok) {
-        applyRoleUI();
+        if (typeof document !== 'undefined') {
+    applyRoleUI();
+  }
         renderAll();
       } else if (authResult.isAuthRejected) {
         logout();
@@ -1521,11 +1525,12 @@ function hydrateMockDataFromBundle(bundle) {
 
   // 7. 급식 식단표 (NEIS)
   if (Array.isArray(bundle.meals)) {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const todayMeals = bundle.meals.filter(m => m.meal_date === todayStr);
-    const pool = todayMeals.length > 0 ? todayMeals : bundle.meals;
-    const lunch = pool.find(m => (m.meal_type || '').includes('중식'));
-    const dinner = pool.find(m => (m.meal_type || '').includes('석식'));
+    const todayStr = _getLocalTodayStr();
+    const todayMeals = bundle.meals.filter(
+      m => String((m && (m.meal_date || m.date)) || '').trim().slice(0, 10) === todayStr
+    );
+    const lunch = todayMeals.find(m => (m.meal_type || '').includes('중식'));
+    const dinner = todayMeals.find(m => (m.meal_type || '').includes('석식'));
     const mapMeal = (m) => ({
       calories: m.calories || '-',
       menu: (m.menu_text || '').split('\n').filter(Boolean).map(name => ({ name: name.trim(), allergy: '' })),
@@ -1735,7 +1740,9 @@ function hydrateMockDataFromBundle(bundle) {
       .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.title.localeCompare(b.title, 'ko'));
   }
 
-  applyRoleUI();
+  if (typeof document !== 'undefined') {
+    applyRoleUI();
+  }
 }
 
 function applyRoleUI() {
@@ -2963,5 +2970,7 @@ if (typeof module !== 'undefined' && module.exports) {
     computeScheduleDday,
     getUpcomingSchedules,
     normalizeCircularAttachmentUrl,
+    hydrateMockDataFromBundle,
+    mockData,
   };
 }

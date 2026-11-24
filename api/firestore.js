@@ -21,10 +21,18 @@ async function _isSuperAdmin(db, requesterId) {
   return false;
 }
 
-function _nowStr() {
-  const d = new Date();
+function _kstDateStr(dateObj, offsetDays = 0) {
+  const d = dateObj || new Date();
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000 + offsetDays * 86400000);
   const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())}`;
+}
+
+function _nowStr(dateObj) {
+  const d = dateObj || new Date();
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())} ${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}:${pad(kst.getUTCSeconds())}`;
 }
 
 function _toIntOrNull(val) {
@@ -767,7 +775,7 @@ async function _handleGetMobileBundle(db, params) {
     ? `teacher_doc:${userId}`
     : (gradeNum !== null ? `teachers_grade:${gradeNum}` : 'teachers_default');
   const ttBaseCacheKey = gradeNum !== null ? `tt_base_grade:${gradeNum}` : null;
-  const mealsCacheKey = `meals:${schoolCode || 'all'}`;
+  const mealsCacheKey = `meals:all:${todayStr}`;
 
   // 읽기 비용 최적화 (단일 필드 where만 사용해 복합 인덱스 오류 방지 + 정적 데이터 서버 메모리 캐시):
   const [
@@ -826,11 +834,9 @@ async function _handleGetMobileBundle(db, params) {
       ? db.collection('시간표_변동').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
       : db.collection('시간표_변동').where('date', '>=', todayStr).limit(100).get().then(_snapToRows),
     !skipStatic
-      ? _getCachedOrFetch(mealsCacheKey, forceRefresh, () => (
-          schoolCode
-            ? db.collection('급식_식단표').where('school_code', '==', schoolCode).limit(60).get().then(_snapToRows)
-            : db.collection('급식_식단표').limit(60).get().then(_snapToRows)
-        ))
+      ? _getCachedOrFetch(mealsCacheKey, forceRefresh, () =>
+          db.collection('급식_식단표').where('meal_date', '>=', todayStr).limit(300).get().then(_snapToRows)
+        )
       : Promise.resolve(undefined),
     !skipStatic
       ? _getCachedOrFetch('doc_rules', forceRefresh, () =>
@@ -1068,10 +1074,8 @@ async function _syncNeisMeals(db, body) {
   }
 
   const now = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  const fromYmd = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
-  const end = new Date(now.getTime() + 6 * 86400000);
-  const toYmd = `${end.getFullYear()}${pad(end.getMonth() + 1)}${pad(end.getDate())}`;
+  const fromYmd = _kstDateStr(now, 0).replace(/-/g, '');
+  const toYmd = _kstDateStr(now, 6).replace(/-/g, '');
 
   const url = new URL('https://open.neis.go.kr/hub/mealServiceDietInfo');
   url.searchParams.set('Type', 'json');
@@ -4454,4 +4458,7 @@ module.exports._testHelpers = {
   _evaluatePcAgentOnline,
   _isPublicAcademicSchedule,
   _resolveNoticeAttachmentUrl,
+  _nowStr,
+  _kstDateStr,
+  _syncNeisMeals,
 };
