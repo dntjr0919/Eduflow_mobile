@@ -176,7 +176,12 @@ function _loadDailyStaticCache(grade, classNo) {
     const parsed = JSON.parse(raw);
     if (!parsed || parsed.date !== _getTodayDateKey()) return null;
     if (parsed.savedAt && (Date.now() - Number(parsed.savedAt)) > STATIC_CACHE_TTL_MS) return null;
-    if (String(parsed.grade || '') !== String(grade || '') || String(parsed.classNo || '') !== String(classNo || '')) {
+if (
+      String(parsed.role || '') !== String(state.activeRole || '') ||
+      String(parsed.userId || '') !== String((mockData.currentUser && mockData.currentUser.userId) || '') ||
+      String(parsed.grade || '') !== String(grade || '') ||
+      String(parsed.classNo || '') !== String(classNo || '')
+    ) {
       return null;
     }
     return parsed;
@@ -197,6 +202,8 @@ function _saveDailyStaticCache(grade, classNo, bundle) {
     localStorage.setItem(DAILY_STATIC_CACHE_KEY, JSON.stringify({
       date: _getTodayDateKey(),
       savedAt: Date.now(),
+      role: String(state.activeRole || ''),
+      userId: String((mockData.currentUser && mockData.currentUser.userId) || ''),
       grade: String(grade || ''),
       classNo: String(classNo || ''),
       timetable_base: Array.isArray(bundle.timetable_base) ? bundle.timetable_base : [],
@@ -2373,6 +2380,7 @@ function logout() {
   _stopRealtimeListeners();
   _clearAutoLoginAuth();
   _clearBundleCache();
+  _clearDailyStaticCache();
   _hideAllPwaPushUI();
   state.sessionToken = '';
   state.sessionExpiresAt = 0;
