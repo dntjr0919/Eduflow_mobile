@@ -9,3 +9,5 @@ eduflow-mobile-firebaseconfig.json
 .env.*.local
 node_modules/
 .vercel/
+
+*.log
