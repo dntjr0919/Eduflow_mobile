@@ -205,31 +205,34 @@ test('update_my_phone allows student and parent to update their own phone', asyn
     },
   });
 
+  const stuToken = _testHelpers._signSessionToken({ sub: 'hong203', role: 'student', sid: '20301', sc: '' }).token;
   const stuRes = await _handleUpdateMyPhone(db, {
     role: 'student',
     user_id: 'hong203',
     phone: '01077778888',
-  });
+  }, { headers: { authorization: `Bearer ${stuToken}` } });
   assert.equal(stuRes.status, 200);
   assert.equal(stuRes.json.ok, true);
   assert.equal(stuRes.json.phone, '010-7777-8888');
   assert.equal(db._store.get('계정_학생').get('20301').phone, '010-7777-8888');
 
+  const parToken = _testHelpers._signSessionToken({ sub: 'hongparent', role: 'parent', sid: 'p_20301', sc: '' }).token;
   const parRes = await _handleUpdateMyPhone(db, {
     role: 'parent',
     user_id: 'hongparent',
     phone: '010-9999-0000',
-  });
+  }, { headers: { authorization: `Bearer ${parToken}` } });
   assert.equal(parRes.status, 200);
   assert.equal(parRes.json.ok, true);
   assert.equal(parRes.json.phone, '010-9999-0000');
   assert.equal(db._store.get('계정_학부모').get('p_20301').phone, '010-9999-0000');
 
+  const invalidToken = _testHelpers._signSessionToken({ sub: '20301', role: 'student', sid: '20301', sc: '' }).token;
   const invalidRes = await _handleUpdateMyPhone(db, {
     role: 'student',
     user_id: '20301',
     phone: 'invalid',
-  });
+  }, { headers: { authorization: `Bearer ${invalidToken}` } });
   assert.equal(invalidRes.status, 400);
   assert.equal(invalidRes.json.ok, false);
 });

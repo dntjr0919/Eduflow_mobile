@@ -463,16 +463,71 @@ function _hasTeacherAuthCredentials(params) {
   );
 }
 
-function _verifyPassword(storedHash, rawPassword, providedHash) {
+function _timingSafeEqualStr(a, b) {
+  const bufA = Buffer.from(String(a ?? ''), 'utf8');
+  const bufB = Buffer.from(String(b ?? ''), 'utf8');
+  if (bufA.length === 0 || bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function _verifyPassword(storedHash, rawPassword, providedHash, options = {}) {
   const stored = String(storedHash || '').trim();
-  if (!stored) return true;
-  if (rawPassword && stored === String(rawPassword)) return true;
-  if (providedHash && stored.toLowerCase() === String(providedHash).toLowerCase()) return true;
+  if (!stored) return false;
+  const allowProvidedHash = Boolean(options && options.allowProvidedHash);
   if (rawPassword) {
+    if (_timingSafeEqualStr(stored, String(rawPassword))) return true;
     const sha = _sha256Hex(rawPassword);
-    if (stored.toLowerCase() === sha.toLowerCase()) return true;
+    if (_timingSafeEqualStr(stored.toLowerCase(), sha.toLowerCase())) return true;
+  }
+  if (allowProvidedHash && providedHash) {
+    if (_timingSafeEqualStr(stored.toLowerCase(), String(providedHash).toLowerCase())) return true;
   }
   return false;
+}
+
+function _verifyRequestSession(params, req = null) {
+  const token = _extractSessionToken(params, req);
+  const verified = _verifySessionToken(token);
+  if (!verified.ok) {
+    return { ok: false, status: 401, error: verified.error || '인증 토큰이 필요합니다.' };
+  }
+  const { claims } = verified;
+  const role = String(claims.role || '').trim().toLowerCase();
+  const sub = String(claims.sub || '').trim();
+  const studentId = String(claims.sid || (role === 'student' ? sub : '')).trim();
+  return {
+    ok: true,
+    token,
+    claims,
+    role,
+    sub,
+    studentId,
+    schoolCode: String(claims.sc || '').trim(),
+  };
+}
+
+function _matchesSessionStudent(session, candidateSid) {
+  const target = String(candidateSid || '').trim();
+  if (!target) return false;
+  if (session.studentId && target === session.studentId) return true;
+  if (session.sub && target === session.sub) return true;
+  return false;
+}
+
+function _matchesSessionAccountDoc(session, userDoc, fallbackId = '') {
+  if (!session || !session.ok || !userDoc) return false;
+  const keys = [
+    userDoc.remote_id,
+    userDoc.teacher_id,
+    userDoc.student_id,
+    userDoc.parent_id,
+    userDoc.login_id,
+    userDoc.custom_id,
+    fallbackId,
+  ]
+    .map((v) => String(v || '').trim())
+    .filter(Boolean);
+  return keys.includes(session.sub) || (session.studentId ? keys.includes(session.studentId) : false);
 }
 
 async function _findAccountDoc(db, role, userId) {
@@ -570,6 +625,7 @@ async function _handleLogin(db, body) {
   const { token, expiresAt } = _signSessionToken({
     sub: canonicalSub,
     role,
+    sid: String(userDoc.student_id || '').trim(),
     sc: String(userDoc.school_code || userDoc.neis_school_code || '').trim(),
   });
   return { status: 200, json: { ok: true, user: safeUser, token, expires_at: expiresAt } };
@@ -640,18 +696,26 @@ async function _handleChangePassword(db, body) {
   const { token, expiresAt } = _signSessionToken({
     sub: canonicalSub,
     role,
+    sid: String(userDoc.student_id || '').trim(),
     sc: String(userDoc.school_code || userDoc.neis_school_code || '').trim(),
   });
   return { status: 200, json: { ok: true, message: '비밀번호가 안전하게 변경되었습니다.', token, expires_at: expiresAt } };
 }
 
-async function _handleChangeCustomId(db, body) {
-  const role = String(body.role || 'student').trim().toLowerCase();
-  const userId = String(body.user_id || '').trim();
+async function _handleChangeCustomId(db, body, req = null) {
+  const session = _verifyRequestSession(body, req);
+  if (!session.ok) {
+    return { status: session.status, json: { ok: false, error: session.error } };
+  }
+  const role = String(body.role || session.role || 'student').trim().toLowerCase();
+  const userId = String(body.user_id || session.sub || '').trim();
   const newCustomId = String(body.new_custom_id || '').trim();
 
   if (role !== 'student' && role !== 'parent') {
     return { status: 400, json: { ok: false, error: '학생 또는 학부모 계정만 커스텀 ID를 변경할 수 있습니다.' } };
+  }
+  if (session.role !== role) {
+    return { status: 403, json: { ok: false, error: '본인 역할의 계정만 커스텀 ID를 변경할 수 있습니다.' } };
   }
   if (!userId || !newCustomId) {
     return { status: 400, json: { ok: false, error: '현재 ID와 새 커스텀 ID를 모두 입력해 주세요.' } };
@@ -666,6 +730,9 @@ async function _handleChangeCustomId(db, body) {
   const { colRef, docId, userDoc } = await _findAccountDoc(db, role, userId);
   if (!userDoc || !docId) {
     return { status: 404, json: { ok: false, error: '계정을 찾을 수 없습니다.' } };
+  }
+  if (!_matchesSessionAccountDoc(session, userDoc, docId)) {
+    return { status: 403, json: { ok: false, error: '본인 계정의 커스텀 ID만 변경할 수 있습니다.' } };
   }
   if (userDoc.custom_id_changed === true) {
     return { status: 400, json: { ok: false, error: '커스텀 ID 변경은 최초 1회만 가능합니다.' } };
@@ -720,12 +787,19 @@ function _normalizePhoneNumber(raw) {
   return { ok: false, error: '올바른 휴대폰 번호 형식이 아닙니다. (예: 010-1234-5678)' };
 }
 
-async function _handleUpdateMyPhone(db, body) {
-  const role = String(body.role || 'student').trim().toLowerCase();
+async function _handleUpdateMyPhone(db, body, req = null) {
+  const session = _verifyRequestSession(body, req);
+  if (!session.ok) {
+    return { status: session.status, json: { ok: false, error: session.error } };
+  }
+  const role = String(body.role || session.role || 'student').trim().toLowerCase();
   if (role !== 'student' && role !== 'parent') {
     return { status: 400, json: { ok: false, error: '학생 또는 학부모 계정만 본인 연락처를 수정할 수 있습니다.' } };
   }
-  const userId = String(body.user_id || body.student_id || body.parent_id || body.remote_id || '').trim();
+  if (session.role !== role) {
+    return { status: 403, json: { ok: false, error: '본인 역할의 계정만 연락처를 수정할 수 있습니다.' } };
+  }
+  const userId = String(body.user_id || body.student_id || body.parent_id || body.remote_id || session.sub || '').trim();
   if (!userId) {
     return { status: 400, json: { ok: false, error: '계정 ID(user_id)가 필요합니다.' } };
   }
@@ -737,6 +811,9 @@ async function _handleUpdateMyPhone(db, body) {
   const { colRef, docId, userDoc } = await _findAccountDoc(db, role, userId);
   if (!userDoc || !docId) {
     return { status: 404, json: { ok: false, error: '계정을 찾을 수 없습니다.' } };
+  }
+  if (!_matchesSessionAccountDoc(session, userDoc, docId)) {
+    return { status: 403, json: { ok: false, error: '본인 계정의 연락처만 수정할 수 있습니다.' } };
   }
   const accStatus = String(userDoc.status || 'active').trim().toLowerCase();
   if (accStatus === 'rejected') {
@@ -1221,8 +1298,17 @@ async function _handleGetMobileBundle(db, params) {
     return _matchesTenant(d, ttTenant);
   };
 
-  const teachersSnap = teachersRaw.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
-  const filteredStudents = Array.isArray(studentsRows) ? studentsRows.filter((d) => _matchesTenant(d, tenant)) : undefined;
+  const _stripSensitiveFields = (d) => {
+    if (!d || typeof d !== 'object') return d;
+    const { password_hash: _pw, ...safe } = d;
+    return safe;
+  };
+  const teachersSnap = teachersRaw
+    .filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }))
+    .map(_stripSensitiveFields);
+  const filteredStudents = Array.isArray(studentsRows)
+    ? studentsRows.filter((d) => _matchesTenant(d, tenant)).map(_stripSensitiveFields)
+    : undefined;
   const studentIdSet = new Set((filteredStudents || []).map((s) => String(s.student_id || s.remote_id || '')).filter(Boolean));
   const isTeacherRole = role === 'teacher';
   const filteredNotices = noticesRaw
@@ -1481,12 +1567,12 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'change_custom_id') {
-      const result = await _handleChangeCustomId(db, params);
+      const result = await _handleChangeCustomId(db, params, req);
       return res.status(result.status).json(result.json);
     }
 
     if (action === 'update_my_phone') {
-      const result = await _handleUpdateMyPhone(db, params);
+      const result = await _handleUpdateMyPhone(db, params, req);
       return res.status(result.status).json(result.json);
     }
 
@@ -1496,12 +1582,16 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'get_pending_registrations') {
-      const requesterId = String(params.requester_id || params.teacher_id || params.user_id || '').trim();
+      const adminAuth = await _verifyActiveTeacherAuth(db, params);
+      if (!adminAuth.ok) {
+        return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
+      }
+      const requesterId = adminAuth.teacherId;
       const isAdmin = await _isSuperAdmin(db, requesterId);
-      const gradeNum = _toIntOrNull(params.grade);
-      const classNum = _toIntOrNull(params.class_no);
-      const schoolCode = String(params.school_code || '').trim();
-      const schoolName = String(params.school_name || '').trim();
+      const gradeNum = isAdmin ? _toIntOrNull(params.grade) : adminAuth.gradeNum;
+      const classNum = isAdmin ? _toIntOrNull(params.class_no) : adminAuth.classNum;
+      const schoolCode = isAdmin ? String(params.school_code || adminAuth.schoolCode || '').trim() : adminAuth.schoolCode;
+      const schoolName = isAdmin ? String(params.school_name || adminAuth.schoolName || '').trim() : adminAuth.schoolName;
 
       const queries = [
         db.collection('계정_학생').where('status', '==', 'pending').get(),
@@ -1516,7 +1606,11 @@ module.exports = async function handler(req, res) {
       snaps[0].forEach((d) => items.push({ remote_id: d.id, role: 'student', ...d.data() }));
       snaps[1].forEach((d) => items.push({ remote_id: d.id, role: 'parent', ...d.data() }));
 
-      const filtered = items.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum, classNum }));
+      const filtered = items.filter((d) => (
+        isAdmin
+          ? _matchesTenant(d, { schoolCode, schoolName, gradeNum, classNum })
+          : _isStrictClassMember(d, adminAuth)
+      ));
       if (isAdmin && snaps[2]) {
         snaps[2].forEach((d) => filtered.push({ remote_id: d.id, role: 'teacher', ...d.data() }));
       }
@@ -1525,15 +1619,11 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'review_registration') {
-      const hasAdminAuth = Boolean(_extractSessionToken(params) || (params.auth_teacher_id && (params.auth_password || params.auth_password_hash)));
-      let adminAuth = null;
-      if (hasAdminAuth) {
-        adminAuth = await _verifyActiveTeacherAuth(db, params);
-        if (!adminAuth.ok) {
-          return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
-        }
+      const adminAuth = await _verifyActiveTeacherAuth(db, params);
+      if (!adminAuth.ok) {
+        return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
       }
-      const requesterId = String((adminAuth && adminAuth.teacherId) || params.requester_id || params.teacher_id || params.user_id || '').trim();
+      const requesterId = adminAuth.teacherId;
       const targetRole = String(params.target_role || 'student').trim().toLowerCase();
       const rid = String(params.remote_id || '').trim();
       const decision = String(params.decision || 'approve').trim().toLowerCase();
@@ -1550,7 +1640,7 @@ module.exports = async function handler(req, res) {
 
       const colName = targetRole === 'parent' ? '계정_학부모' : (targetRole === 'teacher' ? '계정_교사' : '계정_학생');
       if (!rid) return res.status(400).json({ ok: false, error: 'remote_id가 필요합니다.' });
-      if (adminAuth && targetRole !== 'teacher') {
+      if (targetRole !== 'teacher') {
         const targetSnap = await db.collection(colName).doc(rid).get();
         if (!targetSnap.exists) {
           return res.status(404).json({ ok: false, error: '대상 계정을 찾을 수 없습니다.' });
@@ -1569,11 +1659,42 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'get_mobile_bundle') {
-      const result = await _handleGetMobileBundle(db, params);
+      const session = _verifyRequestSession(params, req);
+      if (!session.ok) {
+        return res.status(session.status).json({ ok: false, error: session.error });
+      }
+      const requestedRole = String(params.role || session.role || 'student').trim().toLowerCase();
+      if (requestedRole !== session.role) {
+        return res.status(403).json({ ok: false, error: '세션 역할과 일치하지 않는 번들 요청입니다.' });
+      }
+      const scopedParams = { ...params, role: session.role };
+      if (session.role === 'teacher') {
+        const reqUid = String(params.user_id || '').trim();
+        if (reqUid && reqUid !== session.sub) {
+          return res.status(403).json({ ok: false, error: '본인 교사 계정의 데이터만 조회할 수 있습니다.' });
+        }
+        scopedParams.user_id = session.sub;
+      } else {
+        const reqSid = String(params.student_id || '').trim();
+        const reqUid = String(params.user_id || '').trim();
+        if (reqSid && !_matchesSessionStudent(session, reqSid)) {
+          return res.status(403).json({ ok: false, error: '타인의 학생 데이터는 조회할 수 없습니다.' });
+        }
+        if (reqUid && reqUid !== session.sub && (!session.studentId || reqUid !== session.studentId)) {
+          return res.status(403).json({ ok: false, error: '본인 계정의 데이터만 조회할 수 있습니다.' });
+        }
+        scopedParams.user_id = session.sub;
+        scopedParams.student_id = session.studentId || session.sub;
+      }
+      const result = await _handleGetMobileBundle(db, scopedParams);
       return res.status(result.status).json(result.json);
     }
 
     if (action === 'mark_notification_read') {
+      const session = _verifyRequestSession(params, req);
+      if (!session.ok) {
+        return res.status(session.status).json({ ok: false, error: session.error });
+      }
       const rid = String(params.remote_id || '').trim();
       if (rid) {
         await db.collection('Notifications').doc(rid).set({ remote_id: rid, is_read: true, updated_at: _nowStr() }, { merge: true });
@@ -1582,6 +1703,10 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'save_push_subscription') {
+      const session = _verifyRequestSession(params, req);
+      if (!session.ok) {
+        return res.status(session.status).json({ ok: false, error: session.error });
+      }
       const endpoint = String(params.endpoint || '').trim();
       if (!endpoint) return res.status(400).json({ ok: false, error: 'endpoint가 필요합니다.' });
       const docId = crypto.createHash('sha1').update(endpoint).digest('hex').slice(0, 24);
@@ -1591,9 +1716,9 @@ module.exports = async function handler(req, res) {
           endpoint,
           p256dh: String(params.p256dh || ''),
           auth: String(params.auth || ''),
-          role: String(params.role || 'student').toLowerCase(),
-          user_id: String(params.user_id || ''),
-          student_id: String(params.student_id || ''),
+          role: session.role,
+          user_id: session.sub,
+          student_id: session.role === 'teacher' ? '' : (session.studentId || session.sub),
           grade: _toIntOrNull(params.grade),
           class_no: _toIntOrNull(params.class_no),
           updated_at: _nowStr()
@@ -1606,11 +1731,13 @@ module.exports = async function handler(req, res) {
     if (action === 'submit_attendance') {
       const rid = String(params.remote_id || '').trim() || `att_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
       const attDate = String(params.date || new Date().toISOString().slice(0, 10));
-      const sid = String(params.student_id || '').trim();
+      let sid = String(params.student_id || '').trim();
       const actorRole = String(params.role || '').trim().toLowerCase();
-      const hasTeacherAuth = _hasTeacherAuthCredentials(params);
+      const session = _verifyRequestSession(params, req);
+      const hasTeacherCreds = Boolean(params.auth_teacher_id && (params.auth_password || params.auth_password_hash));
+      const useTeacherPath = (session.ok && session.role === 'teacher') || (!session.ok && hasTeacherCreds) || actorRole === 'teacher';
       let teacherAuth = null;
-      if (actorRole === 'teacher' || hasTeacherAuth) {
+      if (useTeacherPath) {
         teacherAuth = await _verifyActiveTeacherAuth(db, params);
         if (!teacherAuth.ok) {
           return res.status(teacherAuth.status || 401).json({ ok: false, error: teacherAuth.error });
@@ -1622,11 +1749,26 @@ module.exports = async function handler(req, res) {
           }
         }
       } else {
+        if (!session.ok) {
+          return res.status(session.status).json({ ok: false, error: session.error });
+        }
+        if (sid && !_matchesSessionStudent(session, sid)) {
+          return res.status(403).json({ ok: false, error: '본인(또는 자녀)의 출결만 등록·수정할 수 있습니다.' });
+        }
+        if (!sid) {
+          sid = session.studentId || session.sub;
+        }
         const confirmedMsg = '이미 담임 선생님이 확인한 출결 내역이 있어 새로 등록하거나 수정할 수 없습니다.';
         if (params.remote_id) {
           const existingDoc = await db.collection('일일_출결').doc(rid).get();
-          if (existingDoc.exists && _toBool((existingDoc.data() || {}).teacher_confirmed)) {
-            return res.status(200).json({ ok: false, error: confirmedMsg });
+          if (existingDoc.exists) {
+            const exData = existingDoc.data() || {};
+            if (exData.student_id && !_matchesSessionStudent(session, exData.student_id)) {
+              return res.status(403).json({ ok: false, error: '타인의 출결 내역은 수정할 수 없습니다.' });
+            }
+            if (_toBool(exData.teacher_confirmed)) {
+              return res.status(200).json({ ok: false, error: confirmedMsg });
+            }
           }
         }
         if (sid) {
@@ -1699,7 +1841,7 @@ module.exports = async function handler(req, res) {
           att_sub_type: String(params.att_sub_type || ''),
           period_info: String(params.period_info || ''),
           reason: String(params.reason || ''),
-          teacher_confirmed: _toBool(params.teacher_confirmed),
+          teacher_confirmed: teacherAuth ? _toBool(params.teacher_confirmed) : false,
           updated_at: _nowStr()
         },
         { merge: true }
@@ -1711,9 +1853,11 @@ module.exports = async function handler(req, res) {
       const rid = String(params.remote_id || '').trim();
       if (!rid) return res.status(400).json({ ok: false, error: 'remote_id가 필요합니다.' });
       const actorRole = String(params.role || '').trim().toLowerCase();
-      const hasTeacherAuth = _hasTeacherAuthCredentials(params);
+      const session = _verifyRequestSession(params, req);
+      const hasTeacherCreds = Boolean(params.auth_teacher_id && (params.auth_password || params.auth_password_hash));
+      const useTeacherPath = (session.ok && session.role === 'teacher') || (!session.ok && hasTeacherCreds) || actorRole === 'teacher';
       const existingDoc = await db.collection('일일_출결').doc(rid).get();
-      if (actorRole === 'teacher' || hasTeacherAuth) {
+      if (useTeacherPath) {
         const adminAuth = await _verifyActiveTeacherAuth(db, params);
         if (!adminAuth.ok) {
           return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
@@ -1722,8 +1866,17 @@ module.exports = async function handler(req, res) {
           return res.status(403).json({ ok: false, error: '담당 학급의 출결 내역만 삭제할 수 있습니다.' });
         }
       } else {
-        if (existingDoc.exists && _toBool((existingDoc.data() || {}).teacher_confirmed)) {
-          return res.status(200).json({ ok: false, error: '이미 담임 선생님이 확인한 출결 내역이 있어 새로 등록하거나 수정할 수 없습니다.' });
+        if (!session.ok) {
+          return res.status(session.status).json({ ok: false, error: session.error });
+        }
+        if (existingDoc.exists) {
+          const exData = existingDoc.data() || {};
+          if (exData.student_id && !_matchesSessionStudent(session, exData.student_id)) {
+            return res.status(403).json({ ok: false, error: '타인의 출결 내역은 삭제할 수 없습니다.' });
+          }
+          if (_toBool(exData.teacher_confirmed)) {
+            return res.status(200).json({ ok: false, error: '이미 담임 선생님이 확인한 출결 내역이 있어 새로 등록하거나 수정할 수 없습니다.' });
+          }
         }
       }
       await db.collection('일일_출결').doc(rid).delete();
@@ -1757,15 +1910,13 @@ module.exports = async function handler(req, res) {
     if (action === 'confirm_attendance') {
       const rid = String(params.remote_id || '').trim();
       if (!rid) return res.status(400).json({ ok: false, error: 'remote_id가 필요합니다.' });
-      if (_extractSessionToken(params) || (params.auth_teacher_id && (params.auth_password || params.auth_password_hash))) {
-        const adminAuth = await _verifyActiveTeacherAuth(db, params);
-        if (!adminAuth.ok) {
-          return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
-        }
-        const attSnap = await db.collection('일일_출결').doc(rid).get();
-        if (attSnap.exists && !_isStrictClassMember({ remote_id: attSnap.id, ...(attSnap.data() || {}) }, adminAuth)) {
-          return res.status(403).json({ ok: false, error: '담당 학급의 출결 내역만 확인할 수 있습니다.' });
-        }
+      const adminAuth = await _verifyActiveTeacherAuth(db, params);
+      if (!adminAuth.ok) {
+        return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
+      }
+      const attSnap = await db.collection('일일_출결').doc(rid).get();
+      if (attSnap.exists && !_isStrictClassMember({ remote_id: attSnap.id, ...(attSnap.data() || {}) }, adminAuth)) {
+        return res.status(403).json({ ok: false, error: '담당 학급의 출결 내역만 확인할 수 있습니다.' });
       }
       await db.collection('일일_출결').doc(rid).set({ remote_id: rid, teacher_confirmed: true, updated_at: _nowStr() }, { merge: true });
       return res.status(200).json({ ok: true });
@@ -1831,18 +1982,42 @@ module.exports = async function handler(req, res) {
 
     if (action === 'upsert_document_tracking' || action === 'mark_document_submitted' || action === 'confirm_document') {
       const actorRole = String(params.role || '').trim().toLowerCase();
-      const hasTeacherAuth = _hasTeacherAuthCredentials(params);
+      const session = _verifyRequestSession(params, req);
+      const hasTeacherCreds = Boolean(params.auth_teacher_id && (params.auth_password || params.auth_password_hash));
+      const useTeacherPath =
+        action === 'confirm_document' ||
+        (session.ok && session.role === 'teacher') ||
+        (!session.ok && hasTeacherCreds) ||
+        (action === 'upsert_document_tracking' && actorRole === 'teacher');
+
       let teacherAuth = null;
-      if ((action === 'confirm_document' && hasTeacherAuth) || (action === 'upsert_document_tracking' && (actorRole === 'teacher' || hasTeacherAuth))) {
+      const checkRid = String(params.remote_id || '').trim();
+      const existingDocSnap = checkRid ? await db.collection('서류_추적').doc(checkRid).get() : null;
+      const existingDocData = existingDocSnap && existingDocSnap.exists ? { remote_id: existingDocSnap.id, ...(existingDocSnap.data() || {}) } : null;
+
+      if (useTeacherPath) {
         teacherAuth = await _verifyActiveTeacherAuth(db, params);
         if (!teacherAuth.ok) {
           return res.status(teacherAuth.status || 401).json({ ok: false, error: teacherAuth.error });
         }
-        const checkRid = String(params.remote_id || '').trim();
-        if (checkRid) {
-          const docCheck = await db.collection('서류_추적').doc(checkRid).get();
-          if (docCheck.exists && !_isStrictClassMember({ remote_id: docCheck.id, ...(docCheck.data() || {}) }, teacherAuth)) {
-            return res.status(403).json({ ok: false, error: '담당 학급의 서류 추적 내역만 처리할 수 있습니다.' });
+        if (existingDocData && !_isStrictClassMember(existingDocData, teacherAuth)) {
+          return res.status(403).json({ ok: false, error: '담당 학급의 서류 추적 내역만 처리할 수 있습니다.' });
+        }
+      } else {
+        if (!session.ok) {
+          return res.status(session.status).json({ ok: false, error: session.error });
+        }
+        const reqSid = String(params.student_id || '').trim();
+        if (reqSid && !_matchesSessionStudent(session, reqSid)) {
+          return res.status(403).json({ ok: false, error: '본인(또는 자녀)의 서류만 등록·제출할 수 있습니다.' });
+        }
+        if (existingDocData && existingDocData.student_id && !_matchesSessionStudent(session, existingDocData.student_id)) {
+          return res.status(403).json({ ok: false, error: '타인의 서류 추적 내역은 수정할 수 없습니다.' });
+        }
+        if (action === 'upsert_document_tracking') {
+          const reqSt = String(params.status || '').trim().toLowerCase();
+          if (reqSt === 'closed' || reqSt === 'confirmed' || reqSt === '확인완료' || reqSt === '최종 종결' || reqSt === '최종종결') {
+            return res.status(403).json({ ok: false, error: '서류 최종 확인은 교사만 처리할 수 있습니다.' });
           }
         }
       }
@@ -1952,6 +2127,10 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'upsert_doc_rule') {
+      const adminAuth = await _verifyActiveTeacherAuth(db, params);
+      if (!adminAuth.ok) {
+        return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
+      }
       const rid = String(params.remote_id || params.rule_code || `rule_${Date.now()}`);
       const ruleDoc = {
         remote_id: rid,
@@ -1970,6 +2149,17 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'upload_file') {
+      const session = _verifyRequestSession(params, req);
+      if (!session.ok) {
+        return res.status(session.status).json({ ok: false, error: session.error });
+      }
+      if (
+        session.claims.role !== 'teacher' &&
+        params.student_id &&
+        !_matchesSessionStudent(session.claims, params.student_id)
+      ) {
+        return res.status(403).json({ ok: false, error: '본인 학생 계정의 파일만 업로드할 수 있습니다.' });
+      }
       const driveRes = await uploadBase64ToDrive({
         base64Data: params.file_base64 || params.attachment_base64 || params.base64,
         fileName: String(params.file_name || `eduflow_${Date.now()}.bin`),
@@ -2097,8 +2287,35 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'submit_notice_reply') {
+      const session = _verifyRequestSession(params, req);
+      if (!session.ok) {
+        return res.status(session.status).json({ ok: false, error: session.error });
+      }
       const noticeId = String(params.notice_id || '').trim();
-      const studentId = String(params.student_id || '').trim();
+      let studentId = String(params.student_id || '').trim();
+      if (session.role === 'teacher') {
+        const teacherAuth = await _verifyActiveTeacherAuth(db, params);
+        if (!teacherAuth.ok) {
+          return res.status(teacherAuth.status || 401).json({ ok: false, error: teacherAuth.error });
+        }
+        if (!noticeId || !studentId) {
+          return res.status(400).json({ ok: false, error: 'notice_id와 student_id가 필요합니다.' });
+        }
+        if (!_isStrictClassMember({
+          student_id: studentId,
+          grade: _toIntOrNull(params.grade ?? teacherAuth.gradeNum),
+          class_no: _toIntOrNull(params.class_no ?? teacherAuth.classNum),
+          school_code: String(params.school_code || teacherAuth.schoolCode || ''),
+          school_name: String(params.school_name || teacherAuth.schoolName || ''),
+        }, teacherAuth)) {
+          return res.status(403).json({ ok: false, error: '담당 학급 학생의 회신만 처리할 수 있습니다.' });
+        }
+      } else {
+        if (!studentId) studentId = session.studentId || session.sub;
+        if (!_matchesSessionStudent(session, studentId)) {
+          return res.status(403).json({ ok: false, error: '본인(또는 자녀)의 가정통신문 회신만 제출할 수 있습니다.' });
+        }
+      }
       if (!noticeId || !studentId) {
         return res.status(400).json({ ok: false, error: 'notice_id와 student_id가 필요합니다.' });
       }
@@ -2243,11 +2460,13 @@ module.exports = async function handler(req, res) {
 
     if (action === 'send_chat_message') {
       const senderRole = String(params.sender_role || 'student').trim().toLowerCase();
-      const hasTeacherAuth = _hasTeacherAuthCredentials(params);
-      const roomId = String(params.room_id || `ROOM-${params.student_id || 'DEFAULT'}`).trim();
-      const inferredSid = String(params.student_id || params.receiver_id || (roomId.startsWith('ROOM-') ? roomId.slice(5) : '')).trim();
+      const session = _verifyRequestSession(params, req);
+      const hasTeacherCreds = Boolean(params.auth_teacher_id && (params.auth_password || params.auth_password_hash));
+      const useTeacherPath = senderRole === 'teacher' || (session.ok && session.role === 'teacher') || (!session.ok && hasTeacherCreds);
+      let roomId = String(params.room_id || `ROOM-${params.student_id || 'DEFAULT'}`).trim();
+      let inferredSid = String(params.student_id || params.receiver_id || (roomId.startsWith('ROOM-') ? roomId.slice(5) : '')).trim();
       let teacherAuth = null;
-      if (senderRole === 'teacher' || hasTeacherAuth) {
+      if (useTeacherPath) {
         teacherAuth = await _verifyActiveTeacherAuth(db, params);
         if (!teacherAuth.ok) {
           return res.status(teacherAuth.status || 401).json({ ok: false, error: teacherAuth.error });
@@ -2262,6 +2481,19 @@ module.exports = async function handler(req, res) {
         if (!_isStrictClassMember(targetScope, teacherAuth)) {
           return res.status(403).json({ ok: false, error: '담당 학급 학생에게만 1:1 상담 메시지를 보낼 수 있습니다.' });
         }
+      } else {
+        if (!session.ok) {
+          return res.status(session.status).json({ ok: false, error: session.error });
+        }
+        const ownSid = session.studentId || session.sub;
+        if (inferredSid && !_matchesSessionStudent(session, inferredSid)) {
+          return res.status(403).json({ ok: false, error: '본인(또는 자녀)의 1:1 상담방에만 메시지를 보낼 수 있습니다.' });
+        }
+        if (roomId && roomId !== 'ROOM-DEFAULT' && roomId !== `ROOM-${ownSid}`) {
+          return res.status(403).json({ ok: false, error: '타인의 1:1 상담방에는 메시지를 보낼 수 없습니다.' });
+        }
+        inferredSid = ownSid;
+        roomId = `ROOM-${ownSid}`;
       }
       const msgCheck = _validateStringInput(params.message, { maxLen: 4000, required: true, label: '상담 메시지(message)' });
       if (!msgCheck.ok) {
@@ -2297,11 +2529,13 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'mark_chat_read') {
-      const roomId = String(params.room_id || '').trim();
+      let roomId = String(params.room_id || '').trim();
       const readerRole = String(params.reader_role || 'teacher').trim().toLowerCase();
-      const hasTeacherAuth = _hasTeacherAuthCredentials(params);
+      const session = _verifyRequestSession(params, req);
+      const hasTeacherCreds = Boolean(params.auth_teacher_id && (params.auth_password || params.auth_password_hash));
+      const useTeacherPath = readerRole === 'teacher' || (session.ok && session.role === 'teacher') || (!session.ok && hasTeacherCreds);
       let teacherAuth = null;
-      if (readerRole === 'teacher' || hasTeacherAuth) {
+      if (useTeacherPath) {
         teacherAuth = await _verifyActiveTeacherAuth(db, params);
         if (!teacherAuth.ok) {
           return res.status(teacherAuth.status || 401).json({ ok: false, error: teacherAuth.error });
@@ -2316,6 +2550,19 @@ module.exports = async function handler(req, res) {
         }, teacherAuth)) {
           return res.status(403).json({ ok: false, error: '담당 학급의 상담 채팅만 읽음 처리할 수 있습니다.' });
         }
+      } else {
+        if (!session.ok) {
+          return res.status(session.status).json({ ok: false, error: session.error });
+        }
+        const ownSid = session.studentId || session.sub;
+        const targetSid = roomId.startsWith('ROOM-') ? roomId.slice(5).trim() : String(params.student_id || '').trim();
+        if (targetSid && !_matchesSessionStudent(session, targetSid)) {
+          return res.status(403).json({ ok: false, error: '본인(또는 자녀)의 상담 채팅만 읽음 처리할 수 있습니다.' });
+        }
+        if (roomId && roomId !== `ROOM-${ownSid}`) {
+          return res.status(403).json({ ok: false, error: '타인의 상담 채팅방은 읽음 처리할 수 없습니다.' });
+        }
+        if (!roomId && ownSid) roomId = `ROOM-${ownSid}`;
       }
       if (roomId) {
         const snap = await db.collection('1:1_상담채팅').where('room_id', '==', roomId).get();
@@ -2368,11 +2615,18 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'send_notification') {
+      const adminAuth = await _verifyActiveTeacherAuth(db, params);
+      if (!adminAuth.ok) {
+        return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
+      }
       const titleCheck = _validateStringInput(params.title || 'EduFlow 알림', { maxLen: 200, required: true, label: '알림 제목(title)' });
       if (!titleCheck.ok) return res.status(400).json({ ok: false, error: titleCheck.error });
       const msgCheck = _validateStringInput(params.message || '', { maxLen: 2000, required: false, label: '알림 내용(message)' });
       if (!msgCheck.ok) return res.status(400).json({ ok: false, error: msgCheck.error });
-      const senderCheck = _validateStringInput(params.sender || '', { maxLen: 100, required: false, label: '발신자(sender)' });
+      const senderCheck = _validateStringInput(
+        params.sender || (adminAuth.teacherDoc && adminAuth.teacherDoc.name) || adminAuth.teacherId || '',
+        { maxLen: 100, required: false, label: '발신자(sender)' }
+      );
       if (!senderCheck.ok) return res.status(400).json({ ok: false, error: senderCheck.error });
       const rid = String(params.remote_id || `noti_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
       await db.collection('Notifications').doc(rid).set(
@@ -2382,8 +2636,11 @@ module.exports = async function handler(req, res) {
           message: msgCheck.value,
           channel: String(params.channel || 'mobile_pwa'),
           sender: senderCheck.value,
-          grade: _toIntOrNull(params.grade),
-          class_no: _toIntOrNull(params.class_no),
+          teacher_id: adminAuth.teacherId,
+          school_code: adminAuth.schoolCode,
+          school_name: adminAuth.schoolName,
+          grade: _toIntOrNull(params.grade) ?? adminAuth.gradeNum,
+          class_no: _toIntOrNull(params.class_no) ?? adminAuth.classNum,
           student_id: String(params.student_id || ''),
           is_read: false,
           created_at: _nowStr(),
@@ -2395,12 +2652,16 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'enqueue_remote_task') {
+      const adminAuth = await _verifyActiveTeacherAuth(db, params);
+      if (!adminAuth.ok) {
+        return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
+      }
       const rid = String(params.remote_id || `mob_${Date.now()}`);
       const nowStr = _nowStr();
-      const teacherId = String(params.teacher_id || params.auth_teacher_id || params.user_id || '').trim();
-      const schoolCode = String(params.school_code || params.neis_school_code || '').trim();
-      const grade = _toIntOrNull(params.grade);
-      const classNo = _toIntOrNull(params.class_no);
+      const teacherId = adminAuth.teacherId;
+      const schoolCode = adminAuth.schoolCode || String(params.school_code || params.neis_school_code || '').trim();
+      const grade = _toIntOrNull(params.grade) ?? adminAuth.gradeNum;
+      const classNo = _toIntOrNull(params.class_no) ?? adminAuth.classNum;
       await db.collection('Tasks').doc(rid).set(
         {
           remote_id: rid,
@@ -2427,7 +2688,15 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'sync_neis_meals') {
-      const resSync = await _syncNeisMeals(db, params);
+      const adminAuth = await _verifyActiveTeacherAuth(db, params);
+      if (!adminAuth.ok) {
+        return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
+      }
+      const resSync = await _syncNeisMeals(db, {
+        ...params,
+        teacher_id: adminAuth.teacherId,
+        school_code: params.school_code || adminAuth.schoolCode,
+      });
       return res.status(200).json(resSync);
     }
 
@@ -2541,7 +2810,7 @@ async function _verifyActiveTeacherAuth(db, params) {
     ) {
       return { ok: false, status: 403, error: '토큰과 요청된 교사 ID가 일치하지 않습니다.' };
     }
-  } else if (!_verifyPassword(userDoc.password_hash, rawPw, pwHash)) {
+  } else if (!_verifyPassword(userDoc.password_hash, rawPw, pwHash, { allowProvidedHash: true })) {
     return { ok: false, status: 401, error: '교사 인증 비밀번호가 일치하지 않습니다.' };
   }
 
@@ -4885,6 +5154,8 @@ module.exports._testHelpers = {
   _handleVerifySession,
   _signSessionToken,
   _verifySessionToken,
+  _verifyRequestSession,
+  _verifyPassword,
   _extractSessionToken,
   _handleUpdateMyPhone,
   _normalizePhoneNumber,

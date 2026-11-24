@@ -445,7 +445,7 @@ require.cache[googleDrivePath] = {
 
 const apiHandler = require('../api/firestore.js');
 const { _testHelpers } = apiHandler;
-const { _kstDateStr, _nowStr } = _testHelpers;
+const { _kstDateStr, _nowStr, _signSessionToken } = _testHelpers;
 
 // ---------------------------------------------------------------------------
 // 5. HTTP Mock Req/Res 호출 헬퍼
@@ -980,6 +980,13 @@ async function runDailySimulation() {
     }
     teacherTokens.set(t.teacher_id, loginRes.json.token);
   }
+  const studentTokens = new Map();
+  for (const s of students) {
+    studentTokens.set(
+      s.student_id,
+      _signSessionToken({ sub: s.student_id, role: 'student', sid: s.student_id, sc: SCHOOL_CODE }).token
+    );
+  }
 
   // 순수 하루치 운영 트래픽만 측정하도록 카운터 및 서버 정적 캐시 초기화
   metrics.reset();
@@ -1011,7 +1018,12 @@ async function runDailySimulation() {
       if (wave > 1) {
         query.skip_static = '1';
       }
-      await invokeApi({ method: 'GET', query, bucket: '학생 모바일 번들 (105명×4회)' });
+      await invokeApi({
+        method: 'GET',
+        query,
+        headers: { authorization: `Bearer ${studentTokens.get(s.student_id)}` },
+        bucket: '학생 모바일 번들 (105명×4회)',
+      });
     }
   }
 
@@ -1048,6 +1060,7 @@ async function runDailySimulation() {
     await invokeApi({
       method: 'POST',
       bucket: '1:1 채팅 진입 및 상담',
+      headers: { authorization: `Bearer ${studentTokens.get(s.student_id)}` },
       body: {
         action: 'send_chat_message',
         sender_role: 'student',
@@ -1101,7 +1114,12 @@ async function runDailySimulation() {
       if (refresh > 1) {
         query.skip_static = '1';
       }
-      await invokeApi({ method: 'GET', query, bucket: '교사 홈 새로고침 (5명×10회)' });
+      await invokeApi({
+        method: 'GET',
+        query,
+        headers: { authorization: `Bearer ${teacherTokens.get(t.teacher_id)}` },
+        bucket: '교사 홈 새로고침 (5명×10회)',
+      });
     }
   }
   // 교사 5명 앱 초기 Notifications 리스너 구독

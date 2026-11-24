@@ -13,6 +13,15 @@ function _escTeacherHtml(val) {
     .replace(/'/g, '&#39;');
 }
 
+function _escapeTeacherJsAttr(val) {
+  const jsEscaped = String(val ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n');
+  return _escTeacherHtml(jsEscaped);
+}
+
 function switchTeacherBottomTab(tabName) {
   if (typeof state !== 'undefined' && state) state.activeTeacherTab = tabName;
   const studentTabs = ['home', 'attendance', 'letters', 'counseling'];
@@ -82,9 +91,12 @@ async function toggleCounselingAcceptance(isOpen) {
 // Helper: Dispatch Web Push in background (best-effort; sheet notification is primary)
 async function _dispatchWebPush(payload) {
   try {
+    const authHeaders = (typeof gasApi !== 'undefined' && typeof gasApi._getAuthHeaders === 'function')
+      ? gasApi._getAuthHeaders()
+      : {};
     const resp = await fetch('/api/push', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json;charset=utf-8' },
+      headers: { 'Content-Type': 'application/json;charset=utf-8', ...authHeaders },
       body: JSON.stringify(payload)
     });
     const json = await resp.json().catch(() => null);
@@ -130,7 +142,7 @@ async function openPendingRegistrationsModal() {
     return;
   }
   listEl.innerHTML = items.map((it) => {
-    const safeRid = _escTeacherHtml(it.remote_id);
+    const safeRid = _escapeTeacherJsAttr(it.remote_id);
     if (it.role === 'teacher') {
       const codeInfo = [it.neis_office_code, it.neis_school_code].filter(Boolean).join('/');
       return `
@@ -150,7 +162,7 @@ async function openPendingRegistrationsModal() {
       `;
     }
     const roleLbl = it.role === 'parent' ? '학부모' : '학생';
-    const safeRole = _escTeacherHtml(it.role);
+    const safeRole = _escapeTeacherJsAttr(it.role);
     const subInfo = it.role === 'parent'
       ? `자녀: ${_escTeacherHtml(it.student_name || '')} (${_escTeacherHtml(it.student_id || '')})`
       : `${_escTeacherHtml(it.grade || '')}학년 ${_escTeacherHtml(it.class_no || '')}반 ${_escTeacherHtml(it.student_no || '')}번`;
@@ -264,19 +276,23 @@ function renderTeacherHome() {
         <div class="flex items-center justify-between text-[11px] font-bold text-amber-800">
           <span>🔔 미확인 학생·학부모 출결 보고 (${otherDateUnconfirmed.length}건)</span>
         </div>
-        ${otherDateUnconfirmed.map(u => `
+        ${otherDateUnconfirmed.map(u => {
+          const uTypeText = u.periodInfo ? `${u.type}(${u.periodInfo})` : u.type;
+          const safeUId = _escapeTeacherJsAttr(u.id);
+          return `
           <div class="flex items-center justify-between gap-2 bg-white px-2.5 py-2 rounded-lg border border-amber-100">
             <div class="min-w-0">
               <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="text-[10px] font-mono text-slate-400">${u.date}</span>
-                <span class="text-xs font-bold text-slate-800">${u.studentId} ${u.name}</span>
-                <span class="text-[10px] px-1.5 py-0.2 rounded font-bold bg-amber-100 text-amber-800">${u.periodInfo ? `${u.type}(${u.periodInfo})` : u.type}</span>
+                <span class="text-[10px] font-mono text-slate-400">${_escTeacherHtml(u.date)}</span>
+                <span class="text-xs font-bold text-slate-800">${_escTeacherHtml(u.studentId)} ${_escTeacherHtml(u.name)}</span>
+                <span class="text-[10px] px-1.5 py-0.2 rounded font-bold bg-amber-100 text-amber-800">${_escTeacherHtml(uTypeText)}</span>
               </div>
-              <p class="text-[10px] text-slate-500 truncate">${u.reason || '사유 미입력'}</p>
+              <p class="text-[10px] text-slate-500 truncate">${_escTeacherHtml(u.reason || '사유 미입력')}</p>
             </div>
-            <button type="button" onclick="confirmTeacherAtt('${u.id}', this)" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded-lg shrink-0">교사 확인</button>
+            <button type="button" onclick="confirmTeacherAtt('${safeUId}', this)" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded-lg shrink-0">교사 확인</button>
           </div>
-        `).join('')}
+        `;
+        }).join('')}
       `;
     } else {
       unconfBanner.className = 'hidden';
@@ -295,24 +311,25 @@ function renderTeacherHome() {
         ? 'bg-teal-100 text-teal-700'
         : 'bg-red-100 text-red-700';
       const subText = item.reason || (isOuting && item.periodInfo ? `교사 출석체크 (${item.periodInfo})` : '사유 미입력');
+      const safeItemId = _escapeTeacherJsAttr(item.id);
       return `
       <div class="flex items-center justify-between gap-2 p-2.5 bg-slate-50 rounded-xl border border-slate-200/70">
         <div class="min-w-0">
           <div class="flex items-center gap-1.5 flex-wrap">
-            <span class="text-xs font-bold text-slate-800">${item.studentId} ${item.name}</span>
-            <span class="text-[10px] px-1.5 py-0.2 rounded font-bold ${badgeCls}">${typeLabel}</span>
+            <span class="text-xs font-bold text-slate-800">${_escTeacherHtml(item.studentId)} ${_escTeacherHtml(item.name)}</span>
+            <span class="text-[10px] px-1.5 py-0.2 rounded font-bold ${badgeCls}">${_escTeacherHtml(typeLabel)}</span>
           </div>
-          <p class="text-[10px] text-slate-500 mt-0.5 truncate">${subText}</p>
+          <p class="text-[10px] text-slate-500 mt-0.5 truncate">${_escTeacherHtml(subText)}</p>
         </div>
         <div class="flex items-center gap-1 shrink-0">
           ${item.confirmed
             ? `<span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">확인완료</span>`
-            : `<button onclick="confirmTeacherAtt('${item.id}', this)" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded-lg shadow-xs">교사 확인</button>`
+            : `<button onclick="confirmTeacherAtt('${safeItemId}', this)" class="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded-lg shadow-xs">교사 확인</button>`
           }
-          <button type="button" onclick="editTeacherAtt('${item.id}')" title="출결 수정" class="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" aria-label="출결 수정">
+          <button type="button" onclick="editTeacherAtt('${safeItemId}')" title="출결 수정" class="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" aria-label="출결 수정">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
           </button>
-          <button type="button" onclick="deleteTeacherAtt('${item.id}', this)" title="출결 삭제" class="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" aria-label="출결 삭제">
+          <button type="button" onclick="deleteTeacherAtt('${safeItemId}', this)" title="출결 삭제" class="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" aria-label="출결 삭제">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
           </button>
         </div>
@@ -367,7 +384,7 @@ function renderTeacherHome() {
   if (schedChgBadge) {
     if (changedScheds.length > 0) {
       schedChgBadge.classList.remove('hidden');
-      schedChgBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>${changedScheds.map(s => s.period).join(', ')} 변동`;
+      schedChgBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>${changedScheds.map(s => _escTeacherHtml(s.period)).join(', ')} 변동`;
     } else {
       schedChgBadge.classList.add('hidden');
     }
@@ -2093,7 +2110,7 @@ function renderTeacherDocs() {
   }
 
   container.innerHTML = filtered.map(doc => {
-    const safeDocId = _escTeacherHtml(doc.id);
+    const safeDocId = _escapeTeacherJsAttr(doc.id);
     return `
     <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
       <div class="flex items-center justify-between">
@@ -2295,7 +2312,7 @@ function renderTeacherCirculars() {
           ? normalizeCircularAttachmentUrl(c)
           : '';
         return `
-          <div onclick="openCandidateNoticeModal('${esc(c.id)}')" class="bg-white p-3.5 rounded-2xl border border-amber-200 hover:border-amber-400 shadow-xs cursor-pointer transition-all space-y-1.5">
+          <div onclick="openCandidateNoticeModal('${_escapeTeacherJsAttr(c.id)}')" class="bg-white p-3.5 rounded-2xl border border-amber-200 hover:border-amber-400 shadow-xs cursor-pointer transition-all space-y-1.5">
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-1.5 flex-wrap">
                 <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">게시 대기</span>
@@ -2341,7 +2358,7 @@ function renderTeacherCirculars() {
           <div class="bg-indigo-600 h-full rounded-full transition-all" style="width: ${pct}%"></div>
         </div>
         <div class="flex gap-2 pt-1">
-          <button onclick="openUnsubmittedModal('${esc(c.id)}')" class="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-xl">미제출자 명단 (${unsubmittedCount}명)</button>
+          <button onclick="openUnsubmittedModal('${_escapeTeacherJsAttr(c.id)}')" class="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-xl">미제출자 명단 (${unsubmittedCount}명)</button>
           <button onclick="showToast('제출된 서명 이미지가 원본 PDF 좌표에 합성되어 인쇄 대기열로 전송되었습니다.', '🖨️')" class="flex-1 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded-xl">서명본 PDF 일괄 출력</button>
         </div>
       </div>
@@ -2379,7 +2396,7 @@ function renderTeacherBoardNotices() {
       : 'bg-slate-100 hover:bg-slate-200 text-slate-700';
     return `
       <div class="bg-white p-3.5 rounded-2xl border ${n.isPinned ? 'border-amber-300/90' : 'border-slate-200/80'} shadow-xs space-y-2">
-        <div onclick="typeof openBoardNoticeModal === 'function' && openBoardNoticeModal('${esc(n.id)}')" class="cursor-pointer space-y-1.5">
+        <div onclick="typeof openBoardNoticeModal === 'function' && openBoardNoticeModal('${_escapeTeacherJsAttr(n.id)}')" class="cursor-pointer space-y-1.5">
           <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-1.5 flex-wrap">
               <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeCls}">${esc(n.sourceType || '담임 공지')}</span>
@@ -2392,8 +2409,8 @@ function renderTeacherBoardNotices() {
           ${safeUrl ? `<a href="${esc(safeUrl)}" onclick="event.stopPropagation()" target="_blank" rel="noopener noreferrer" class="inline-block text-[10px] font-bold text-indigo-600 hover:underline">원문 링크 ↗</a>` : ''}
         </div>
         <div class="flex gap-2 pt-1 border-t border-slate-100">
-          <button type="button" onclick="toggleBoardNoticePin('${esc(n.id)}', this)" class="flex-1 py-1.5 text-[11px] font-bold rounded-xl transition-all ${pinBtnCls}">${n.isPinned ? '📌 고정 해제' : '📌 상단 고정'}</button>
-          <button type="button" onclick="deleteBoardNotice('${esc(n.id)}', this)" class="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold rounded-xl transition-all">삭제</button>
+          <button type="button" onclick="toggleBoardNoticePin('${_escapeTeacherJsAttr(n.id)}', this)" class="flex-1 py-1.5 text-[11px] font-bold rounded-xl transition-all ${pinBtnCls}">${n.isPinned ? '📌 고정 해제' : '📌 상단 고정'}</button>
+          <button type="button" onclick="deleteBoardNotice('${_escapeTeacherJsAttr(n.id)}', this)" class="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold rounded-xl transition-all">삭제</button>
         </div>
       </div>
     `;
@@ -2853,7 +2870,9 @@ function openSendNoticeModal() {
   if (select) {
     const opts = ['<option value="ALL">우리 반 전체</option>'];
     (mockData.students || []).forEach(s => {
-      opts.push(`<option value="${s.student_id}">${s.student_no ? s.student_no + '번 ' : ''}${s.name} (${s.student_id})</option>`);
+      const sidEsc = _escTeacherHtml(s.student_id);
+      const noLabel = s.student_no ? `${_escTeacherHtml(s.student_no)}번 ` : '';
+      opts.push(`<option value="${sidEsc}">${noLabel}${_escTeacherHtml(s.name)} (${sidEsc})</option>`);
     });
     select.innerHTML = opts.join('');
   }
@@ -3119,7 +3138,7 @@ function renderTeacherChatRooms() {
     : rooms.map(r => {
     const lastMsg = r.messages[r.messages.length - 1];
     return `
-      <div onclick="openTeacherChatDetail('${_escTeacherHtml(r.roomId)}')" class="p-3.5 bg-white hover:bg-slate-50 cursor-pointer flex items-center justify-between gap-3 transition-colors">
+      <div onclick="openTeacherChatDetail('${_escapeTeacherJsAttr(r.roomId)}')" class="p-3.5 bg-white hover:bg-slate-50 cursor-pointer flex items-center justify-between gap-3 transition-colors">
         <div class="flex items-center gap-2.5 min-w-0">
           <div class="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs shrink-0">${_escTeacherHtml((r.studentName || '?')[0])}</div>
           <div class="min-w-0">
@@ -3634,7 +3653,7 @@ function openTeacherLessonModal(scheduleIndex) {
     const opts = rosters.map((r) => {
       const k = String(r.roster_key || r.remote_id || '');
       const label = `${r.subject || '교과'} · ${r.class_label || '-'} (${Array.isArray(r.students) ? r.students.length : 0}명)`;
-      return `<option value="${k}" ${k === matchedKey ? 'selected' : ''}>${label}</option>`;
+      return `<option value="${_escTeacherHtml(k)}" ${k === matchedKey ? 'selected' : ''}>${_escTeacherHtml(label)}</option>`;
     });
     opts.push(`<option value="__homeroom__" ${matchedKey === '__homeroom__' ? 'selected' : ''}>우리 반 학급 명렬표 (폴백 · ${(mockData.students || []).length}명)</option>`);
     sel.innerHTML = opts.join('');
@@ -3796,7 +3815,7 @@ function _renderLessonImportRecentDateChips(activeDate) {
   }
   container.innerHTML = recentDates.map((d) => {
     const isActive = d === activeDate;
-    return `<button type="button" onclick="selectLessonImportDate('${esc(d)}')" class="shrink-0 whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-semibold border transition ${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50'}">${esc(d)}</button>`;
+    return `<button type="button" onclick="selectLessonImportDate('${_escapeTeacherJsAttr(d)}')" class="shrink-0 whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-semibold border transition ${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50'}">${esc(d)}</button>`;
   }).join('');
 }
 

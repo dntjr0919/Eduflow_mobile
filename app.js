@@ -2090,7 +2090,7 @@ function openAccountMenuModal() {
         : `<span class="block text-[10px] font-normal text-slate-400 mt-0.5">등록된 번호 없음</span>`;
       const idBtnHtml = cu.customIdChanged
         ? `<button type="button" disabled class="w-full py-3 px-4 bg-slate-100 text-slate-400 font-bold rounded-xl text-xs text-left cursor-not-allowed">
-            🪪 로그인 ID 변경 완료 (${cu.customId || cu.userId}) · 재변경 불가
+            🪪 로그인 ID 변경 완료 (${escapeHtml(cu.customId || cu.userId)}) · 재변경 불가
            </button>`
         : `<button type="button" onclick="closeModal('accountMenuModal'); openCustomIdModal()" class="w-full py-3 px-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-bold rounded-xl text-xs text-left flex items-center justify-between">
             <span>🪪 로그인 ID 변경 (최초 1회)</span><span>→</span>
@@ -3044,7 +3044,10 @@ async function sendTestPushToMyDevice(btnEl) {
     try {
       const resp = await fetch('/api/push', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json;charset=utf-8' },
+        headers: {
+          'Content-Type': 'application/json;charset=utf-8',
+          ...(typeof gasApi !== 'undefined' && gasApi._getAuthHeaders ? gasApi._getAuthHeaders() : {})
+        },
         body: JSON.stringify({
           title: '🔔 EduFlow 내 기기 푸시 테스트',
           message: `${cu.studentName || cu.teacherName || cu.userId || '사용자'}님 기기의 웹 푸시 알림이 정상 동작 중입니다.`,

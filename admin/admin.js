@@ -410,11 +410,11 @@ function renderLettersTab() {
       : `<td class="py-3 px-3 text-center border-x border-slate-100 text-slate-700">${isOk ? escapeHtml(r.consent || r.memo || '제출') : '-'}</td>`;
 
     const stuSigCell = r.student_signature_drive_url
-      ? `<button type="button" onclick="openSignatureModal('${escapeHtml(r.student_name)} (학생)', '${escapeHtml(r.signed_at || r.submitted_at)}', '${escapeHtml(r.student_signature_drive_url)}')" class="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg hover:border-indigo-400 text-[11px] font-semibold text-indigo-700"><i class="fa-solid fa-signature"></i><span>보기</span></button>`
+      ? `<button type="button" onclick="openSignatureModal('${_escapeJsAttr(r.student_name)} (학생)', '${_escapeJsAttr(r.signed_at || r.submitted_at)}', '${_escapeJsAttr(r.student_signature_drive_url)}')" class="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg hover:border-indigo-400 text-[11px] font-semibold text-indigo-700"><i class="fa-solid fa-signature"></i><span>보기</span></button>`
       : '<span class="text-slate-300 text-[11px]">-</span>';
 
     const parSigCell = r.signature_drive_url
-      ? `<button type="button" onclick="openSignatureModal('${escapeHtml(r.parent_name || r.student_name + ' 학부모')}', '${escapeHtml(r.signed_at || r.submitted_at)}', '${escapeHtml(r.signature_drive_url)}')" class="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg hover:border-indigo-400 text-[11px] font-semibold text-indigo-700"><i class="fa-solid fa-signature"></i><span>보기</span></button>`
+      ? `<button type="button" onclick="openSignatureModal('${_escapeJsAttr(r.parent_name || r.student_name + ' 학부모')}', '${_escapeJsAttr(r.signed_at || r.submitted_at)}', '${_escapeJsAttr(r.signature_drive_url)}')" class="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg hover:border-indigo-400 text-[11px] font-semibold text-indigo-700"><i class="fa-solid fa-signature"></i><span>보기</span></button>`
       : '<span class="text-slate-300 text-[11px]">-</span>';
 
     return `
@@ -618,7 +618,7 @@ function renderAttendanceReportsPanel() {
         const confirmed = Boolean(a.teacher_confirmed);
         const confirmCell = confirmed
           ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">확인완료</span>'
-          : `<button type="button" onclick="confirmAttendanceRow('${escapeHtml(rid)}')" class="px-2.5 py-1 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg text-[11px] font-semibold">담임 확인</button>`;
+          : `<button type="button" onclick="confirmAttendanceRow('${_escapeJsAttr(rid)}')" class="px-2.5 py-1 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg text-[11px] font-semibold">담임 확인</button>`;
         return `
           <tr class="hover:bg-slate-50 ${confirmed ? '' : 'bg-amber-50/30'}">
             <td class="py-2.5 px-3 font-mono text-[11px] text-slate-600 whitespace-nowrap">${escapeHtml(a.date || '-')}</td>
@@ -744,7 +744,7 @@ function renderUnconfirmedAttendanceBanner() {
           <span class="ml-1.5 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold text-[11px]">${escapeHtml(a.attendance_type || '출결')}${a.period_info ? ` (${escapeHtml(a.period_info)})` : ''}</span>
           <span class="text-slate-500 ml-2">${escapeHtml(a.reason || '사유 미입력')}</span>
         </div>
-        <button type="button" onclick="confirmAttendanceRow('${escapeHtml(rid)}')" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 self-start sm:self-auto shrink-0">담임 확인</button>
+        <button type="button" onclick="confirmAttendanceRow('${_escapeJsAttr(rid)}')" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 self-start sm:self-auto shrink-0">담임 확인</button>
       </div>
     `;
   }).join('');
@@ -795,7 +795,7 @@ function renderDailyAttendancePanel() {
           ? '<span class="text-slate-300 text-[11px]">-</span>'
           : (r.teacher_confirmed
             ? '<span class="text-emerald-600 font-semibold text-[11px]">확인완료</span>'
-            : `<button type="button" onclick="confirmAttendanceRow('${escapeHtml(r.remote_id)}')" class="px-2 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-[11px] font-semibold">담임 확인</button>`);
+            : `<button type="button" onclick="confirmAttendanceRow('${_escapeJsAttr(r.remote_id)}')" class="px-2 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-[11px] font-semibold">담임 확인</button>`);
 
         const manageCell = r.has_record
           ? `<button type="button" onclick="openAttendanceModal('${_escapeJsAttr(r.remote_id)}', '${_escapeJsAttr(r.student_id)}', '${_escapeJsAttr(selectedDate)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
@@ -940,7 +940,7 @@ function renderAttendanceTab() {
             <td class="py-2.5 px-3 text-center whitespace-nowrap">
               ${confirmed
                 ? '<span class="text-emerald-600 font-semibold text-[11px]">확인됨</span>'
-                : `<button type="button" onclick="confirmAttendanceRow('${escapeHtml(rid)}')" class="px-2 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-[11px] font-semibold">담임 확인</button>`}
+                : `<button type="button" onclick="confirmAttendanceRow('${_escapeJsAttr(rid)}')" class="px-2 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-[11px] font-semibold">담임 확인</button>`}
             </td>
             <td class="py-2.5 px-3 text-center whitespace-nowrap space-x-1">
               <button type="button" onclick="openAttendanceModal('${_escapeJsAttr(rid)}', '${_escapeJsAttr(a.student_id)}', '${_escapeJsAttr(a.date)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
@@ -963,8 +963,8 @@ function renderAttendanceTab() {
             ? '<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-100 text-indigo-700">제출됨</span>'
             : '<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">미제출</span>');
         const actionBtn = isClosed
-          ? `<button type="button" onclick="confirmDocRow('${escapeHtml(rid)}', 'pending')" class="px-2 py-1 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-lg text-[11px] font-semibold">미제출 전환</button>`
-          : `<button type="button" onclick="confirmDocRow('${escapeHtml(rid)}', 'closed')" class="px-2 py-1 bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg text-[11px] font-semibold">제출 확인</button>`;
+          ? `<button type="button" onclick="confirmDocRow('${_escapeJsAttr(rid)}', 'pending')" class="px-2 py-1 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-lg text-[11px] font-semibold">미제출 전환</button>`
+          : `<button type="button" onclick="confirmDocRow('${_escapeJsAttr(rid)}', 'closed')" class="px-2 py-1 bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg text-[11px] font-semibold">제출 확인</button>`;
         return `
           <tr class="hover:bg-slate-50">
             <td class="py-2.5 px-3 font-semibold text-slate-800 whitespace-nowrap">${escapeHtml(d.student_name || d.student_id)}</td>
@@ -1038,8 +1038,8 @@ function renderRosterTab() {
             <span class="text-slate-500 ml-2">ID: ${escapeHtml(loginId)} · 학번: ${escapeHtml(doc.student_id || '-')}</span>
           </div>
           <div class="flex items-center gap-2">
-            <button type="button" onclick="reviewPendingAccount('${role}', '${escapeHtml(rid)}', 'approve')" class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700">승인</button>
-            <button type="button" onclick="reviewPendingAccount('${role}', '${escapeHtml(rid)}', 'reject')" class="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold hover:bg-rose-100">반려</button>
+            <button type="button" onclick="reviewPendingAccount('${_escapeJsAttr(role)}', '${_escapeJsAttr(rid)}', 'approve')" class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700">승인</button>
+            <button type="button" onclick="reviewPendingAccount('${_escapeJsAttr(role)}', '${_escapeJsAttr(rid)}', 'reject')" class="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold hover:bg-rose-100">반려</button>
           </div>
         </div>
       `;
@@ -1098,7 +1098,7 @@ function renderRosterTab() {
             <td class="py-3 px-3 whitespace-nowrap">
               <div class="flex items-center gap-1.5">
                 <span class="font-mono text-xs ${sPhone ? 'text-slate-800' : 'text-slate-300'}">${sPhone ? escapeHtml(sPhone) : '미등록'}</span>
-                <button type="button" onclick="openPhoneEditModal('student', '${escapeHtml(sRid)}', '${escapeHtml(s.name || sLogin)} (학생)', '${escapeHtml(sPhone)}')" class="px-2 py-0.5 bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 rounded text-[11px] font-semibold">연락처 수정</button>
+                <button type="button" onclick="openPhoneEditModal('student', '${_escapeJsAttr(sRid)}', '${_escapeJsAttr(s.name || sLogin)} (학생)', '${_escapeJsAttr(sPhone)}')" class="px-2 py-0.5 bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 rounded text-[11px] font-semibold">연락처 수정</button>
               </div>
             </td>
             <td class="py-3 px-3 text-center">${statusPill(s.status)}</td>
@@ -1112,13 +1112,13 @@ function renderRosterTab() {
             <td class="py-3 px-3 whitespace-nowrap">
               ${p ? `<div class="flex items-center gap-1.5">
                 <span class="font-mono text-xs ${pPhone ? 'text-slate-800' : 'text-slate-300'}">${pPhone ? escapeHtml(pPhone) : '미등록'}</span>
-                <button type="button" onclick="openPhoneEditModal('parent', '${escapeHtml(pRid)}', '${escapeHtml(p.name || pLogin)} (학부모)', '${escapeHtml(pPhone)}')" class="px-2 py-0.5 bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 rounded text-[11px] font-semibold">연락처 수정</button>
+                <button type="button" onclick="openPhoneEditModal('parent', '${_escapeJsAttr(pRid)}', '${_escapeJsAttr(p.name || pLogin)} (학부모)', '${_escapeJsAttr(pPhone)}')" class="px-2 py-0.5 bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 rounded text-[11px] font-semibold">연락처 수정</button>
               </div>` : '<span class="text-slate-300">-</span>'}
             </td>
             <td class="py-3 px-3 text-center">${p ? statusPill(p.status) : '<span class="text-slate-300">-</span>'}</td>
             <td class="py-3 px-4 text-center whitespace-nowrap space-x-1">
-              <button type="button" onclick="openPwResetModal('student', '${escapeHtml(sRid)}', '${escapeHtml(s.name || sLogin)} (학생)')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">학생 비번초기화</button>
-              ${p ? `<button type="button" onclick="openPwResetModal('parent', '${escapeHtml(pRid)}', '${escapeHtml(p.name || pLogin)} (학부모)')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">학부모 비번초기화</button>` : ''}
+              <button type="button" onclick="openPwResetModal('student', '${_escapeJsAttr(sRid)}', '${_escapeJsAttr(s.name || sLogin)} (학생)')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">학생 비번초기화</button>
+              ${p ? `<button type="button" onclick="openPwResetModal('parent', '${_escapeJsAttr(pRid)}', '${_escapeJsAttr(p.name || pLogin)} (학부모)')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">학부모 비번초기화</button>` : ''}
             </td>
             <td class="py-3 px-3 text-center whitespace-nowrap space-x-1">
               <button type="button" onclick="openRosterStudentModal('${_escapeJsAttr(sRid)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
@@ -1238,8 +1238,8 @@ function renderLedgerTab() {
             <td class="py-2.5 px-4 text-right font-mono font-bold tabular-nums ${isInc ? 'text-emerald-600' : 'text-rose-600'}">${isInc ? '+' : '-'}${amt.toLocaleString('ko-KR')}원</td>
             <td class="py-2.5 px-3 text-center whitespace-nowrap">${receiptHtml}</td>
             <td class="py-2.5 px-3 text-center whitespace-nowrap space-x-1">
-              <button type="button" onclick="openBudgetModal('${escapeHtml(rid)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
-              <button type="button" onclick="deleteBudgetRow('${escapeHtml(rid)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
+              <button type="button" onclick="openBudgetModal('${_escapeJsAttr(rid)}')" class="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
+              <button type="button" onclick="deleteBudgetRow('${_escapeJsAttr(rid)}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
             </td>
           </tr>
         `;
@@ -1325,7 +1325,7 @@ function renderCounselTab() {
         const lastMsg = g.messages[g.messages.length - 1];
         const active = g.student_id === adminState.selectedCounselStudentId;
         return `
-          <button type="button" onclick="selectCounselStudent('${escapeHtml(g.student_id)}')" class="w-full text-left p-3 rounded-xl transition ${active ? 'bg-white border border-indigo-200 shadow-xs' : 'hover:bg-white/70'}">
+          <button type="button" onclick="selectCounselStudent('${_escapeJsAttr(g.student_id)}')" class="w-full text-left p-3 rounded-xl transition ${active ? 'bg-white border border-indigo-200 shadow-xs' : 'hover:bg-white/70'}">
             <div class="flex justify-between items-center">
               <span class="font-bold text-slate-900 text-xs">${escapeHtml(g.student_name)} <span class="font-mono text-slate-400 font-normal">(${escapeHtml(g.student_id)})</span></span>
               <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-semibold">${g.messages.length}건</span>

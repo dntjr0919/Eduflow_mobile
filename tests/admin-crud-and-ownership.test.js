@@ -308,6 +308,7 @@ function buildSeedDb() {
 }
 
 const t15Auth = { auth_teacher_id: 't_1_5', auth_password_hash: sha256('pass15') };
+const stu10501Token = handler._testHelpers._signSessionToken({ sub: '10501', role: 'student', sid: '10501', sc: 'SC01' }).token;
 
 test('teacher ownership & auth checks block unauthenticated and cross-teacher mutations (401/403)', async () => {
   activeMockDb = buildSeedDb();
@@ -394,6 +395,7 @@ test('teacher ownership & auth checks block unauthenticated and cross-teacher mu
 
   const stuConfDel = await callHandler('delete_attendance', {
     role: 'student',
+    auth_token: stu10501Token,
     remote_id: 'att_1_5_conf',
   });
   assert.equal(stuConfDel.status, 200);
@@ -401,6 +403,7 @@ test('teacher ownership & auth checks block unauthenticated and cross-teacher mu
 
   const stuUnconfDel = await callHandler('delete_attendance', {
     role: 'student',
+    auth_token: stu10501Token,
     remote_id: 'att_1_5_unconf',
   });
   assert.equal(stuUnconfDel.status, 200);
@@ -626,6 +629,7 @@ test('phase 2 teacher ownership checks block unauthenticated/cross-class attenda
 
   const studentSubmitAtt = await callHandler('submit_attendance', {
     role: 'student',
+    auth_token: stu10501Token,
     student_id: '10501',
     student_name: '홍길동',
     attendance_type: '질병결석',
@@ -682,6 +686,7 @@ test('phase 2 teacher ownership checks block unauthenticated/cross-class attenda
 
   const studentChatSend = await callHandler('send_chat_message', {
     sender_role: 'student',
+    auth_token: stu10501Token,
     student_id: '10501',
     message: '학생 질문입니다',
   });

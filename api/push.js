@@ -5,6 +5,8 @@
  */
 const webpush = require('web-push');
 const { getFirestore, buildFirestoreErrorPayload } = require('./_firebaseAdmin');
+const { _testHelpers } = require('./firestore');
+const { _extractSessionToken, _verifySessionToken } = _testHelpers;
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -27,14 +29,6 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
   }
 
-  if (!vapidPublicKey || !vapidPrivateKey) {
-    return res.status(200).json({
-      ok: false,
-      skipped: true,
-      error: 'VAPID_PUBLIC_KEY 또는 VAPID_PRIVATE_KEY 환경변수가 설정되지 않았습니다.'
-    });
-  }
-
   let body = {};
   if (typeof req.body === 'string') {
     try {
@@ -46,15 +40,45 @@ module.exports = async function handler(req, res) {
     body = req.body;
   }
 
+  const token = _extractSessionToken(body, req);
+  const verified = _verifySessionToken(token);
+  if (!verified.ok) {
+    return res.status(401).json({ ok: false, error: verified.error || '푸시 발송 권한 인증이 필요합니다.' });
+  }
+  const claims = verified.claims || {};
+  const actorRole = String(claims.role || '').trim().toLowerCase();
+  const actorSub = String(claims.sub || '').trim();
+  const actorSid = String(claims.sid || (actorRole === 'student' ? actorSub : '')).trim();
+
+  if (!vapidPublicKey || !vapidPrivateKey) {
+    return res.status(200).json({
+      ok: false,
+      skipped: true,
+      error: 'VAPID_PUBLIC_KEY 또는 VAPID_PRIVATE_KEY 환경변수가 설정되지 않았습니다.'
+    });
+  }
+
   const title = String(body.title || 'EduFlow 알림').trim();
   const message = String(body.message || '').trim();
-  const targetRole = String(body.target_role || 'all').trim().toLowerCase();
+  let targetRole = String(body.target_role || 'all').trim().toLowerCase();
   const targetStudentIds = Array.isArray(body.target_student_ids)
     ? body.target_student_ids.map((s) => String(s).trim()).filter(Boolean)
     : (body.target_student_id ? [String(body.target_student_id).trim()] : []);
-  const targetUserId = String(body.target_user_id || '').trim();
+  let targetUserId = String(body.target_user_id || '').trim();
   const targetEndpoint = String(body.endpoint || '').trim();
   const url = String(body.url || '/').trim();
+
+  if (actorRole !== 'teacher') {
+    const isSelfTest =
+      Boolean(targetEndpoint) &&
+      (!targetUserId || targetUserId === actorSub || (actorSid && targetUserId === actorSid)) &&
+      targetStudentIds.every((sid) => sid === actorSub || (actorSid && sid === actorSid));
+    if (!isSelfTest) {
+      return res.status(403).json({ ok: false, error: '교사 계정만 공지/독촉 웹푸시를 발송할 수 있습니다.' });
+    }
+    targetRole = actorRole;
+    targetUserId = actorSub;
+  }
 
   try {
     webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
