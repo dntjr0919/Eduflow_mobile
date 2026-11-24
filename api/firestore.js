@@ -751,14 +751,15 @@ function _parseTimestampMs(raw) {
   return Number.isFinite(ms) ? ms : NaN;
 }
 
+const PUBLIC_STUDENT_SCHEDULE_CATEGORIES = new Set(['학사일정', '수행평가']);
+
 function _isPublicAcademicSchedule(row) {
   if (!row || typeof row !== 'object') return false;
-  const cat = String(row.category || row.type || '').trim().toLowerCase();
-  if (!cat) return true;
-  if (cat === '개인' || cat === 'personal' || cat === '비공개' || cat === '교사') {
+  if (_toBool(row.is_private) || String(row.visibility || '').trim().toLowerCase() === 'private') {
     return false;
   }
-  return true;
+  const cat = String(row.category || row.type || '').trim();
+  return PUBLIC_STUDENT_SCHEDULE_CATEGORIES.has(cat);
 }
 
 function _evaluatePcAgentOnline(statusDoc, nowMs = Date.now()) {

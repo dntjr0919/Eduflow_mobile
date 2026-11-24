@@ -1741,7 +1741,13 @@ function hydrateMockDataFromBundle(bundle) {
 
   // 13. 학사일정 (Schedules 시트)
   if (Array.isArray(bundle.schedules)) {
-    mockData.schedules = bundle.schedules
+    const effectiveRole = String(
+      (bundle.user && bundle.user.role) ||
+      (mockData.currentUser && mockData.currentUser.role) ||
+      state.activeRole ||
+      'student'
+    ).trim().toLowerCase();
+    const mappedSchedules = bundle.schedules
       .filter((s) => s && typeof s === 'object')
       .map((s) => {
         const startDate = String(s.start_date || s.date || '').trim().slice(0, 10);
@@ -1751,12 +1757,15 @@ function hydrateMockDataFromBundle(bundle) {
           title: String(s.title || s.name || '학사일정').trim(),
           start_date: startDate,
           end_date: endDate < startDate ? startDate : endDate,
-          category: String(s.category || '학사').trim() || '학사',
+          category: String(s.category || '학사일정').trim() || '학사일정',
           memo: String(s.memo || s.description || '').trim(),
+          is_private: Boolean(s.is_private === true || String(s.is_private || '').toLowerCase() === 'true'),
+          visibility: String(s.visibility || '').trim().toLowerCase(),
         };
       })
       .filter((s) => Boolean(s.start_date))
       .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.title.localeCompare(b.title, 'ko'));
+    mockData.schedules = filterSchedulesForRole(mappedSchedules, effectiveRole);
   }
 
   if (typeof document !== 'undefined') {
@@ -2231,6 +2240,25 @@ function computeScheduleDday(startDateStr, endDateStr = '', todayStr = _getLocal
   return { label: '종료', diffDays, isOngoing: false, isPast: true };
 }
 
+const STUDENT_VISIBLE_SCHEDULE_CATEGORIES = new Set(['학사일정', '수행평가']);
+
+function filterSchedulesForRole(schedules, role = state.activeRole) {
+  const list = Array.isArray(schedules) ? schedules : [];
+  const normalizedRole = String(role || 'student').trim().toLowerCase();
+  if (normalizedRole === 'teacher') return list;
+  return list.filter((item) => {
+    if (!item || typeof item !== 'object') return false;
+    if (item.is_private === true || String(item.is_private || '').trim().toLowerCase() === 'true') {
+      return false;
+    }
+    if (String(item.visibility || '').trim().toLowerCase() === 'private') {
+      return false;
+    }
+    const cat = String(item.category || item.type || '').trim();
+    return STUDENT_VISIBLE_SCHEDULE_CATEGORIES.has(cat);
+  });
+}
+
 function getUpcomingSchedules(schedules, todayStr = _getLocalTodayStr(), windowDays = 14, maxItems = 5) {
   const list = Array.isArray(schedules) ? schedules : [];
   return list
@@ -2305,7 +2333,8 @@ function _buildScheduleItemsHtml(items, emptyMessage) {
 
 function renderAcademicSchedules() {
   if (typeof document === 'undefined') return;
-  const upcoming = getUpcomingSchedules(mockData.schedules, _getLocalTodayStr(), 14, 5);
+  const roleSchedules = filterSchedulesForRole(mockData.schedules, state.activeRole);
+  const upcoming = getUpcomingSchedules(roleSchedules, _getLocalTodayStr(), 14, 5);
   const html = _buildScheduleItemsHtml(upcoming, '향후 14일 이내 예정된 학사일정이 없습니다.');
 
   const homeList = document.getElementById('homeScheduleList');
@@ -2323,7 +2352,7 @@ function openAllSchedulesModal() {
   if (!modal || !listEl) return;
 
   const todayStr = _getLocalTodayStr();
-  const allItems = (Array.isArray(mockData.schedules) ? mockData.schedules : []).map((item) => ({
+  const allItems = filterSchedulesForRole(mockData.schedules, state.activeRole).map((item) => ({
     ...item,
     dday: computeScheduleDday(item.start_date, item.end_date, todayStr),
   }));
@@ -2987,6 +3016,7 @@ if (typeof module !== 'undefined' && module.exports) {
     _getKoreanTodayDayChar,
     resolvePwaPushGateDecision,
     computeScheduleDday,
+    filterSchedulesForRole,
     getUpcomingSchedules,
     _buildScheduleItemsHtml,
     renderAcademicSchedules,

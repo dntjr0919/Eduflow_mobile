@@ -26,7 +26,7 @@ require.cache[googleDrivePath] = {
 
 const { _testHelpers } = require('../api/firestore.js');
 const { _handleGetMobileBundle, _isPublicAcademicSchedule } = _testHelpers;
-const { computeScheduleDday, getUpcomingSchedules, mergeTimetableForDay } = require('../app.js');
+const { computeScheduleDday, filterSchedulesForRole, getUpcomingSchedules, hydrateMockDataFromBundle, mergeTimetableForDay, mockData } = require('../app.js');
 
 function createMockDb(initialCollections = {}) {
   const store = new Map();
@@ -113,12 +113,15 @@ function createMockDb(initialCollections = {}) {
   };
 }
 
-test('_handleGetMobileBundle excludes personal/private schedules for student/parent but keeps them for teacher', async () => {
-  assert.equal(_isPublicAcademicSchedule({ category: '학사' }), true);
+test('_handleGetMobileBundle allows only 학사일정/수행평가 for student/parent and keeps 업무/개인 for teacher', async () => {
+  assert.equal(_isPublicAcademicSchedule({ category: '학사일정' }), true);
+  assert.equal(_isPublicAcademicSchedule({ category: '수행평가' }), true);
+  assert.equal(_isPublicAcademicSchedule({ category: '업무' }), false);
   assert.equal(_isPublicAcademicSchedule({ category: '개인' }), false);
   assert.equal(_isPublicAcademicSchedule({ category: 'personal' }), false);
   assert.equal(_isPublicAcademicSchedule({ category: '비공개' }), false);
   assert.equal(_isPublicAcademicSchedule({ category: '교사' }), false);
+  assert.equal(_isPublicAcademicSchedule({ category: '학사일정', is_private: true }), false);
 
   const db = createMockDb({
     '계정_학생': {
@@ -128,12 +131,13 @@ test('_handleGetMobileBundle excludes personal/private schedules for student/par
       teacher_1: { teacher_id: 'teacher_1', name: '김교사', grade: 1, class_no: 4, school_code: '8140246' },
     },
     'Schedules': {
-      s1: { remote_id: 's1', title: '2학기 기말고사', start_date: '2026-12-01', end_date: '2026-12-04', category: '시험', school_code: '8140246' },
-      s2: { remote_id: 's2', title: '교내 과학축제', start_date: '2026-11-23', end_date: '2026-11-23', category: '행사', school_code: '8140246' },
-      s3_priv: { remote_id: 's3_priv', title: '교사 연수(개인)', start_date: '2026-11-22', category: '개인', school_code: '8140246' },
-      s4_personal: { remote_id: 's4_personal', title: '개인 일정', start_date: '2026-11-24', category: 'personal', school_code: '8140246' },
-      s5_secret: { remote_id: 's5_secret', title: '학생상담 준비', start_date: '2026-11-25', category: '비공개', school_code: '8140246' },
-      s6_teacher: { remote_id: 's6_teacher', title: '교직원 회의', start_date: '2026-11-26', category: '교사', school_code: '8140246' },
+      s1: { remote_id: 's1', title: '2학기 기말고사', start_date: '2026-12-01', end_date: '2026-12-04', category: '학사일정', school_code: '8140246' },
+      s2: { remote_id: 's2', title: '국어 수행평가', start_date: '2026-11-23', end_date: '2026-11-23', category: '수행평가', school_code: '8140246' },
+      s3_work: { remote_id: 's3_work', title: '나이스 마감 처리', start_date: '2026-11-21', category: '업무', school_code: '8140246' },
+      s4_priv: { remote_id: 's4_priv', title: '교사 연수(개인)', start_date: '2026-11-22', category: '개인', school_code: '8140246' },
+      s5_personal: { remote_id: 's5_personal', title: '개인 일정', start_date: '2026-11-24', category: 'personal', school_code: '8140246' },
+      s6_secret: { remote_id: 's6_secret', title: '학생상담 준비', start_date: '2026-11-25', category: '비공개', school_code: '8140246' },
+      s7_teacher: { remote_id: 's7_teacher', title: '교직원 회의', start_date: '2026-11-26', category: '교사', school_code: '8140246' },
     },
   });
 
@@ -149,7 +153,7 @@ test('_handleGetMobileBundle excludes personal/private schedules for student/par
   assert.equal(stuBundle.status, 200);
   assert.deepEqual(
     stuBundle.json.schedules.map((s) => s.remote_id),
-    ['s2', 's1'] // sorted by start_date ascending, private/personal/비공개/교사 excluded
+    ['s2', 's1'] // sorted by start_date ascending, only 학사일정 & 수행평가
   );
 
   const parBundle = await _handleGetMobileBundle(db, {
@@ -173,7 +177,40 @@ test('_handleGetMobileBundle excludes personal/private schedules for student/par
     force: '1',
   });
   assert.equal(teacherBundle.status, 200);
-  assert.equal(teacherBundle.json.schedules.length, 6);
+  assert.equal(teacherBundle.json.schedules.length, 7);
+});
+
+test('filterSchedulesForRole & hydrateMockDataFromBundle keep only 학사일정 and 수행평가 for student/parent when mixed with 업무 and 개인', () => {
+  const mixed = [
+    { remote_id: 'sc_academic', title: '개교기념일', start_date: '2026-11-21', category: '학사일정' },
+    { remote_id: 'sc_perf', title: '영어 말하기 수행평가', start_date: '2026-11-22', category: '수행평가' },
+    { remote_id: 'sc_work', title: '공문 제출 마감', start_date: '2026-11-23', category: '업무' },
+    { remote_id: 'sc_personal', title: '치과 예약', start_date: '2026-11-24', category: '개인' },
+  ];
+
+  const studentFiltered = filterSchedulesForRole(mixed, 'student');
+  assert.deepEqual(studentFiltered.map((s) => s.category), ['학사일정', '수행평가']);
+  assert.deepEqual(studentFiltered.map((s) => s.remote_id), ['sc_academic', 'sc_perf']);
+
+  const parentFiltered = filterSchedulesForRole(mixed, 'parent');
+  assert.deepEqual(parentFiltered.map((s) => s.category), ['학사일정', '수행평가']);
+
+  const teacherFiltered = filterSchedulesForRole(mixed, 'teacher');
+  assert.equal(teacherFiltered.length, 4);
+
+  hydrateMockDataFromBundle({
+    ok: true,
+    user: { role: 'student', student_id: '10401', name: '김철수', grade: 1, class_no: 4 },
+    schedules: mixed,
+  });
+  assert.deepEqual(mockData.schedules.map((s) => s.category), ['학사일정', '수행평가']);
+
+  hydrateMockDataFromBundle({
+    ok: true,
+    user: { role: 'teacher', teacher_id: 'teacher_1', name: '김교사', grade: 1, class_no: 4 },
+    schedules: mixed,
+  });
+  assert.equal(mockData.schedules.length, 4);
 });
 
 test('computeScheduleDday and getUpcomingSchedules compute D-day, ongoing, and 14-day max-5 filtering', () => {
