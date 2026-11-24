@@ -161,6 +161,7 @@ function _computeDocDueDate(ruleCode, baseDate, docRulesRows) {
 }
 
 const STATIC_CACHE_TTL_MS = 10 * 60 * 1000;
+const LOW_FREQ_CACHE_TTL_MS = 5 * 60 * 1000;
 if (!globalThis.__eduflowStaticCache) {
   globalThis.__eduflowStaticCache = new Map();
 }
@@ -192,11 +193,11 @@ function _invalidateStaticCache(prefix) {
   }
 }
 
-async function _getCachedOrFetch(key, force, fetcher) {
+async function _getCachedOrFetch(key, force, fetcher, ttlMs = STATIC_CACHE_TTL_MS) {
   const cached = _getStaticCache(key, force);
   if (cached !== undefined) return cached;
   const fresh = await fetcher();
-  return _setStaticCache(key, fresh);
+  return _setStaticCache(key, fresh, ttlMs);
 }
 
 function _gradeCandidates(gradeNum) {
@@ -947,8 +948,13 @@ async function _handleGetMobileBundle(db, params) {
     : (gradeNum !== null ? `teachers_grade:${gradeNum}` : 'teachers_default');
   const ttBaseCacheKey = gradeNum !== null ? `tt_base_grade:${gradeNum}` : null;
   const mealsCacheKey = `meals:all:${todayStr}`;
+  const budgetCacheKey = gradeNum !== null ? `budget_grade:${gradeNum}` : 'budget_all';
+  const schedulesCacheKey = `schedules:${schoolCode || 'all'}`;
+  const includeNotifications = String(params.include_notifications || '') === '1';
+  const includeChat = String(params.include_chat || '') === '1';
+  const effectiveStudentId = studentId || (role !== 'teacher' ? userId : '');
 
-  // 읽기 비용 최적화 (단일 필드 where만 사용해 복합 인덱스 오류 방지 + 정적 데이터 서버 메모리 캐시):
+  // 읽기 비용 최적화 (단일 필드 where만 사용해 복합 인덱스 오류 방지 + 정적/저빈도 데이터 서버 메모리 캐시):
   const timetableSnapshotsRaw = await db
     .collection('시간표_스냅샷')
     .where('date', '==', todayStr)
@@ -989,8 +995,16 @@ async function _handleGetMobileBundle(db, params) {
             ? db.collection('계정_교사').where('grade', 'in', gradeIn).limit(30).get().then(_snapToRows)
             : db.collection('계정_교사').limit(20).get().then(_snapToRows))
     )),
-    isStudentScoped && sidIn.length > 0
-      ? db.collection('계정_학생').where('student_id', 'in', sidIn).limit(5).get().then(_snapToRows)
+    role !== 'teacher'
+      ? (effectiveStudentId
+          ? db.collection('계정_학생').doc(effectiveStudentId).get().then(async (d) => {
+              if (d.exists) return [{ remote_id: d.id, ...d.data() }];
+              if (sidIn.length > 0) {
+                return db.collection('계정_학생').where('student_id', 'in', sidIn).limit(1).get().then(_snapToRows);
+              }
+              return [];
+            })
+          : Promise.resolve([]))
       : (gradeIn.length > 0
           ? db.collection('계정_학생').where('grade', 'in', gradeIn).limit(200).get().then(_snapToRows)
           : Promise.resolve([])),
@@ -1002,10 +1016,10 @@ async function _handleGetMobileBundle(db, params) {
     isStudentScoped && sidIn.length > 0
       ? db.collection('서류_추적').where('student_id', 'in', sidIn).limit(50).get().then(_snapToRows)
       : db.collection('서류_추적').limit(150).get().then(_snapToRows),
-    db.collection('가정통신문_목록').limit(50).get().then(_snapToRows),
+    db.collection('가정통신문_목록').limit(20).get().then(_snapToRows),
     isStudentScoped && sidIn.length > 0
-      ? db.collection('가정통신문_회신').where('student_id', 'in', sidIn).limit(50).get().then(_snapToRows)
-      : db.collection('가정통신문_회신').limit(150).get().then(_snapToRows),
+      ? db.collection('가정통신문_회신').where('student_id', 'in', sidIn).limit(20).get().then(_snapToRows)
+      : db.collection('가정통신문_회신').limit(50).get().then(_snapToRows),
     !skipStatic && !hasTodaySnapshot && ttBaseCacheKey
       ? _getCachedOrFetch(ttBaseCacheKey, forceRefresh, () =>
           db.collection('시간표_기본').where('grade', 'in', gradeIn).limit(300).get().then(_snapToRows)
@@ -1026,22 +1040,32 @@ async function _handleGetMobileBundle(db, params) {
           db.collection('설정_서류규정').limit(50).get().then(_snapToRows)
         )
       : Promise.resolve(undefined),
-    isStudentScoped
-      ? db.collection('1:1_상담채팅').where('room_id', '==', `ROOM-${studentId}`).limit(100).get().then(_snapToRows)
-      : (gradeIn.length > 0
-          ? db.collection('1:1_상담채팅').where('grade', 'in', gradeIn).limit(150).get().then(_snapToRows)
-          : db.collection('1:1_상담채팅').limit(100).get().then(_snapToRows)),
-    schoolCode
-      ? db.collection('Notifications').where('school_code', '==', schoolCode).limit(30).get().then(_snapToRows)
-      : (gradeIn.length > 0
-          ? db.collection('Notifications').where('grade', 'in', gradeIn).limit(30).get().then(_snapToRows)
-          : db.collection('Notifications').where('is_read', '==', false).limit(30).get().then(_snapToRows)),
+    includeChat
+      ? (isStudentScoped
+          ? db.collection('1:1_상담채팅').where('room_id', '==', `ROOM-${studentId}`).limit(100).get().then(_snapToRows)
+          : (gradeIn.length > 0
+              ? db.collection('1:1_상담채팅').where('grade', 'in', gradeIn).limit(150).get().then(_snapToRows)
+              : db.collection('1:1_상담채팅').limit(100).get().then(_snapToRows)))
+      : (role === 'teacher'
+          ? db.collection('1:1_상담채팅').where('is_read', '==', false).limit(20).get().then(_snapToRows).catch(() => [])
+          : Promise.resolve(undefined)),
+    includeNotifications
+      ? (schoolCode
+          ? db.collection('Notifications').where('school_code', '==', schoolCode).limit(30).get().then(_snapToRows)
+          : (gradeIn.length > 0
+              ? db.collection('Notifications').where('grade', 'in', gradeIn).limit(30).get().then(_snapToRows)
+              : db.collection('Notifications').where('is_read', '==', false).limit(30).get().then(_snapToRows)))
+      : Promise.resolve(undefined),
+    !skipStatic
+      ? _getCachedOrFetch(budgetCacheKey, forceRefresh, () => (
+          gradeIn.length > 0
+            ? db.collection('학급회비').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
+            : db.collection('학급회비').limit(100).get().then(_snapToRows)
+        ), LOW_FREQ_CACHE_TTL_MS)
+      : Promise.resolve(undefined),
     gradeIn.length > 0
-      ? db.collection('학급회비').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
-      : db.collection('학급회비').limit(100).get().then(_snapToRows),
-    gradeIn.length > 0
-      ? db.collection('학급_공지게시판').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
-      : db.collection('학급_공지게시판').limit(100).get().then(_snapToRows),
+      ? db.collection('학급_공지게시판').where('grade', 'in', gradeIn).limit(20).get().then(_snapToRows)
+      : db.collection('학급_공지게시판').limit(20).get().then(_snapToRows),
     role === 'teacher' && userId
       ? db.collection('교과_명렬표').where('teacher_id', '==', userId).limit(100).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
@@ -1057,7 +1081,12 @@ async function _handleGetMobileBundle(db, params) {
     role === 'teacher' && userId
       ? db.collection('Tasks').where('teacher_id', '==', userId).limit(50).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
-    db.collection('Schedules').limit(80).get().then(_snapToRows).catch(() => []),
+    !skipStatic
+      ? _getCachedOrFetch(schedulesCacheKey, forceRefresh, () =>
+          db.collection('Schedules').limit(80).get().then(_snapToRows).catch(() => []),
+          LOW_FREQ_CACHE_TTL_MS
+        )
+      : Promise.resolve(undefined),
   ]);
 
   const effectiveTeacherName = normTeacherParam || (role === 'teacher' && teachersRaw[0] ? _normalizeTeacherName(teachersRaw[0].name || teachersRaw[0].teacher_id || '') : '');
@@ -1131,7 +1160,8 @@ async function _handleGetMobileBundle(db, params) {
       }
       return true;
     })
-    .map(_withNormalizedNoticeAttachment);
+    .map(_withNormalizedNoticeAttachment)
+    .sort((a, b) => String(b.created_at || b.updated_at || '').localeCompare(String(a.created_at || a.updated_at || '')));
   const noticeIdSet = new Set(filteredNotices.map((n) => String(n.remote_id || '')).filter(Boolean));
 
   const matchedSnapshots = (timetableSnapshotsRaw || []).filter((d) => _matchesTenant(d, ttTeacherTenant));
@@ -1175,9 +1205,6 @@ async function _handleGetMobileBundle(db, params) {
         if (snapshotDateSet.has(cDate) && _isComciganChangeDoc(c)) return false;
         return true;
       }),
-    chat_messages: chatRows.filter((d) => _matchesTenant(d, tenant)),
-    notifications: notificationsRaw.filter((d) => _matchesTenant(d, tenant)),
-    budget: budgetRows.filter((d) => _matchesTenant(d, tenant)),
     board_notices: (boardNoticesRows || [])
       .filter((d) => {
         if (!_matchesTenant(d, tenant)) return false;
@@ -1197,13 +1224,28 @@ async function _handleGetMobileBundle(db, params) {
       })
   };
 
+  if (includeChat && Array.isArray(chatRows)) {
+    bundle.chat_messages = chatRows.filter((d) => _matchesTenant(d, tenant));
+  } else if (role === 'teacher' && Array.isArray(chatRows)) {
+    bundle.chat_unread_count = chatRows.filter((d) =>
+      _matchesTenant(d, tenant) && String(d.sender_role || '').trim().toLowerCase() !== 'teacher'
+    ).length;
+  }
+  if (notificationsRaw !== undefined) {
+    bundle.notifications = notificationsRaw.filter((d) => _matchesTenant(d, tenant));
+  }
+  if (budgetRows !== undefined) {
+    bundle.budget = budgetRows.filter((d) => _matchesTenant(d, tenant));
+  }
   if (timetableBaseRows !== undefined) bundle.timetable_base = timetableBaseRows.filter(_matchesTimetableRow);
   if (mealsRaw !== undefined) bundle.meals = mealsRaw.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
   if (docRulesRows !== undefined) bundle.doc_rules = docRulesRows;
-  bundle.schedules = (schedulesRaw || [])
-    .filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }))
-    .filter((d) => (isTeacherRole ? true : _isPublicAcademicSchedule(d)))
-    .sort((a, b) => String(a.start_date || a.date || '').localeCompare(String(b.start_date || b.date || '')));
+  if (schedulesRaw !== undefined) {
+    bundle.schedules = (schedulesRaw || [])
+      .filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }))
+      .filter((d) => (isTeacherRole ? true : _isPublicAcademicSchedule(d)))
+      .sort((a, b) => String(a.start_date || a.date || '').localeCompare(String(b.start_date || b.date || '')));
+  }
   if (isTeacherRole) {
     const teacherScope = { teacherId: userId, schoolCode, schoolName };
     bundle.subject_rosters = (subjectRostersRaw || []).filter((d) => _belongsToTeacher(d, teacherScope));
@@ -3754,6 +3796,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     };
 
     await docRef.set(payload, { merge: true });
+    _invalidateStaticCache('budget');
     return { status: 200, json: { ok: true, remote_id: rid, item: payload } };
   }
 
@@ -3772,6 +3815,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       return { status: 403, json: { ok: false, error: '담당 학급의 학급회비 내역만 삭제할 수 있습니다.' } };
     }
     await docRef.delete();
+    _invalidateStaticCache('budget');
     return { status: 200, json: { ok: true, remote_id: rid, deleted: true } };
   }
 
@@ -3961,6 +4005,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       updated_at: nowStr,
     };
     await docRef.set(payload, { merge: true });
+    _invalidateStaticCache('schedules:');
     return { status: 200, json: { ok: true, remote_id: rid, item: payload } };
   }
 
@@ -3981,6 +4026,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       return { status: 403, json: { ok: false, error: '본인 학교·학급 또는 본인이 등록한 일정만 삭제할 수 있습니다.' } };
     }
     await docRef.delete();
+    _invalidateStaticCache('schedules:');
     return { status: 200, json: { ok: true, remote_id: rid, deleted: true } };
   }
 

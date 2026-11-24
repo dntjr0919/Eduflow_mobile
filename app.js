@@ -190,7 +190,9 @@ function _saveDailyStaticCache(grade, classNo, bundle) {
       classNo: String(classNo || ''),
       timetable_base: Array.isArray(bundle.timetable_base) ? bundle.timetable_base : [],
       meals: Array.isArray(bundle.meals) ? bundle.meals : [],
-      doc_rules: Array.isArray(bundle.doc_rules) ? bundle.doc_rules : []
+      doc_rules: Array.isArray(bundle.doc_rules) ? bundle.doc_rules : [],
+      schedules: Array.isArray(bundle.schedules) ? bundle.schedules : null,
+      budget: Array.isArray(bundle.budget) ? bundle.budget : null
     }));
   } catch (_) {}
 }
@@ -1080,6 +1082,12 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null, forceRefre
         bundle.timetable_base = dailyCache.timetable_base;
         bundle.meals = dailyCache.meals;
         bundle.doc_rules = dailyCache.doc_rules;
+        if (!Array.isArray(bundle.schedules) && Array.isArray(dailyCache.schedules)) {
+          bundle.schedules = dailyCache.schedules;
+        }
+        if (!Array.isArray(bundle.budget) && Array.isArray(dailyCache.budget)) {
+          bundle.budget = dailyCache.budget;
+        }
       } else {
         _saveDailyStaticCache(cu.grade, cu.classNo, bundle);
       }
@@ -1828,6 +1836,11 @@ function hydrateMockDataFromBundle(bundle) {
     mockData.chatRooms = Object.values(roomMap);
     if (mockData.chatRooms.length > 0 && !state.activeTeacherChatRoomId) {
       state.activeTeacherChatRoomId = mockData.chatRooms[0].roomId;
+    }
+  } else if (typeof bundle.chat_unread_count === 'number') {
+    const chatDot = typeof document !== 'undefined' ? document.getElementById('teacherChatUnreadDot') : null;
+    if (chatDot) {
+      chatDot.classList.toggle('hidden', bundle.chat_unread_count <= 0);
     }
   }
 
