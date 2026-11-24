@@ -32,7 +32,7 @@ function createMetricsTracker() {
 
   function ensureBucket(name) {
     if (!buckets.has(name)) {
-      buckets.set(name, { reads: 0, writes: 0, deletes: 0, apiCalls: 0, queries: 0 });
+      buckets.set(name, { reads: 0, writes: 0, deletes: 0, apiCalls: 0, queries: 0, byCollection: new Map() });
     }
     return buckets.get(name);
   }
@@ -60,6 +60,7 @@ function createMetricsTracker() {
       const c = ensureCollection(collectionName);
       b.reads += count;
       if (isQuery) b.queries += 1;
+      b.byCollection.set(collectionName, (b.byCollection.get(collectionName) || 0) + count);
       c.reads += count;
     },
     recordWrite(collectionName, count = 1) {
@@ -1308,6 +1309,23 @@ function printReport({ todayStr, snap }) {
     );
   }
   console.log('--------------------------------------------------------------------------------');
+
+  const teacherStat = snap.buckets.get('교사 홈 새로고침 (5명×10회)');
+  if (teacherStat && teacherStat.byCollection) {
+    const bundleReads = teacherStat.reads - 50; // 초기 Notifications 리스너 5명×10건 제외 참고 가능, 전체 평균도 표시
+    const avgPerRefresh = (teacherStat.reads / 50).toFixed(1);
+    const avgBundleOnly = (bundleReads / 50).toFixed(1);
+    console.log('\n[2-1] 교사 홈 새로고침(5명×10회=50회 + 초기알림 5회) 컬렉션별 Read 내역');
+    console.log(`- 50회 총 Read: ${formatNum(teacherStat.reads)}건 (전체 평균 ${avgPerRefresh} Read/회, 번들 단독 평균 ${avgBundleOnly} Read/회)`);
+    console.log('--------------------------------------------------------------------------------');
+    const teacherCols = Array.from(teacherStat.byCollection.entries()).sort((a, b) => b[1] - a[1]);
+    for (const [colName, rCnt] of teacherCols) {
+      console.log(
+        `  ${padRight(colName, 26)} | ${padLeft(formatNum(rCnt), 8)} Read | 평균 ${(rCnt / 50).toFixed(1)} Read/회`
+      );
+    }
+    console.log('--------------------------------------------------------------------------------');
+  }
 
   const pollStat = snap.buckets.get('PC 워커 작업 폴링 (480회)') || { reads: 0, writes: 0 };
   const hbStat = snap.buckets.get('PC 워커 하트비트 (480회)') || { reads: 0, writes: 0 };

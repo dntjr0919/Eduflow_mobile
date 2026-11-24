@@ -192,7 +192,11 @@ function _saveDailyStaticCache(grade, classNo, bundle) {
       meals: Array.isArray(bundle.meals) ? bundle.meals : [],
       doc_rules: Array.isArray(bundle.doc_rules) ? bundle.doc_rules : [],
       schedules: Array.isArray(bundle.schedules) ? bundle.schedules : null,
-      budget: Array.isArray(bundle.budget) ? bundle.budget : null
+      budget: Array.isArray(bundle.budget) ? bundle.budget : null,
+      students: Array.isArray(bundle.students) ? bundle.students : null,
+      subject_rosters: Array.isArray(bundle.subject_rosters) ? bundle.subject_rosters : null,
+      lesson_progress: Array.isArray(bundle.lesson_progress) ? bundle.lesson_progress : null,
+      remote_tasks: Array.isArray(bundle.remote_tasks) ? bundle.remote_tasks : null
     }));
   } catch (_) {}
 }
@@ -1087,6 +1091,18 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null, forceRefre
         }
         if (!Array.isArray(bundle.budget) && Array.isArray(dailyCache.budget)) {
           bundle.budget = dailyCache.budget;
+        }
+        if (!Array.isArray(bundle.students) && Array.isArray(dailyCache.students)) {
+          bundle.students = dailyCache.students;
+        }
+        if (!Array.isArray(bundle.subject_rosters) && Array.isArray(dailyCache.subject_rosters)) {
+          bundle.subject_rosters = dailyCache.subject_rosters;
+        }
+        if (!Array.isArray(bundle.lesson_progress) && Array.isArray(dailyCache.lesson_progress)) {
+          bundle.lesson_progress = dailyCache.lesson_progress;
+        }
+        if (!Array.isArray(bundle.remote_tasks) && Array.isArray(dailyCache.remote_tasks)) {
+          bundle.remote_tasks = dailyCache.remote_tasks;
         }
       } else {
         _saveDailyStaticCache(cu.grade, cu.classNo, bundle);

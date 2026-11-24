@@ -748,6 +748,7 @@ async function _handleUpdateMyPhone(db, body) {
     { phone: norm.phone, updated_at: nowStr },
     { merge: true }
   );
+  _invalidateStaticCache('students_');
 
   return {
     status: 200,
@@ -886,6 +887,7 @@ async function _handleRegisterAccount(db, body) {
     status: 'pending',
     updated_at: now
   }, { merge: true });
+  _invalidateStaticCache('students_');
   return { status: 200, json: { ok: true, status: 'pending', message: '학생 가입 신청이 접수되었습니다. 담임 교사 승인 후 로그인할 수 있습니다.' } };
 }
 
@@ -924,6 +926,27 @@ function _evaluatePcAgentOnline(statusDoc, nowMs = Date.now()) {
   return diff >= -60 * 1000 && diff <= PC_AGENT_ONLINE_TTL_MS;
 }
 
+async function _queryTeacherClassScoped(db, colName, gradeNum, classNum, gradeIn, maxLimit) {
+  if (gradeNum !== null && classNum !== null) {
+    try {
+      const snap = await db
+        .collection(colName)
+        .where('grade', '==', gradeNum)
+        .where('class_no', '==', classNum)
+        .limit(maxLimit)
+        .get();
+      return _snapToRows(snap);
+    } catch (err) {
+      const isIndexErr = err && (err.code === 9 || /index|FAILED_PRECONDITION/i.test(String(err.message || '')));
+      if (!isIndexErr) throw err;
+    }
+  }
+  if (gradeIn.length > 0) {
+    return db.collection(colName).where('grade', 'in', gradeIn).limit(maxLimit).get().then(_snapToRows);
+  }
+  return [];
+}
+
 async function _handleGetMobileBundle(db, params) {
   const role = String(params.role || 'student').trim().toLowerCase();
   const studentId = String(params.student_id || '').trim();
@@ -950,6 +973,10 @@ async function _handleGetMobileBundle(db, params) {
   const mealsCacheKey = `meals:all:${todayStr}`;
   const budgetCacheKey = gradeNum !== null ? `budget_grade:${gradeNum}` : 'budget_all';
   const schedulesCacheKey = `schedules:${schoolCode || 'all'}`;
+  const studentsCacheKey = (gradeNum !== null && classNum !== null)
+    ? `students_class:${gradeNum}_${classNum}`
+    : (gradeNum !== null ? `students_grade:${gradeNum}` : null);
+  const subjectRostersCacheKey = userId ? `subject_rosters:${userId}` : null;
   const includeNotifications = String(params.include_notifications || '') === '1';
   const includeChat = String(params.include_chat || '') === '1';
   const effectiveStudentId = studentId || (role !== 'teacher' ? userId : '');
@@ -1005,21 +1032,35 @@ async function _handleGetMobileBundle(db, params) {
               return [];
             })
           : Promise.resolve([]))
+      : (!skipStatic && studentsCacheKey
+          ? _getCachedOrFetch(
+              studentsCacheKey,
+              forceRefresh,
+              () => _queryTeacherClassScoped(db, '계정_학생', gradeNum, classNum, gradeIn, 60),
+              STATIC_CACHE_TTL_MS
+            )
+          : Promise.resolve(studentsCacheKey ? undefined : [])),
+    isStudentScoped && sidIn.length > 0
+      ? db.collection('일일_출결').where('student_id', 'in', sidIn).limit(30).get().then(_snapToRows)
       : (gradeIn.length > 0
-          ? db.collection('계정_학생').where('grade', 'in', gradeIn).limit(200).get().then(_snapToRows)
+          ? _queryTeacherClassScoped(db, '일일_출결', gradeNum, classNum, gradeIn, 35)
           : Promise.resolve([])),
     isStudentScoped && sidIn.length > 0
-      ? db.collection('일일_출결').where('student_id', 'in', sidIn).limit(100).get().then(_snapToRows)
+      ? db.collection('서류_추적').where('student_id', 'in', sidIn).limit(20).get().then(_snapToRows)
       : (gradeIn.length > 0
-          ? db.collection('일일_출결').where('grade', 'in', gradeIn).limit(200).get().then(_snapToRows)
+          ? _queryTeacherClassScoped(db, '서류_추적', gradeNum, classNum, gradeIn, 30)
           : Promise.resolve([])),
-    isStudentScoped && sidIn.length > 0
-      ? db.collection('서류_추적').where('student_id', 'in', sidIn).limit(50).get().then(_snapToRows)
-      : db.collection('서류_추적').limit(150).get().then(_snapToRows),
     db.collection('가정통신문_목록').limit(20).get().then(_snapToRows),
     isStudentScoped && sidIn.length > 0
       ? db.collection('가정통신문_회신').where('student_id', 'in', sidIn).limit(20).get().then(_snapToRows)
-      : db.collection('가정통신문_회신').limit(50).get().then(_snapToRows),
+      : (gradeNum !== null
+          ? _getCachedOrFetch(
+              `notice_replies_grade:${gradeNum}`,
+              forceRefresh,
+              () => db.collection('가정통신문_회신').where('grade', '==', gradeNum).limit(30).get().then(_snapToRows).catch(() => []),
+              LOW_FREQ_CACHE_TTL_MS
+            )
+          : Promise.resolve([])),
     !skipStatic && !hasTodaySnapshot && ttBaseCacheKey
       ? _getCachedOrFetch(ttBaseCacheKey, forceRefresh, () =>
           db.collection('시간표_기본').where('grade', 'in', gradeIn).limit(300).get().then(_snapToRows)
@@ -1066,20 +1107,41 @@ async function _handleGetMobileBundle(db, params) {
     gradeIn.length > 0
       ? db.collection('학급_공지게시판').where('grade', 'in', gradeIn).limit(20).get().then(_snapToRows)
       : db.collection('학급_공지게시판').limit(20).get().then(_snapToRows),
-    role === 'teacher' && userId
-      ? db.collection('교과_명렬표').where('teacher_id', '==', userId).limit(100).get().then(_snapToRows).catch(() => [])
+    role === 'teacher' && subjectRostersCacheKey
+      ? (!skipStatic
+          ? _getCachedOrFetch(
+              subjectRostersCacheKey,
+              forceRefresh,
+              () => db.collection('교과_명렬표').where('teacher_id', '==', userId).limit(50).get().then(_snapToRows).catch(() => []),
+              STATIC_CACHE_TTL_MS
+            )
+          : Promise.resolve(undefined))
       : Promise.resolve([]),
     role === 'teacher' && userId
-      ? db.collection('교과_출결').where('teacher_id', '==', userId).limit(40).get().then(_snapToRows).catch(() => [])
+      ? db.collection('교과_출결').where('date', '==', todayStr).limit(40).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
     role === 'teacher' && userId
-      ? db.collection('수업_진도').where('teacher_id', '==', userId).limit(40).get().then(_snapToRows).catch(() => [])
+      ? (!skipStatic
+          ? _getCachedOrFetch(
+              `lesson_progress:${userId}`,
+              forceRefresh,
+              () => db.collection('수업_진도').where('teacher_id', '==', userId).limit(30).get().then(_snapToRows).catch(() => []),
+              LOW_FREQ_CACHE_TTL_MS
+            )
+          : Promise.resolve(undefined))
       : Promise.resolve([]),
     role === 'teacher' && userId
       ? db.collection('PC_Agent_Status').doc(userId).get().then((d) => (d.exists ? { remote_id: d.id, ...d.data() } : null)).catch(() => null)
       : Promise.resolve(null),
     role === 'teacher' && userId
-      ? db.collection('Tasks').where('teacher_id', '==', userId).limit(50).get().then(_snapToRows).catch(() => [])
+      ? (!skipStatic
+          ? _getCachedOrFetch(
+              `remote_tasks:${userId}`,
+              forceRefresh,
+              () => db.collection('Tasks').where('teacher_id', '==', userId).limit(15).get().then(_snapToRows).catch(() => []),
+              LOW_FREQ_CACHE_TTL_MS
+            )
+          : Promise.resolve(undefined))
       : Promise.resolve([]),
     !skipStatic
       ? _getCachedOrFetch(schedulesCacheKey, forceRefresh, () =>
@@ -1148,8 +1210,8 @@ async function _handleGetMobileBundle(db, params) {
   };
 
   const teachersSnap = teachersRaw.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
-  const filteredStudents = studentsRows.filter((d) => _matchesTenant(d, tenant));
-  const studentIdSet = new Set(filteredStudents.map((s) => String(s.student_id || s.remote_id || '')).filter(Boolean));
+  const filteredStudents = Array.isArray(studentsRows) ? studentsRows.filter((d) => _matchesTenant(d, tenant)) : undefined;
+  const studentIdSet = new Set((filteredStudents || []).map((s) => String(s.student_id || s.remote_id || '')).filter(Boolean));
   const isTeacherRole = role === 'teacher';
   const filteredNotices = noticesRaw
     .filter((d) => {
@@ -1180,7 +1242,6 @@ async function _handleGetMobileBundle(db, params) {
     backend: 'firestore',
     server_time: _nowStr(),
     teachers: teachersSnap,
-    students: filteredStudents,
     attendance: attendanceRows.map(_withInferredClass).filter((d) => _matchesTenant(d, tenant)),
     doc_tracking: docTrackingRows
       .map(_withInferredClass)
@@ -1224,6 +1285,9 @@ async function _handleGetMobileBundle(db, params) {
       })
   };
 
+  if (filteredStudents !== undefined) {
+    bundle.students = filteredStudents;
+  }
   if (includeChat && Array.isArray(chatRows)) {
     bundle.chat_messages = chatRows.filter((d) => _matchesTenant(d, tenant));
   } else if (role === 'teacher' && Array.isArray(chatRows)) {
@@ -1248,13 +1312,17 @@ async function _handleGetMobileBundle(db, params) {
   }
   if (isTeacherRole) {
     const teacherScope = { teacherId: userId, schoolCode, schoolName };
-    bundle.subject_rosters = (subjectRostersRaw || []).filter((d) => _belongsToTeacher(d, teacherScope));
+    if (subjectRostersRaw !== undefined) {
+      bundle.subject_rosters = (subjectRostersRaw || []).filter((d) => _belongsToTeacher(d, teacherScope));
+    }
     bundle.subject_attendance = (subjectAttRaw || [])
       .filter((d) => _belongsToTeacher(d, teacherScope))
       .sort((a, b) => String(b.date || b.updated_at || '').localeCompare(String(a.date || a.updated_at || '')));
-    bundle.lesson_progress = (lessonProgressRaw || [])
-      .filter((d) => _belongsToTeacher(d, teacherScope))
-      .sort((a, b) => String(b.date || b.updated_at || '').localeCompare(String(a.date || a.updated_at || '')));
+    if (lessonProgressRaw !== undefined) {
+      bundle.lesson_progress = (lessonProgressRaw || [])
+        .filter((d) => _belongsToTeacher(d, teacherScope))
+        .sort((a, b) => String(b.date || b.updated_at || '').localeCompare(String(a.date || a.updated_at || '')));
+    }
     const rawPcStatus = pcAgentStatusDoc || (teachersRaw[0] ? {
       pc_online: teachersRaw[0].pc_online !== undefined ? teachersRaw[0].pc_online : teachersRaw[0].pc_agent_online,
       pc_last_seen_at: teachersRaw[0].pc_last_seen_at || teachersRaw[0].pc_agent_last_seen,
@@ -1268,9 +1336,11 @@ async function _handleGetMobileBundle(db, params) {
       pc_app_version: String((rawPcStatus && rawPcStatus.pc_app_version) || ''),
       is_online: _evaluatePcAgentOnline(rawPcStatus),
     };
-    bundle.remote_tasks = (remoteTasksRaw || [])
-      .filter((t) => _toBool(t.is_mobile_task) && String(t.teacher_id || '').trim() === userId)
-      .sort((a, b) => String(b.created_at || b.updated_at || '').localeCompare(String(a.created_at || a.updated_at || '')));
+    if (remoteTasksRaw !== undefined) {
+      bundle.remote_tasks = (remoteTasksRaw || [])
+        .filter((t) => _toBool(t.is_mobile_task) && String(t.teacher_id || '').trim() === userId)
+        .sort((a, b) => String(b.created_at || b.updated_at || '').localeCompare(String(a.created_at || a.updated_at || '')));
+    }
   }
 
   return { status: 200, json: bundle };
@@ -2142,6 +2212,7 @@ module.exports = async function handler(req, res) {
         replyDoc.reply_file_id = replyFileId;
       }
       await replyRef.set(replyDoc, { merge: true });
+      _invalidateStaticCache('notice_replies_');
       return res.status(200).json({
         ok: true,
         remote_id: rid,
@@ -2337,6 +2408,7 @@ module.exports = async function handler(req, res) {
         },
         { merge: true }
       );
+      _invalidateStaticCache('remote_tasks:');
       return res.status(200).json({ ok: true, remote_id: rid });
     }
 
@@ -3119,6 +3191,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       pending.slice(i, i + 400).forEach(([ref, data]) => batch.set(ref, data, { merge: true }));
       await batch.commit();
     }
+    _invalidateStaticCache('students_');
 
     return {
       status: 200,
@@ -3239,6 +3312,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       return { status: 403, json: { ok: false, error: '담당 학급 또는 본인 가정통신문의 회신 내역만 삭제할 수 있습니다.' } };
     }
     await replyRef.delete();
+    _invalidateStaticCache('notice_replies_');
     return { status: 200, json: { ok: true, remote_id: rid, deleted: true } };
   }
 
@@ -3569,6 +3643,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     }
     const nowStr = _nowStr();
     await docRef.set({ phone: norm.phone, updated_at: nowStr }, { merge: true });
+    _invalidateStaticCache('students_');
     return {
       status: 200,
       json: { ok: true, remote_id: rid, target_role: targetRole, phone: norm.phone, updated_at: nowStr },
@@ -3700,6 +3775,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
         parentResult = targetParRef.id;
       }
     }
+    _invalidateStaticCache('students_');
 
     return {
       status: 200,
@@ -3728,6 +3804,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     }
     const sid = String(targetDoc.student_id || '').trim();
     await stuRef.delete();
+    _invalidateStaticCache('students_');
 
     const deletedParents = [];
     if (sid) {
@@ -3844,6 +3921,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
         };
       });
     const written = await _batchUpsertDocs(db, '교과_명렬표', normalized, scopeDefaults);
+    _invalidateStaticCache('subject_rosters:');
     return { status: 200, json: { ok: true, written } };
   }
 
@@ -4094,6 +4172,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       updated_at: nowStr,
     };
     await docRef.set(payload, { merge: true });
+    _invalidateStaticCache('lesson_progress:');
     return { status: 200, json: { ok: true, remote_id: rid, item: payload } };
   }
 
@@ -4112,6 +4191,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       return { status: 403, json: { ok: false, error: '본인이 등록한 수업 진도만 삭제할 수 있습니다.' } };
     }
     await docRef.delete();
+    _invalidateStaticCache('lesson_progress:');
     return { status: 200, json: { ok: true, remote_id: rid, deleted: true } };
   }
 
@@ -4142,6 +4222,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
         return nextRow;
       });
     const written = await _batchUpsertDocs(db, '수업_진도', normalized, scopeDefaults);
+    _invalidateStaticCache('lesson_progress:');
     return { status: 200, json: { ok: true, written } };
   }
 
@@ -4477,6 +4558,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       updateData.memo = String(params.memo || '').trim();
     }
     await docRef.set(updateData, { merge: true });
+    _invalidateStaticCache('remote_tasks:');
     return {
       status: 200,
       json: {
