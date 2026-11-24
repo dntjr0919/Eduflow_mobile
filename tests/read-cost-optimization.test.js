@@ -312,3 +312,159 @@ test('_handleGetMobileBundle fetches 100% of today attendance and unconfirmed re
   assert.equal(returnedIds.has('att_today_2'), true);
   assert.equal(returnedIds.size, 3);
 });
+
+test('_handleGetMobileBundle force_refresh=1 bypasses _staticCache and admin writes invalidate it immediately', async () => {
+  if (globalThis.__eduflowStaticCache) globalThis.__eduflowStaticCache.clear();
+  const store = new Map();
+  function getCol(name) {
+    if (!store.has(name)) store.set(name, new Map());
+    return store.get(name);
+  }
+  getCol('계정_교사').set('teacher_1', { teacher_id: 'teacher_1', name: '김교사', grade: 1, class_no: 4, school_code: '8140246', status: 'active' });
+  getCol('계정_학생').set('8140246_10401', { remote_id: '8140246_10401', student_id: '10401', name: '기존학생', grade: 1, class_no: 4, school_code: '8140246' });
+  getCol('Schedules').set('s1', { remote_id: 's1', title: '기존일정', start_date: '2026-11-25', category: '학사일정', school_code: '8140246' });
+
+  const makeSnap = (id, data) => ({ id, exists: data !== undefined, data: () => (data ? { ...data } : undefined) });
+  const makeQuery = (colName, filters = [], maxLimit = Infinity) => ({
+    where(field, op, val) { return makeQuery(colName, [...filters, { field, op, val }], maxLimit); },
+    limit(n) { return makeQuery(colName, filters, n); },
+    async get() {
+      const matched = [];
+      for (const [id, data] of getCol(colName).entries()) {
+        let ok = true;
+        for (const f of filters) {
+          const v = data[f.field];
+          if (f.op === '==' && v !== f.val) ok = false;
+          else if (f.op === 'in' && (!Array.isArray(f.val) || !f.val.includes(v))) ok = false;
+          else if (f.op === '>=' && !(String(v || '') >= String(f.val))) ok = false;
+        }
+        if (ok) matched.push(makeSnap(id, data));
+        if (matched.length >= maxLimit) break;
+      }
+      return { empty: matched.length === 0, docs: matched, forEach(cb) { matched.forEach(cb); } };
+    },
+  });
+  const db = {
+    collection(colName) {
+      return {
+        doc(docId) {
+          return {
+            id: docId,
+            async get() { return makeSnap(docId, getCol(colName).get(docId)); },
+            async set(data, opts = {}) {
+              if (opts.merge && getCol(colName).has(docId)) getCol(colName).set(docId, { ...getCol(colName).get(docId), ...data });
+              else getCol(colName).set(docId, { ...data });
+            },
+          };
+        },
+        where(field, op, val) { return makeQuery(colName, [{ field, op, val }]); },
+        limit(n) { return makeQuery(colName, [], n); },
+      };
+    },
+  };
+
+  // 1) Initial load populates _staticCache
+  const initial = await _handleGetMobileBundle(db, {
+    role: 'teacher',
+    user_id: 'teacher_1',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+  });
+  assert.equal(initial.json.students.length, 1);
+  assert.equal(initial.json.schedules.length, 1);
+
+  // 2) Direct DB mutation without invalidation -> skip_static=0 still hits server cache, but force_refresh=1 bypasses it
+  getCol('계정_학생').set('8140246_10499', { remote_id: '8140246_10499', student_id: '10499', name: '전학생A', grade: 1, class_no: 4, school_code: '8140246' });
+  const cachedRes = await _handleGetMobileBundle(db, {
+    role: 'teacher',
+    user_id: 'teacher_1',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+    skip_static: '0',
+  });
+  assert.equal(cachedRes.json.students.length, 1);
+
+  const forcedRes = await _handleGetMobileBundle(db, {
+    role: 'teacher',
+    user_id: 'teacher_1',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+    skip_static: '0',
+    force_refresh: '1',
+  });
+  assert.equal(forcedRes.json.students.length, 2);
+  assert.ok(forcedRes.json.students.some((s) => s.student_id === '10499'));
+
+  // 3) Admin write actions invalidate _staticCache immediately so normal skip_static=0 load sees new data
+  const auth = { teacherId: 'teacher_1', schoolCode: '8140246', schoolName: '', gradeNum: 1, classNum: 4, isAdmin: true };
+  await _handleDesktopApiAction(db, 'admin_upsert_roster_student', { student_id: '10498', name: '전학생B', student_no: 98 }, auth);
+  await _handleDesktopApiAction(db, 'upsert_schedule', { title: '신규일정', start_date: '2026-11-28' }, auth);
+
+  const afterWrite = await _handleGetMobileBundle(db, {
+    role: 'teacher',
+    user_id: 'teacher_1',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+    skip_static: '0',
+  });
+  assert.equal(afterWrite.json.students.length, 3);
+  assert.equal(afterWrite.json.schedules.length, 2);
+});
+
+test('_handleGetMobileBundle fetches pending/submitted doc_tracking even when 50+ closed docs exist', async () => {
+  const docTracking = {};
+  for (let i = 1; i <= 50; i += 1) {
+    docTracking[`doc_closed_${String(i).padStart(2, '0')}`] = {
+      remote_id: `doc_closed_${String(i).padStart(2, '0')}`,
+      student_id: `104${String((i % 30) + 1).padStart(2, '0')}`,
+      grade: 1,
+      class_no: 4,
+      school_code: '8140246',
+      status: 'closed',
+      teacher_confirmed: true,
+    };
+  }
+  docTracking.doc_pending_new = {
+    remote_id: 'doc_pending_new',
+    student_id: '10401',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+    status: 'pending',
+    teacher_confirmed: false,
+  };
+  docTracking.doc_submitted_new = {
+    remote_id: 'doc_submitted_new',
+    student_id: '10402',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+    status: 'submitted',
+    teacher_confirmed: false,
+  };
+
+  const db = createTrackedDb({
+    '계정_교사': {
+      teacher_1: { teacher_id: 'teacher_1', name: '김교사', grade: 1, class_no: 4, school_code: '8140246' },
+    },
+    '서류_추적': docTracking,
+  });
+
+  const res = await _handleGetMobileBundle(db, {
+    role: 'teacher',
+    user_id: 'teacher_1',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+    force: '1',
+  });
+
+  assert.equal(res.status, 200);
+  const ids = new Set(res.json.doc_tracking.map((d) => d.remote_id));
+  assert.equal(ids.has('doc_pending_new'), true);
+  assert.equal(ids.has('doc_submitted_new'), true);
+});

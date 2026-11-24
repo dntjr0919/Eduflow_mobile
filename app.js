@@ -180,6 +180,12 @@ function _loadDailyStaticCache(grade, classNo) {
   }
 }
 
+function _clearDailyStaticCache() {
+  try {
+    localStorage.removeItem(DAILY_STATIC_CACHE_KEY);
+  } catch (_) {}
+}
+
 function _saveDailyStaticCache(grade, classNo, bundle) {
   try {
     if (!bundle) return;
@@ -1065,6 +1071,9 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null, forceRefre
     if (showFeedback) showLoading('최신 데이터를 동기화 중...');
     try {
       const cu = mockData.currentUser;
+      if (forceRefresh) {
+        _clearDailyStaticCache();
+      }
       const dailyCache = forceRefresh ? null : _loadDailyStaticCache(cu.grade, cu.classNo);
       const bundleParams = {
         role: state.activeRole,
@@ -1078,6 +1087,8 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null, forceRefre
       };
       if (forceRefresh) {
         bundleParams.force = '1';
+        bundleParams.force_refresh = '1';
+        bundleParams.skip_static = '0';
       } else if (dailyCache) {
         bundleParams.skip_static = '1';
       }

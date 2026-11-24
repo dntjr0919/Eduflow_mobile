@@ -810,6 +810,7 @@ async function _handleRegisterAccount(db, body) {
       status: 'pending',
       updated_at: now
     }, { merge: true });
+    _invalidateStaticCache('teacher');
     return { status: 200, json: { ok: true, status: 'pending', message: '교사 가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다.' } };
   }
 
@@ -955,7 +956,7 @@ async function _handleGetMobileBundle(db, params) {
   const classNum = _toIntOrNull(params.class_no);
   const schoolCode = String(params.school_code || params.neis_school_code || '').trim();
   const schoolName = String(params.school_name || '').trim();
-  const forceRefresh = String(params.force || '') === '1';
+  const forceRefresh = String(params.force || '') === '1' || String(params.force_refresh || '') === '1';
   const skipStatic = !forceRefresh && String(params.skip_static || '') === '1';
 
   const tenant = { schoolCode, schoolName, gradeNum, classNum };
@@ -1049,9 +1050,17 @@ async function _handleGetMobileBundle(db, params) {
             ]).then(([todayRows, unconfirmedRows]) => _mergeRowsById(todayRows, unconfirmedRows))
           : Promise.resolve([])),
     isStudentScoped && sidIn.length > 0
-      ? db.collection('서류_추적').where('student_id', 'in', sidIn).limit(20).get().then(_snapToRows)
+      ? db.collection('서류_추적').where('student_id', 'in', sidIn).limit(50).get().then(_snapToRows)
       : (gradeIn.length > 0
-          ? _queryTeacherClassScoped(db, '서류_추적', gradeNum, classNum, gradeIn, 30)
+          ? Promise.all([
+              db.collection('서류_추적')
+                .where('status', 'in', ['pending', 'submitted', '미제출', '제출했습니다', '학생확인완료'])
+                .limit(100)
+                .get()
+                .then(_snapToRows)
+                .catch(() => []),
+              _queryTeacherClassScoped(db, '서류_추적', gradeNum, classNum, gradeIn, 30),
+            ]).then(([activeDocs, classDocs]) => _mergeRowsById(activeDocs, classDocs))
           : Promise.resolve([])),
     db.collection('가정통신문_목록').limit(20).get().then(_snapToRows),
     isStudentScoped && sidIn.length > 0
@@ -1554,6 +1563,8 @@ module.exports = async function handler(req, res) {
         { status: decision === 'approve' ? 'active' : 'rejected', updated_at: _nowStr() },
         { merge: true }
       );
+      if (targetRole === 'teacher') _invalidateStaticCache('teacher');
+      else if (targetRole === 'student') _invalidateStaticCache('students_');
       return res.status(200).json({ ok: true, status: decision === 'approve' ? 'active' : 'rejected' });
     }
 
@@ -3088,6 +3099,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
   if (action === 'sync_meals_batch') {
     const mealRows = Array.isArray(params.meal_rows) ? params.meal_rows : [];
     const mealWritten = await _batchUpsertDocs(db, '급식_식단표', mealRows, scopeDefaults);
+    _invalidateStaticCache('meals:');
     return { status: 200, json: { ok: true, meal_written: mealWritten } };
   }
 
