@@ -3794,6 +3794,50 @@ function selectLessonImportDate(dateStr) {
   renderLessonProgressImportList(dateStr);
 }
 
+let _lessonProgressFullLoaded = false;
+let _lessonProgressLoadingPromise = null;
+
+async function _ensureFullLessonProgressLoaded(targetDate = '') {
+  if (_lessonProgressFullLoaded) return false;
+  if (typeof gasApi === 'undefined' || !gasApi.isConfigured()) return false;
+  if (_lessonProgressLoadingPromise) {
+    return _lessonProgressLoadingPromise;
+  }
+  _lessonProgressLoadingPromise = (async () => {
+    try {
+      const res = await gasApi.post('fetch_lesson_progress', {
+        ..._getTeacherAuthParams(),
+        limit: 300,
+      });
+      if (res && res.ok !== false && Array.isArray(res.items)) {
+        const merged = new Map();
+        (Array.isArray(mockData.lessonProgress) ? mockData.lessonProgress : []).forEach((item) => {
+          if (item && item.remote_id) merged.set(String(item.remote_id), item);
+        });
+        res.items.forEach((item) => {
+          if (item && item.remote_id) merged.set(String(item.remote_id), item);
+        });
+        mockData.lessonProgress = Array.from(merged.values()).sort((a, b) =>
+          String(b.date || b.updated_at || '').localeCompare(String(a.date || a.updated_at || ''))
+        );
+        _lessonProgressFullLoaded = true;
+        const modalEl = typeof document !== 'undefined' ? document.getElementById('lessonProgressImportModal') : null;
+        if (modalEl && !modalEl.classList.contains('hidden')) {
+          const inputEl = document.getElementById('lessonProgImportDate');
+          const activeDate = (inputEl && inputEl.value) || targetDate || '';
+          renderLessonProgressImportList(activeDate);
+        }
+        return true;
+      }
+    } catch (_) {
+    } finally {
+      _lessonProgressLoadingPromise = null;
+    }
+    return false;
+  })();
+  return _lessonProgressLoadingPromise;
+}
+
 function renderLessonProgressImportList(dateStr) {
   const targetDate = String(dateStr || '').trim().slice(0, 10);
   _renderLessonImportRecentDateChips(targetDate);
@@ -3807,6 +3851,11 @@ function renderLessonProgressImportList(dateStr) {
   _lessonModalState.importCandidates = items;
 
   if (items.length === 0) {
+    if (!_lessonProgressFullLoaded && typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
+      listEl.innerHTML = '<div class="py-10 text-center text-xs text-slate-400">과거 수업 진도 기록을 불러오는 중...</div>';
+      _ensureFullLessonProgressLoaded(targetDate);
+      return;
+    }
     listEl.innerHTML = `<div class="py-10 text-center text-xs text-slate-400">선택한 날짜(${esc(targetDate || '-')})에 등록된 수업 진도가 없습니다.</div>`;
     return;
   }
@@ -3846,8 +3895,11 @@ function openLessonProgressImportModal() {
   const defaultDate = _getDefaultLessonImportDate(mockData.lessonProgress || [], _lessonModalState.dateStr || localToday);
   const inputEl = document.getElementById('lessonProgImportDate');
   if (inputEl) inputEl.value = defaultDate;
-  renderLessonProgressImportList(defaultDate);
   openModal('lessonProgressImportModal');
+  renderLessonProgressImportList(defaultDate);
+  if (!_lessonProgressFullLoaded) {
+    _ensureFullLessonProgressLoaded(defaultDate);
+  }
 }
 
 function applyImportedLessonProgress(idx) {

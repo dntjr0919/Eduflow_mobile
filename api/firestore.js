@@ -1070,10 +1070,10 @@ async function _handleGetMobileBundle(db, params) {
       ? db.collection('교과_명렬표').where('teacher_id', '==', userId).limit(100).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
     role === 'teacher' && userId
-      ? db.collection('교과_출결').where('teacher_id', '==', userId).limit(200).get().then(_snapToRows).catch(() => [])
+      ? db.collection('교과_출결').where('teacher_id', '==', userId).limit(40).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
     role === 'teacher' && userId
-      ? db.collection('수업_진도').where('teacher_id', '==', userId).limit(150).get().then(_snapToRows).catch(() => [])
+      ? db.collection('수업_진도').where('teacher_id', '==', userId).limit(40).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
     role === 'teacher' && userId
       ? db.collection('PC_Agent_Status').doc(userId).get().then((d) => (d.exists ? { remote_id: d.id, ...d.data() } : null)).catch(() => null)
@@ -2383,6 +2383,7 @@ module.exports = async function handler(req, res) {
       'delete_chat_message',
       'upsert_schedule',
       'delete_schedule',
+      'fetch_lesson_progress',
       'upsert_lesson_progress',
       'delete_lesson_progress',
       'sync_lesson_progress_batch',
@@ -4028,6 +4029,25 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     await docRef.delete();
     _invalidateStaticCache('schedules:');
     return { status: 200, json: { ok: true, remote_id: rid, deleted: true } };
+  }
+
+  if (action === 'fetch_lesson_progress') {
+    const rawLimit = _toIntOrNull(params.limit);
+    const limitVal = rawLimit !== null && rawLimit > 0 ? Math.min(rawLimit, 500) : 300;
+    const targetDate = String(params.date || '').trim().slice(0, 10);
+    const snap = await db.collection('수업_진도').where('teacher_id', '==', auth.teacherId).limit(limitVal).get();
+    const rows = _snapToRows(snap)
+      .filter((d) => _belongsToTeacher(d, auth))
+      .filter((d) => (!targetDate || String(d.date || '').trim().slice(0, 10) === targetDate))
+      .sort((a, b) => {
+        const dateCmp = String(b.date || '').localeCompare(String(a.date || ''));
+        if (dateCmp !== 0) return dateCmp;
+        const pA = Number(a.period);
+        const pB = Number(b.period);
+        if (Number.isFinite(pA) && Number.isFinite(pB) && pA !== pB) return pA - pB;
+        return String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
+      });
+    return { status: 200, json: { ok: true, items: rows, total: rows.length } };
   }
 
   if (action === 'upsert_lesson_progress') {

@@ -127,11 +127,11 @@ function _startRealtimeListeners() {
   try {
     let notiQuery = fs.collection('Notifications');
     if (schoolCode) {
-      notiQuery = notiQuery.where('school_code', '==', schoolCode).limit(30);
+      notiQuery = notiQuery.where('school_code', '==', schoolCode).limit(10);
     } else if (gradeNum) {
-      notiQuery = notiQuery.where('grade', '==', gradeNum).limit(30);
+      notiQuery = notiQuery.where('grade', '==', gradeNum).limit(10);
     } else {
-      notiQuery = notiQuery.where('is_read', '==', false).limit(20);
+      notiQuery = notiQuery.where('is_read', '==', false).limit(10);
     }
     _activeNotiListenerKey = scopeKey;
     _unsubNotiListener = notiQuery.onSnapshot((snap) => {

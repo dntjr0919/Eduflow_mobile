@@ -1023,7 +1023,7 @@ async function runDailySimulation() {
     await db
       .collection('Notifications')
       .where('school_code', '==', SCHOOL_CODE)
-      .limit(30)
+      .limit(10)
       .get();
   }
 
@@ -1109,7 +1109,7 @@ async function runDailySimulation() {
     await db
       .collection('Notifications')
       .where('school_code', '==', SCHOOL_CODE)
-      .limit(30)
+      .limit(10)
       .get();
   }
 
