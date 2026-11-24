@@ -4,8 +4,6 @@
  * firebase-admin SDK로 Cloud Firestore를 직접 조회·수정합니다.
  */
 const crypto = require('crypto');
-const { getApps } = require('firebase-admin/app');
-const { getAuth } = require('firebase-admin/auth');
 const { getFirestore, buildFirestoreErrorPayload } = require('./_firebaseAdmin');
 const googleDrive = require('./_googleDrive');
 const { uploadBase64ToDrive } = googleDrive;
@@ -572,23 +570,73 @@ async function _isDuplicateIdAcrossAllCollections(db, candidateId) {
   }
   return false;
 }
+function _getFirebaseServiceAccountCreds() {
+  const clientEmail = String(process.env.FIREBASE_CLIENT_EMAIL || '').trim();
+  const privateKey = String(process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n').trim();
+  if (clientEmail && privateKey) {
+    return { clientEmail, privateKey };
+  }
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    try {
+      const parsed = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+      if (parsed.client_email && parsed.private_key) {
+        return {
+          clientEmail: String(parsed.client_email).trim(),
+          privateKey: String(parsed.private_key).replace(/\\n/g, '\n').trim(),
+        };
+      }
+    } catch (_) {}
+  }
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const defaultPath = path.join(process.cwd(), 'eduflow-db-b44f3-5692e5dea8c3.json');
+    const targetFile = fs.existsSync(defaultPath)
+      ? defaultPath
+      : fs.readdirSync(process.cwd())
+          .filter((f) => f.endsWith('.json') && f.includes('firebase-adminsdk'))
+          .map((f) => path.join(process.cwd(), f))[0];
+    if (targetFile) {
+      const sa = JSON.parse(fs.readFileSync(targetFile, 'utf8'));
+      if (sa.client_email && sa.private_key) {
+        return { clientEmail: sa.client_email, privateKey: sa.private_key };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
 async function _issueFirebaseCustomToken(user, role) {
   try {
-    const apps = getApps();
-    if (!apps.length) return '';
+    const creds = _getFirebaseServiceAccountCreds();
+    if (!creds) return '';
     const normalizedRole = String(role || user.role || 'student').trim().toLowerCase();
     const uid = String(
       user.teacher_id || user.parent_id || user.student_id || user.remote_id || ''
     ).trim();
     if (!uid) return '';
-    const claims = {
-      role: normalizedRole,
-      student_id: String(user.student_id || '').trim(),
-      school_code: String(user.neis_school_code || user.school_code || '').trim(),
-      grade: _toIntOrNull(user.grade),
-      class_no: _toIntOrNull(user.class_no),
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const headerB64 = _base64UrlEncode(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+    const payload = {
+      aud: 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit',
+      iat: nowSec,
+      exp: nowSec + 3600,
+      iss: creds.clientEmail,
+      sub: creds.clientEmail,
+      uid,
+      claims: {
+        role: normalizedRole,
+        student_id: String(user.student_id || '').trim(),
+        school_code: String(user.neis_school_code || user.school_code || '').trim(),
+        grade: _toIntOrNull(user.grade),
+        class_no: _toIntOrNull(user.class_no),
+      },
     };
-    return await getAuth(apps[0]).createCustomToken(uid, claims);
+    const payloadB64 = _base64UrlEncode(JSON.stringify(payload));
+    const signingInput = `${headerB64}.${payloadB64}`;
+    const sig = crypto.createSign('RSA-SHA256').update(signingInput, 'utf8').sign(creds.privateKey);
+    return `${signingInput}.${_base64UrlEncode(sig)}`;
   } catch (err) {
     console.warn('[createCustomToken error]', err && err.message ? err.message : err);
     return '';
