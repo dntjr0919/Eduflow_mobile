@@ -949,6 +949,17 @@ async function _handleGetMobileBundle(db, params) {
   const mealsCacheKey = `meals:all:${todayStr}`;
 
   // 읽기 비용 최적화 (단일 필드 where만 사용해 복합 인덱스 오류 방지 + 정적 데이터 서버 메모리 캐시):
+  const timetableSnapshotsRaw = await db
+    .collection('시간표_스냅샷')
+    .where('date', '==', todayStr)
+    .get()
+    .then(_snapToRows)
+    .catch(() => []);
+
+  const hasTodaySnapshot = (timetableSnapshotsRaw || []).some((s) =>
+    _matchesTenant(s, { schoolCode, comciganSchoolCode: params.comcigan_school_code || '', schoolName, gradeNum: null, classNum: null })
+  );
+
   const [
     teachersRaw,
     studentsRows,
@@ -969,8 +980,7 @@ async function _handleGetMobileBundle(db, params) {
     lessonProgressRaw,
     pcAgentStatusDoc,
     remoteTasksRaw,
-    schedulesRaw,
-    timetableSnapshotsRaw
+    schedulesRaw
   ] = await Promise.all([
     _getCachedOrFetch(teacherCacheKey, forceRefresh, () => (
       role === 'teacher' && userId
@@ -996,14 +1006,16 @@ async function _handleGetMobileBundle(db, params) {
     isStudentScoped && sidIn.length > 0
       ? db.collection('가정통신문_회신').where('student_id', 'in', sidIn).limit(50).get().then(_snapToRows)
       : db.collection('가정통신문_회신').limit(150).get().then(_snapToRows),
-    !skipStatic && ttBaseCacheKey
+    !skipStatic && !hasTodaySnapshot && ttBaseCacheKey
       ? _getCachedOrFetch(ttBaseCacheKey, forceRefresh, () =>
           db.collection('시간표_기본').where('grade', 'in', gradeIn).limit(300).get().then(_snapToRows)
         )
-      : Promise.resolve(undefined),
-    gradeIn.length > 0
-      ? db.collection('시간표_변동').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
-      : db.collection('시간표_변동').where('date', '>=', todayStr).limit(100).get().then(_snapToRows),
+      : Promise.resolve(hasTodaySnapshot ? [] : undefined),
+    hasTodaySnapshot
+      ? db.collection('시간표_변동').where('date', '==', todayStr).limit(100).get().then(_snapToRows)
+      : (gradeIn.length > 0
+          ? db.collection('시간표_변동').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
+          : db.collection('시간표_변동').where('date', '>=', todayStr).limit(100).get().then(_snapToRows)),
     !skipStatic
       ? _getCachedOrFetch(mealsCacheKey, forceRefresh, () =>
           db.collection('급식_식단표').where('meal_date', '>=', todayStr).limit(300).get().then(_snapToRows)
@@ -1019,7 +1031,11 @@ async function _handleGetMobileBundle(db, params) {
       : (gradeIn.length > 0
           ? db.collection('1:1_상담채팅').where('grade', 'in', gradeIn).limit(150).get().then(_snapToRows)
           : db.collection('1:1_상담채팅').limit(100).get().then(_snapToRows)),
-    db.collection('Notifications').where('is_read', '==', false).limit(50).get().then(_snapToRows),
+    schoolCode
+      ? db.collection('Notifications').where('school_code', '==', schoolCode).limit(30).get().then(_snapToRows)
+      : (gradeIn.length > 0
+          ? db.collection('Notifications').where('grade', 'in', gradeIn).limit(30).get().then(_snapToRows)
+          : db.collection('Notifications').where('is_read', '==', false).limit(30).get().then(_snapToRows)),
     gradeIn.length > 0
       ? db.collection('학급회비').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
       : db.collection('학급회비').limit(100).get().then(_snapToRows),
@@ -1027,22 +1043,21 @@ async function _handleGetMobileBundle(db, params) {
       ? db.collection('학급_공지게시판').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
       : db.collection('학급_공지게시판').limit(100).get().then(_snapToRows),
     role === 'teacher' && userId
-      ? db.collection('교과_명렬표').where('teacher_id', '==', userId).limit(200).get().then(_snapToRows).catch(() => [])
+      ? db.collection('교과_명렬표').where('teacher_id', '==', userId).limit(100).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
     role === 'teacher' && userId
-      ? db.collection('교과_출결').where('teacher_id', '==', userId).limit(500).get().then(_snapToRows).catch(() => [])
+      ? db.collection('교과_출결').where('teacher_id', '==', userId).limit(200).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
     role === 'teacher' && userId
-      ? db.collection('수업_진도').where('teacher_id', '==', userId).limit(300).get().then(_snapToRows).catch(() => [])
+      ? db.collection('수업_진도').where('teacher_id', '==', userId).limit(150).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
     role === 'teacher' && userId
       ? db.collection('PC_Agent_Status').doc(userId).get().then((d) => (d.exists ? { remote_id: d.id, ...d.data() } : null)).catch(() => null)
       : Promise.resolve(null),
     role === 'teacher' && userId
-      ? db.collection('Tasks').where('teacher_id', '==', userId).limit(100).get().then(_snapToRows).catch(() => [])
+      ? db.collection('Tasks').where('teacher_id', '==', userId).limit(50).get().then(_snapToRows).catch(() => [])
       : Promise.resolve([]),
-    db.collection('Schedules').limit(150).get().then(_snapToRows).catch(() => []),
-    db.collection('시간표_스냅샷').where('date', '==', todayStr).get().then(_snapToRows).catch(() => []),
+    db.collection('Schedules').limit(80).get().then(_snapToRows).catch(() => []),
   ]);
 
   const effectiveTeacherName = normTeacherParam || (role === 'teacher' && teachersRaw[0] ? _normalizeTeacherName(teachersRaw[0].name || teachersRaw[0].teacher_id || '') : '');
@@ -1057,7 +1072,7 @@ async function _handleGetMobileBundle(db, params) {
   let timetableBaseRows = timetableBaseClassRows;
   let timetableChangesRows = timetableChangesClassRows;
 
-  if (role === 'teacher' && teacherCandidates.length > 0) {
+  if (role === 'teacher' && teacherCandidates.length > 0 && !hasTodaySnapshot) {
     const [tBaseByName, tBaseByTeacher, tChgChanged, tChgOrig] = await Promise.all([
       !skipStatic
         ? db.collection('시간표_기본').where('teacher_name', 'in', teacherCandidates).get().then(_snapToRows).catch(() => [])
@@ -4344,7 +4359,19 @@ async function _handleDesktopApiAction(db, action, params, auth) {
   }
 
   if (action === 'fetch_pending_remote_tasks') {
-    const snap = await db.collection('Tasks').where('teacher_id', '==', auth.teacherId).limit(100).get();
+    let snap;
+    try {
+      snap = await db
+        .collection('Tasks')
+        .where('teacher_id', '==', auth.teacherId)
+        .where('exec_status', 'in', ['pending', 'queued', 'running'])
+        .limit(50)
+        .get();
+    } catch (err) {
+      const isIndexErr = err && (err.code === 9 || /index|FAILED_PRECONDITION/i.test(String(err.message || '')));
+      if (!isIndexErr) throw err;
+      snap = await db.collection('Tasks').where('teacher_id', '==', auth.teacherId).limit(50).get();
+    }
     const rows = _snapToRows(snap);
     const tasks = rows
       .filter((t) => (

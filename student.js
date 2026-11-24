@@ -43,6 +43,9 @@ function switchBottomTab(tabName) {
       if (dot) dot.className = "w-1 h-1 rounded-full bg-transparent";
     }
   });
+  if (typeof _setChatTabRealtimeActive === 'function') {
+    _setChatTabRealtimeActive(tabName === 'counseling');
+  }
 }
 
 // --- TAB 1: Home (Urgent Docs, Timetable, Meals) ---

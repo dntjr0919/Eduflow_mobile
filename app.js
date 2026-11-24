@@ -17,6 +17,8 @@ const FIREBASE_WEB_CONFIG = {
 let _firestoreClient = null;
 let _unsubChatListener = null;
 let _unsubNotiListener = null;
+let _activeChatListenerKey = '';
+let _activeNotiListenerKey = '';
 
 function _getClientFirestore() {
   if (_firestoreClient) return _firestoreClient;
@@ -30,37 +32,68 @@ function _getClientFirestore() {
   return null;
 }
 
-function _stopRealtimeListeners() {
-  if (typeof _unsubChatListener === 'function') {
-    try { _unsubChatListener(); } catch (_) {}
-    _unsubChatListener = null;
-  }
-  if (typeof _unsubNotiListener === 'function') {
-    try { _unsubNotiListener(); } catch (_) {}
-    _unsubNotiListener = null;
-  }
+function _buildRealtimeScopeKey() {
+  const cu = mockData.currentUser || {};
+  const role = String(cu.role || state.activeRole || 'student').toLowerCase();
+  const userId = String(cu.userId || '').trim();
+  const studentId = String(cu.studentId || '').trim();
+  const schoolCode = String(cu.neisSchoolCode || '').trim();
+  const gradeNum = cu.grade ? Number(cu.grade) : '';
+  const classNum = cu.classNo ? Number(cu.classNo) : '';
+  return `${role}|${userId}|${studentId}|${schoolCode}|${gradeNum}|${classNum}`;
 }
 
-function _startRealtimeListeners() {
+function _stopChatListener() {
+  if (typeof _unsubChatListener === 'function') {
+    try { _unsubChatListener(); } catch (_) {}
+  }
+  _unsubChatListener = null;
+  _activeChatListenerKey = '';
+}
+
+function _stopNotiListener() {
+  if (typeof _unsubNotiListener === 'function') {
+    try { _unsubNotiListener(); } catch (_) {}
+  }
+  _unsubNotiListener = null;
+  _activeNotiListenerKey = '';
+}
+
+function _stopRealtimeListeners() {
+  _stopChatListener();
+  _stopNotiListener();
+}
+
+function _setChatTabRealtimeActive(isActive) {
+  if (!isActive) {
+    _stopChatListener();
+    return;
+  }
   const fs = _getClientFirestore();
   if (!fs) return;
-  _stopRealtimeListeners();
+
+  const scopeKey = _buildRealtimeScopeKey();
+  if (typeof _unsubChatListener === 'function' && _activeChatListenerKey === scopeKey) {
+    return;
+  }
+  _stopChatListener();
 
   const cu = mockData.currentUser || {};
   const role = String(cu.role || state.activeRole || 'student').toLowerCase();
   const gradeNum = cu.grade ? Number(cu.grade) : null;
   const classNum = cu.classNo ? Number(cu.classNo) : null;
 
-  // 1) 1:1_상담채팅 실시간 리스너 (본인 방 또는 담당 학급으로 제한)
+  // 1:1_상담채팅 실시간 리스너 (채팅 탭 진입 시에만 활성화, 본인 방 또는 담당 학급으로 제한)
   try {
     let chatQuery = fs.collection('1:1_상담채팅');
     if (role !== 'teacher' && cu.studentId) {
-      chatQuery = chatQuery.where('room_id', '==', `ROOM-${cu.studentId}`);
+      chatQuery = chatQuery.where('room_id', '==', `ROOM-${cu.studentId}`).limit(50);
     } else if (gradeNum && classNum) {
-      chatQuery = chatQuery.where('grade', '==', gradeNum).where('class_no', '==', classNum);
+      chatQuery = chatQuery.where('grade', '==', gradeNum).where('class_no', '==', classNum).limit(50);
     } else {
       chatQuery = chatQuery.limit(50);
     }
+    _activeChatListenerKey = scopeKey;
     _unsubChatListener = chatQuery.onSnapshot((snap) => {
       const chatRows = [];
       snap.forEach((doc) => chatRows.push({ remote_id: doc.id, ...doc.data() }));
@@ -71,20 +104,51 @@ function _startRealtimeListeners() {
     }, (err) => {
       console.warn('[Firestore onSnapshot Chat]', err && err.message ? err.message : err);
     });
-  } catch (_) {}
+  } catch (_) {
+    _activeChatListenerKey = '';
+  }
+}
 
-  // 2) 읽지 않은 Notifications 실시간 리스너 (is_read == false 조건 제한)
+function _startRealtimeListeners() {
+  const fs = _getClientFirestore();
+  if (!fs) return;
+
+  const scopeKey = _buildRealtimeScopeKey();
+  if (typeof _unsubNotiListener === 'function' && _activeNotiListenerKey === scopeKey) {
+    return;
+  }
+  _stopNotiListener();
+
+  const cu = mockData.currentUser || {};
+  const schoolCode = String(cu.neisSchoolCode || '').trim();
+  const gradeNum = cu.grade ? Number(cu.grade) : null;
+
+  // Notifications 실시간 리스너 (학교/학년 스코프 제한, 단일 필드 쿼리)
   try {
-    const notiQuery = fs.collection('Notifications').where('is_read', '==', false).limit(50);
+    let notiQuery = fs.collection('Notifications');
+    if (schoolCode) {
+      notiQuery = notiQuery.where('school_code', '==', schoolCode).limit(30);
+    } else if (gradeNum) {
+      notiQuery = notiQuery.where('grade', '==', gradeNum).limit(30);
+    } else {
+      notiQuery = notiQuery.where('is_read', '==', false).limit(20);
+    }
+    _activeNotiListenerKey = scopeKey;
     _unsubNotiListener = notiQuery.onSnapshot((snap) => {
       const notiRows = [];
-      snap.forEach((doc) => notiRows.push({ remote_id: doc.id, ...doc.data() }));
+      snap.forEach((doc) => {
+        const d = doc.data() || {};
+        if (d.is_read === true) return;
+        notiRows.push({ remote_id: doc.id, ...d });
+      });
       hydrateMockDataFromBundle({ ok: true, notifications: notiRows });
       if (typeof renderNotifications === 'function') renderNotifications();
     }, (err) => {
       console.warn('[Firestore onSnapshot Notifications]', err && err.message ? err.message : err);
     });
-  } catch (_) {}
+  } catch (_) {
+    _activeNotiListenerKey = '';
+  }
 }
 
 function _isTruthyField(val) {
@@ -3103,6 +3167,15 @@ if (typeof module !== 'undefined' && module.exports) {
     safeImageUrl,
     normalizeCircularAttachmentUrl,
     hydrateMockDataFromBundle,
+    _startRealtimeListeners,
+    _stopRealtimeListeners,
+    _setChatTabRealtimeActive,
+    _getRealtimeListenerState: () => ({
+      hasNoti: typeof _unsubNotiListener === 'function',
+      hasChat: typeof _unsubChatListener === 'function',
+      notiKey: _activeNotiListenerKey,
+      chatKey: _activeChatListenerKey,
+    }),
     mockData,
   };
 }

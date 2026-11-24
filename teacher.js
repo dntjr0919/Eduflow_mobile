@@ -34,6 +34,9 @@ function switchTeacherBottomTab(tabName) {
       if (dot) dot.className = "w-1 h-1 rounded-full bg-transparent";
     }
   });
+  if (typeof _setChatTabRealtimeActive === 'function') {
+    _setChatTabRealtimeActive(tabName === 'chat');
+  }
 }
 
 // --- TEACHER TAB 1: Home & Live Attendance + Counseling Toggle ---
