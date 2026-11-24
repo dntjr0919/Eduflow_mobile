@@ -23,26 +23,37 @@ function _safeStudentImageUrl(rawUrl) {
 }
 
 function switchBottomTab(tabName) {
+  if (typeof state !== 'undefined' && state) state.activeStudentTab = tabName;
   const studentTabs = ['home', 'attendance', 'letters', 'counseling'];
   const teacherTabs = ['home', 'documents', 'circulars', 'remote', 'chat'];
-  teacherTabs.forEach(t => document.getElementById(`teacherTabView-${t}`).classList.add('hidden'));
+  teacherTabs.forEach(t => {
+    const tv = document.getElementById(`teacherTabView-${t}`);
+    if (tv) tv.classList.add('hidden');
+  });
 
   studentTabs.forEach(t => {
     const view = document.getElementById(`tabView-${t}`);
     const btn = document.getElementById(`tabNav-${t}`);
-    const dot = btn.querySelector('span:last-child');
+    const dot = btn ? btn.querySelector('span:last-child') : null;
     if (t === tabName) {
-      view.classList.remove('hidden');
-      if (t === 'counseling') view.classList.add('flex');
-      btn.className = "flex flex-col items-center gap-0.5 text-indigo-600 w-16 transition-colors";
+      if (view) {
+        view.classList.remove('hidden');
+        if (t === 'counseling') view.classList.add('flex');
+      }
+      if (btn) btn.className = "flex flex-col items-center gap-0.5 text-indigo-600 w-16 transition-colors";
       if (dot) dot.className = "w-1 h-1 rounded-full bg-indigo-600";
     } else {
-      view.classList.add('hidden');
-      view.classList.remove('flex');
-      btn.className = "flex flex-col items-center gap-0.5 text-slate-400 hover:text-slate-600 w-16 transition-colors";
+      if (view) {
+        view.classList.add('hidden');
+        view.classList.remove('flex');
+      }
+      if (btn) btn.className = "flex flex-col items-center gap-0.5 text-slate-400 hover:text-slate-600 w-16 transition-colors";
       if (dot) dot.className = "w-1 h-1 rounded-full bg-transparent";
     }
   });
+  if (tabName === 'counseling' && typeof renderStudentChat === 'function') {
+    renderStudentChat();
+  }
   if (typeof _setChatTabRealtimeActive === 'function') {
     _setChatTabRealtimeActive(tabName === 'counseling');
   }
@@ -1703,6 +1714,7 @@ async function handleCounselingBooking(e) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    switchBottomTab,
     renderUrgentDocuments,
     renderTimetable,
     renderMeals,

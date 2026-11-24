@@ -62,6 +62,7 @@ function _stopNotiListener() {
 function _stopRealtimeListeners() {
   _stopChatListener();
   _stopNotiListener();
+  _firestoreClient = null;
 }
 
 function _setChatTabRealtimeActive(isActive) {
@@ -99,8 +100,12 @@ function _setChatTabRealtimeActive(isActive) {
       snap.forEach((doc) => chatRows.push({ remote_id: doc.id, ...doc.data() }));
       chatRows.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
       hydrateMockDataFromBundle({ ok: true, chat_messages: chatRows });
-      if (typeof renderTeacherChat === 'function' && role === 'teacher') renderTeacherChat();
-      if (typeof renderStudentChat === 'function' && role !== 'teacher') renderStudentChat();
+      if (role === 'teacher') {
+        if (typeof renderTeacherChatRooms === 'function') renderTeacherChatRooms();
+        if (typeof renderTeacherChatMessages === 'function') renderTeacherChatMessages();
+      } else if (typeof renderStudentChat === 'function') {
+        renderStudentChat();
+      }
     }, (err) => {
       console.warn('[Firestore onSnapshot Chat]', err && err.message ? err.message : err);
     });
@@ -365,6 +370,8 @@ let mockData = {
 // Global Application State
 const state = {
   activeRole: 'student',
+  activeStudentTab: 'home',
+  activeTeacherTab: 'home',
   activeMealTab: 'lunch',
   selectedAttType: '',
   selectedAttCategory: '',
@@ -852,7 +859,7 @@ function _clearBundleCache() {
 
 function _enterDashboardAfterLogin() {
   if (typeof document !== 'undefined') {
-    applyRoleUI();
+    applyRoleUI({ resetTab: true });
   }
   document.getElementById('loginScreen').classList.add('hidden');
   const dash = document.getElementById('dashboardScreen');
@@ -1947,7 +1954,8 @@ function hydrateMockDataFromBundle(bundle) {
   }
 }
 
-function applyRoleUI() {
+function applyRoleUI(options = {}) {
+  const resetTab = Boolean(options && options.resetTab);
   const nameElem = document.getElementById('userNameDisplay');
   const subElem = document.getElementById('userSubDisplay');
   const badgeElem = document.getElementById('userBadge');
@@ -1964,37 +1972,46 @@ function applyRoleUI() {
   const tName = cu.teacherName || '담임교사';
 
   if (state.activeRole === 'teacher') {
-    nameElem.innerText = tName;
-    subElem.innerText = `${school}${gc ? ' ' + gc : ''} · 관리자 모드`;
-    badgeElem.innerText = "교사";
-    badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-purple-100 text-purple-700";
-    avatarElem.innerText = (tName && tName[0]) || "교";
+    if (nameElem) nameElem.innerText = tName;
+    if (subElem) subElem.innerText = `${school}${gc ? ' ' + gc : ''} · 관리자 모드`;
+    if (badgeElem) {
+      badgeElem.innerText = "교사";
+      badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-purple-100 text-purple-700";
+    }
+    if (avatarElem) avatarElem.innerText = (tName && tName[0]) || "교";
     if (profileBtn) profileBtn.classList.remove('hidden');
     if (customIdBtn) customIdBtn.classList.add('hidden');
 
-    studentNav.classList.add('hidden');
-    teacherNav.classList.remove('hidden');
-    teacherNav.classList.add('flex');
-    if (typeof switchTeacherBottomTab === 'function') {
-      switchTeacherBottomTab('home');
+    const wasTeacherNavHidden = teacherNav ? teacherNav.classList.contains('hidden') : false;
+    if (studentNav) studentNav.classList.add('hidden');
+    if (teacherNav) {
+      teacherNav.classList.remove('hidden');
+      teacherNav.classList.add('flex');
+    }
+    if (typeof switchTeacherBottomTab === 'function' && (resetTab || wasTeacherNavHidden)) {
+      switchTeacherBottomTab(resetTab ? 'home' : (state.activeTeacherTab || 'home'));
     }
   } else {
     if (profileBtn) profileBtn.classList.add('hidden');
     if (customIdBtn) customIdBtn.classList.remove('hidden');
     if (state.activeRole === 'student') {
       const stuDisplay = cu.studentName || cu.userId || '학생';
-      nameElem.innerText = stuDisplay;
-      badgeElem.innerText = "학생";
-      badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-indigo-100 text-indigo-700";
-      avatarElem.innerText = (stuDisplay && stuDisplay[0]) || "학";
+      if (nameElem) nameElem.innerText = stuDisplay;
+      if (badgeElem) {
+        badgeElem.innerText = "학생";
+        badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-indigo-100 text-indigo-700";
+      }
+      if (avatarElem) avatarElem.innerText = (stuDisplay && stuDisplay[0]) || "학";
     } else {
       const pDisplay = cu.parentName || cu.userId || '학부모';
-      nameElem.innerText = pDisplay;
-      badgeElem.innerText = "학부모";
-      badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700";
-      avatarElem.innerText = (pDisplay && pDisplay[0]) || "학";
+      if (nameElem) nameElem.innerText = pDisplay;
+      if (badgeElem) {
+        badgeElem.innerText = "학부모";
+        badgeElem.className = "text-[10px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700";
+      }
+      if (avatarElem) avatarElem.innerText = (pDisplay && pDisplay[0]) || "학";
     }
-    subElem.innerText = `${school}${gc ? ' ' + gc : ''} · 담임 ${tName} 선생님`;
+    if (subElem) subElem.innerText = `${school}${gc ? ' ' + gc : ''} · 담임 ${tName} 선생님`;
 
     const cAvatar = document.getElementById('counselingTeacherAvatar');
     const cName = document.getElementById('counselingTeacherName');
@@ -2006,11 +2023,14 @@ function applyRoleUI() {
     const bLabel = document.getElementById('budgetClassLabel');
     if (bLabel) bLabel.innerText = `${gc ? gc + ' ' : ''}학급회비 잔액`;
 
-    teacherNav.classList.add('hidden');
-    teacherNav.classList.remove('flex');
-    studentNav.classList.remove('hidden');
-    if (typeof switchBottomTab === 'function') {
-      switchBottomTab('home');
+    const wasStudentNavHidden = studentNav ? studentNav.classList.contains('hidden') : false;
+    if (teacherNav) {
+      teacherNav.classList.add('hidden');
+      teacherNav.classList.remove('flex');
+    }
+    if (studentNav) studentNav.classList.remove('hidden');
+    if (typeof switchBottomTab === 'function' && (resetTab || wasStudentNavHidden)) {
+      switchBottomTab(resetTab ? 'home' : (state.activeStudentTab || 'home'));
     }
   }
 }
@@ -3221,6 +3241,7 @@ if (typeof module !== 'undefined' && module.exports) {
     _buildScheduleItemsHtml,
     renderAcademicSchedules,
     renderNotificationsModal,
+    applyRoleUI,
     escapeHtml,
     safeHttpUrl,
     safeImageUrl,
@@ -3237,5 +3258,6 @@ if (typeof module !== 'undefined' && module.exports) {
       chatKey: _activeChatListenerKey,
     }),
     mockData,
+    state,
   };
 }

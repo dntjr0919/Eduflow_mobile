@@ -14,26 +14,38 @@ function _escTeacherHtml(val) {
 }
 
 function switchTeacherBottomTab(tabName) {
+  if (typeof state !== 'undefined' && state) state.activeTeacherTab = tabName;
   const studentTabs = ['home', 'attendance', 'letters', 'counseling'];
   const teacherTabs = ['home', 'documents', 'circulars', 'remote', 'chat'];
-  studentTabs.forEach(t => document.getElementById(`tabView-${t}`).classList.add('hidden'));
+  studentTabs.forEach(t => {
+    const sv = document.getElementById(`tabView-${t}`);
+    if (sv) sv.classList.add('hidden');
+  });
 
   teacherTabs.forEach(t => {
     const view = document.getElementById(`teacherTabView-${t}`);
     const btn = document.getElementById(`tTabNav-${t}`);
-    const dot = btn.querySelector('span:last-child');
+    const dot = btn ? btn.querySelector('span:last-child') : null;
     if (t === tabName) {
-      view.classList.remove('hidden');
-      if (t === 'chat') view.classList.add('flex');
-      btn.className = "flex flex-col items-center gap-0.5 text-indigo-600 flex-1 transition-colors";
+      if (view) {
+        view.classList.remove('hidden');
+        if (t === 'chat') view.classList.add('flex');
+      }
+      if (btn) btn.className = "flex flex-col items-center gap-0.5 text-indigo-600 flex-1 transition-colors";
       if (dot) dot.className = "w-1 h-1 rounded-full bg-indigo-600";
     } else {
-      view.classList.add('hidden');
-      view.classList.remove('flex');
-      btn.className = "flex flex-col items-center gap-0.5 text-slate-400 hover:text-slate-600 flex-1 transition-colors";
+      if (view) {
+        view.classList.add('hidden');
+        view.classList.remove('flex');
+      }
+      if (btn) btn.className = "flex flex-col items-center gap-0.5 text-slate-400 hover:text-slate-600 flex-1 transition-colors";
       if (dot) dot.className = "w-1 h-1 rounded-full bg-transparent";
     }
   });
+  if (tabName === 'chat') {
+    if (typeof renderTeacherChatRooms === 'function') renderTeacherChatRooms();
+    if (typeof renderTeacherChatMessages === 'function') renderTeacherChatMessages();
+  }
   if (typeof _setChatTabRealtimeActive === 'function') {
     _setChatTabRealtimeActive(tabName === 'chat');
   }
@@ -3969,6 +3981,7 @@ async function saveTeacherLessonProgress(btnEl) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    switchTeacherBottomTab,
     _deriveAttCheckStatus,
     _formatOutingPeriodInfo,
     _getReturnPeriodOptions,

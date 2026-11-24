@@ -468,3 +468,171 @@ test('_handleGetMobileBundle fetches pending/submitted doc_tracking even when 50
   assert.equal(ids.has('doc_pending_new'), true);
   assert.equal(ids.has('doc_submitted_new'), true);
 });
+
+test('chat tab switch stays on chat/counseling view when onSnapshot triggers hydrateMockDataFromBundle -> applyRoleUI', (t) => {
+  const prevWindow = global.window;
+  const prevDocument = global.document;
+  const prevUser = { ...mockData.currentUser };
+  const prevRole = require('../app.js').state.activeRole;
+
+  function makeClassList(initial = []) {
+    const set = new Set(initial);
+    return {
+      add(...cls) { cls.forEach((c) => set.add(c)); },
+      remove(...cls) { cls.forEach((c) => set.delete(c)); },
+      contains(c) { return set.has(c); },
+      toggle(c, force) {
+        if (force === undefined) {
+          if (set.has(c)) set.delete(c); else set.add(c);
+        } else if (force) set.add(c); else set.delete(c);
+      },
+    };
+  }
+  function makeMockNode(initialClasses = []) {
+    return {
+      className: '',
+      innerText: '',
+      innerHTML: '',
+      textContent: '',
+      classList: makeClassList(initialClasses),
+      querySelector() { return { className: '' }; },
+    };
+  }
+
+  const domMap = new Map();
+  for (const tId of ['home', 'attendance', 'letters', 'counseling']) {
+    domMap.set(`tabView-${tId}`, makeMockNode(tId === 'home' ? [] : ['hidden']));
+    domMap.set(`tabNav-${tId}`, makeMockNode());
+  }
+  for (const tId of ['home', 'documents', 'circulars', 'remote', 'chat']) {
+    domMap.set(`teacherTabView-${tId}`, makeMockNode(['hidden']));
+    domMap.set(`tTabNav-${tId}`, makeMockNode());
+  }
+  domMap.set('studentBottomNav', makeMockNode());
+  domMap.set('teacherBottomNav', makeMockNode(['hidden']));
+  domMap.set('counselingCtaBanner', makeMockNode(['hidden']));
+  domMap.set('chatMessagesContainer', makeMockNode());
+  domMap.set('teacherChatSearch', { value: '' });
+  domMap.set('teacherChatRoomsList', makeMockNode());
+  domMap.set('teacherChatUnreadDot', makeMockNode(['hidden']));
+  domMap.set('teacherLiveChatMessages', makeMockNode());
+  domMap.set('activeChatRoomTitle', makeMockNode());
+  domMap.set('activeChatRoomSubtitle', makeMockNode());
+
+  const subscriptions = [];
+  const makeQueryObj = (col) => ({
+    where() { return makeQueryObj(col); },
+    limit() { return makeQueryObj(col); },
+    onSnapshot(cb) {
+      subscriptions.push({ col, cb });
+      return () => {};
+    },
+  });
+
+  t.after(() => {
+    _stopRealtimeListeners();
+    global.window = prevWindow;
+    global.document = prevDocument;
+    mockData.currentUser = prevUser;
+    require('../app.js').state.activeRole = prevRole;
+    delete global.state;
+    delete global.mockData;
+    delete global._setChatTabRealtimeActive;
+    delete global.switchBottomTab;
+    delete global.switchTeacherBottomTab;
+    delete global.renderStudentChat;
+    delete global.renderTeacherChatRooms;
+    delete global.renderTeacherChatMessages;
+  });
+
+  global.document = {
+    getElementById(id) {
+      return domMap.get(id) || null;
+    },
+  };
+  global.window = {
+    firebase: {
+      apps: [{}],
+      firestore: () => ({
+        collection: (col) => makeQueryObj(col),
+      }),
+    },
+  };
+
+  const appMod = require('../app.js');
+  const studentMod = require('../student.js');
+  const teacherMod = require('../teacher.js');
+
+  global.state = appMod.state;
+  global.mockData = appMod.mockData;
+  global._setChatTabRealtimeActive = appMod._setChatTabRealtimeActive;
+  global.switchBottomTab = studentMod.switchBottomTab;
+  global.switchTeacherBottomTab = teacherMod.switchTeacherBottomTab;
+  global.renderStudentChat = studentMod.renderStudentChat;
+  global.renderTeacherChatRooms = teacherMod.renderTeacherChatRooms;
+  global.renderTeacherChatMessages = teacherMod.renderTeacherChatMessages;
+
+  // 1) Student clicks counseling tab, then Firestore immediately fires initial onSnapshot callback
+  appMod.state.activeRole = 'student';
+  mockData.currentUser = {
+    role: 'student',
+    userId: '10401',
+    studentId: '10401',
+    studentName: '김민준',
+    grade: '1',
+    classNo: '4',
+    neisSchoolCode: '8140246',
+  };
+  appMod.applyRoleUI({ resetTab: true });
+  studentMod.switchBottomTab('counseling');
+
+  assert.equal(domMap.get('tabView-counseling').classList.contains('hidden'), false);
+  assert.equal(domMap.get('tabView-home').classList.contains('hidden'), true);
+  assert.equal(appMod.state.activeStudentTab, 'counseling');
+  assert.equal(_getRealtimeListenerState().hasChat, true);
+
+  const studentChatSub = subscriptions.filter((s) => s.col === '1:1_상담채팅').pop();
+  assert.ok(studentChatSub);
+  studentChatSub.cb({
+    forEach(fn) {
+      fn({ id: 'c1', data: () => ({ room_id: 'ROOM-10401', sender_role: 'student', message: '안녕하세요', created_at: '2026-11-24 09:00:00' }) });
+    },
+  });
+
+  // Must remain on counseling tab (not bounced back to home) and keep chat listener active
+  assert.equal(domMap.get('tabView-counseling').classList.contains('hidden'), false);
+  assert.equal(domMap.get('tabView-home').classList.contains('hidden'), true);
+  assert.equal(appMod.state.activeStudentTab, 'counseling');
+  assert.equal(_getRealtimeListenerState().hasChat, true);
+
+  // 2) Teacher switches to chat tab, then onSnapshot fires
+  appMod.state.activeRole = 'teacher';
+  mockData.currentUser = {
+    role: 'teacher',
+    userId: 'teacher_1',
+    teacherName: '김교사',
+    grade: '1',
+    classNo: '4',
+    neisSchoolCode: '8140246',
+  };
+  appMod.applyRoleUI({ resetTab: true });
+  teacherMod.switchTeacherBottomTab('chat');
+
+  assert.equal(domMap.get('teacherTabView-chat').classList.contains('hidden'), false);
+  assert.equal(domMap.get('teacherTabView-home').classList.contains('hidden'), true);
+  assert.equal(appMod.state.activeTeacherTab, 'chat');
+  assert.equal(_getRealtimeListenerState().hasChat, true);
+
+  const teacherChatSub = subscriptions.filter((s) => s.col === '1:1_상담채팅').pop();
+  assert.ok(teacherChatSub);
+  teacherChatSub.cb({
+    forEach(fn) {
+      fn({ id: 'c2', data: () => ({ room_id: 'ROOM-10401', sender_role: 'student', message: '선생님 질문있습니다', created_at: '2026-11-24 09:05:00' }) });
+    },
+  });
+
+  assert.equal(domMap.get('teacherTabView-chat').classList.contains('hidden'), false);
+  assert.equal(domMap.get('teacherTabView-home').classList.contains('hidden'), true);
+  assert.equal(appMod.state.activeTeacherTab, 'chat');
+  assert.equal(_getRealtimeListenerState().hasChat, true);
+});
