@@ -901,6 +901,16 @@ async function _performLoginAuth(role, userId, password, precomputedHash = '', o
       if (res.user) {
         _applyAuthenticatedUser(res.user);
       }
+      if (res.firebase_token && window.firebase && window.firebase.auth) {
+        try {
+          if (!window.firebase.apps.length) {
+            window.firebase.initializeApp(FIREBASE_WEB_CONFIG);
+          }
+          await window.firebase.auth().signInWithCustomToken(String(res.firebase_token));
+        } catch (fbErr) {
+          console.warn('[Firebase CustomAuth]', fbErr && fbErr.message ? fbErr.message : fbErr);
+        }
+      }
       await refreshFromGas(false);
       if ('Notification' in window && Notification.permission === 'granted') {
         void subscribeToWebPush(true);
@@ -1062,7 +1072,7 @@ function _applyAuthenticatedUser(user) {
     phone: user.phone || '',
     consultationHours: user.consultation_hours || '',
     neisOfficeCode: user.neis_office_code || '',
-    neisSchoolCode: user.neis_school_code || '',
+    neisSchoolCode: user.neis_school_code || user.school_code || '',
     customId: user.custom_id || '',
     customIdChanged: Boolean(user.custom_id_changed)
   };

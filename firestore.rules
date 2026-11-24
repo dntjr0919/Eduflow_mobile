@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{collection}/{docId} {
+      allow read: if request.auth != null && (
+        (
+          collection == '1:1_상담채팅' && (
+            (
+              request.auth.token.role in ['student', 'parent'] &&
+              request.auth.token.student_id != '' &&
+              resource.data.room_id == ('ROOM-' + request.auth.token.student_id)
+            ) ||
+            (
+              request.auth.token.role == 'teacher' &&
+              resource.data.grade == request.auth.token.grade &&
+              resource.data.class_no == request.auth.token.class_no
+            )
+          )
+        ) ||
+        (
+          collection == 'Notifications' &&
+          request.auth.token.school_code != '' &&
+          resource.data.school_code == request.auth.token.school_code
+        )
+      );
+
+      // 모든 클라이언트 직접 쓰기 차단 (Vercel API 경유 강제)
+      allow write: if false;
+    }
+  }
+}

@@ -11,3 +11,5 @@ node_modules/
 .vercel/
 
 *.log
+#hacking_test
+local-dev.js

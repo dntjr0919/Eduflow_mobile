@@ -4,6 +4,8 @@
  * firebase-admin SDK로 Cloud Firestore를 직접 조회·수정합니다.
  */
 const crypto = require('crypto');
+const { getApps } = require('firebase-admin/app');
+const { getAuth } = require('firebase-admin/auth');
 const { getFirestore, buildFirestoreErrorPayload } = require('./_firebaseAdmin');
 const googleDrive = require('./_googleDrive');
 const { uploadBase64ToDrive } = googleDrive;
@@ -570,7 +572,28 @@ async function _isDuplicateIdAcrossAllCollections(db, candidateId) {
   }
   return false;
 }
-
+async function _issueFirebaseCustomToken(user, role) {
+  try {
+    const apps = getApps();
+    if (!apps.length) return '';
+    const normalizedRole = String(role || user.role || 'student').trim().toLowerCase();
+    const uid = String(
+      user.teacher_id || user.parent_id || user.student_id || user.remote_id || ''
+    ).trim();
+    if (!uid) return '';
+    const claims = {
+      role: normalizedRole,
+      student_id: String(user.student_id || '').trim(),
+      school_code: String(user.neis_school_code || user.school_code || '').trim(),
+      grade: _toIntOrNull(user.grade),
+      class_no: _toIntOrNull(user.class_no),
+    };
+    return await getAuth(apps[0]).createCustomToken(uid, claims);
+  } catch (err) {
+    console.warn('[createCustomToken error]', err && err.message ? err.message : err);
+    return '';
+  }
+}
 async function _handleLogin(db, body) {
   const role = String(body.role || 'student').trim().toLowerCase();
   const userId = String(body.user_id || '').trim();
@@ -628,7 +651,8 @@ async function _handleLogin(db, body) {
     sid: String(userDoc.student_id || '').trim(),
     sc: String(userDoc.school_code || userDoc.neis_school_code || '').trim(),
   });
-  return { status: 200, json: { ok: true, user: safeUser, token, expires_at: expiresAt } };
+  const firebaseToken = await _issueFirebaseCustomToken(userDoc, role);
+  return { status: 200, json: { ok: true, user: safeUser, token, expires_at: expiresAt, firebase_token: firebaseToken } };
 }
 
 async function _handleVerifySession(db, params, req = null) {
@@ -650,6 +674,7 @@ async function _handleVerifySession(db, params, req = null) {
   }
   const safeUser = { ...userDoc, role, phone: String(userDoc.phone || '') };
   delete safeUser.password_hash;
+  const firebaseToken = await _issueFirebaseCustomToken(userDoc, role);
   return {
     status: 200,
     json: {
@@ -657,27 +682,38 @@ async function _handleVerifySession(db, params, req = null) {
       user: safeUser,
       token,
       expires_at: Number(claims.exp) * 1000,
+      firebase_token: firebaseToken,
     },
   };
 }
 
-async function _handleChangePassword(db, body) {
-  const role = String(body.role || 'student').trim().toLowerCase();
-  const userId = String(body.user_id || '').trim();
+async function _handleChangePassword(db, body, req = null) {
+  const session = _verifyRequestSession(body, req);
+  if (!session.ok) {
+    return { status: session.status, json: { ok: false, error: session.error } };
+  }
+  const role = String(body.role || session.role || 'student').trim().toLowerCase();
+  const userId = String(body.user_id || session.sub || '').trim();
   const currentPassword = String(body.current_password || '');
   const currentPasswordHash = String(body.current_password_hash || '');
   const newPassword = String(body.new_password || '');
 
-  if (!userId) {
-    return { status: 400, json: { ok: false, error: '아이디를 입력해 주세요.' } };
+  if (session.role !== role) {
+    return { status: 403, json: { ok: false, error: '본인 역할의 계정만 비밀번호를 변경할 수 있습니다.' } };
   }
-  if (!newPassword) {
-    return { status: 400, json: { ok: false, error: '새 비밀번호를 입력해 주세요.' } };
+  if (!userId || !newPassword) {
+    return { status: 400, json: { ok: false, error: '아이디와 새 비밀번호를 입력해 주세요.' } };
+  }
+  if (newPassword.length < 4) {
+    return { status: 400, json: { ok: false, error: '새 비밀번호는 4자 이상이어야 합니다.' } };
   }
 
   const { colRef, docId, userDoc } = await _findAccountDoc(db, role, userId);
   if (!userDoc || !docId) {
     return { status: 404, json: { ok: false, error: '계정을 찾을 수 없습니다.' } };
+  }
+  if (!_matchesSessionAccountDoc(session, userDoc, docId)) {
+    return { status: 403, json: { ok: false, error: '본인 계정의 비밀번호만 변경할 수 있습니다.' } };
   }
 
   if (!_verifyPassword(userDoc.password_hash, currentPassword, currentPasswordHash)) {
@@ -1562,7 +1598,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === 'change_password') {
-      const result = await _handleChangePassword(db, params);
+      const result = await _handleChangePassword(db, params, req);
       return res.status(result.status).json(result.json);
     }
 
@@ -1696,9 +1732,28 @@ module.exports = async function handler(req, res) {
         return res.status(session.status).json({ ok: false, error: session.error });
       }
       const rid = String(params.remote_id || '').trim();
-      if (rid) {
-        await db.collection('Notifications').doc(rid).set({ remote_id: rid, is_read: true, updated_at: _nowStr() }, { merge: true });
+      if (!rid) {
+        return res.status(400).json({ ok: false, error: 'remote_id가 필요합니다.' });
       }
+
+      const docRef = db.collection('Notifications').doc(rid);
+      const snap = await docRef.get();
+      if (!snap.exists) {
+        return res.status(404).json({ ok: false, error: '해당 알림을 찾을 수 없습니다.' });
+      }
+
+      const notiData = snap.data() || {};
+      const notiSchoolCode = String(notiData.school_code || '').trim();
+      if (session.schoolCode && notiSchoolCode && notiSchoolCode !== session.schoolCode) {
+        return res.status(403).json({ ok: false, error: '타 학교의 알림은 읽음 처리할 수 없습니다.' } );
+      }
+
+      const targetSid = String(notiData.target_student_id || notiData.student_id || '').trim();
+      if (targetSid && session.role !== 'teacher' && !_matchesSessionStudent(session, targetSid)) {
+        return res.status(403).json({ ok: false, error: '본인(또는 자녀) 대상 알림만 읽음 처리할 수 있습니다.' });
+      }
+
+      await docRef.set({ remote_id: rid, is_read: true, updated_at: _nowStr() }, { merge: true });
       return res.status(200).json({ ok: true });
     }
 
@@ -2154,9 +2209,9 @@ module.exports = async function handler(req, res) {
         return res.status(session.status).json({ ok: false, error: session.error });
       }
       if (
-        session.claims.role !== 'teacher' &&
+        session.role !== 'teacher' &&
         params.student_id &&
-        !_matchesSessionStudent(session.claims, params.student_id)
+        !_matchesSessionStudent(session, params.student_id)
       ) {
         return res.status(403).json({ ok: false, error: '본인 학생 계정의 파일만 업로드할 수 있습니다.' });
       }
