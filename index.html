@@ -128,15 +128,15 @@
 
 <!-- STUDENT/PARENT TAB 1: Home View -->
 <main class="flex-1 overflow-y-auto px-4 py-3.5 space-y-4 pb-20 custom-scrollbar" id="tabView-home">
-<div>
-<div class="flex items-center justify-between mb-2">
-<div class="flex items-center gap-1.5">
-<span class="w-2 h-2 rounded-full bg-urgent-500 badge-pulse"></span>
-<h3 class="text-xs font-bold text-slate-800 uppercase tracking-wide">나이스(NEIS) 출결·증빙서류 마감 알림</h3>
+<div class="w-full max-w-full min-w-0">
+<div class="flex items-center justify-between gap-2 mb-2">
+<div class="flex items-center gap-1.5 min-w-0 flex-1">
+<span class="w-2 h-2 rounded-full bg-urgent-500 badge-pulse shrink-0"></span>
+<h3 class="text-xs font-bold text-slate-800 uppercase tracking-wide min-w-0 break-keep">나이스(NEIS) 출결·증빙서류 마감 알림</h3>
 </div>
-<span class="text-[11px] px-2 py-0.5 font-bold rounded-full bg-slate-100 text-slate-600" id="pendingCountBadge">확인 중</span>
+<span class="text-[11px] px-2 py-0.5 font-bold rounded-full bg-slate-100 text-slate-600 shrink-0 whitespace-nowrap" id="pendingCountBadge">확인 중</span>
 </div>
-<div class="space-y-3" id="urgentDocContainer"></div>
+<div class="space-y-3 w-full max-w-full min-w-0" id="urgentDocContainer"></div>
 </div>
 
 <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
@@ -157,20 +157,20 @@
 <div class="flex gap-2 overflow-x-auto pb-1.5 custom-scrollbar" id="timetableList"></div>
 </div>
 
-<div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
-<div class="flex items-center justify-between mb-3">
-<div class="flex items-center gap-2">
-<div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
+<div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm w-full max-w-full min-w-0">
+<div class="flex items-center justify-between gap-2 mb-3">
+<div class="flex items-center gap-2 min-w-0 flex-1">
+<div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
 </div>
-<div>
+<div class="min-w-0">
 <h3 class="text-xs font-bold text-slate-800">오늘의 급식 식단표</h3>
 <p class="text-[10px] text-slate-400">영양 칼로리 및 알레르기 유발 정보</p>
 </div>
 </div>
-<div class="flex bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
-<button class="px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all" id="mealTab-lunch" onclick="switchMealTab('lunch')">중식</button>
-<button class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all" id="mealTab-dinner" onclick="switchMealTab('dinner')">석식</button>
+<div class="flex bg-slate-100 p-0.5 rounded-lg text-xs font-semibold shrink-0">
+<button class="px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all whitespace-nowrap shrink-0" id="mealTab-lunch" onclick="switchMealTab('lunch')">중식</button>
+<button class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all whitespace-nowrap shrink-0" id="mealTab-dinner" onclick="switchMealTab('dinner')">석식</button>
 </div>
 </div>
 <div class="bg-slate-50/80 rounded-xl p-3 border border-slate-100" id="mealContentBox"></div>

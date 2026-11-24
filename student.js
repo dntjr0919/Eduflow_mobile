@@ -71,7 +71,7 @@ function renderUrgentDocuments() {
   }
 
   if (myDocs.length === 0) {
-    container.innerHTML = `<div class="bg-white border border-slate-200/80 rounded-2xl p-4 text-center text-xs text-slate-400">현재 제출 대상 증빙서류가 없습니다.</div>`;
+    container.innerHTML = `<div class="w-full max-w-full min-w-0 bg-white border border-slate-200/80 rounded-2xl p-4 text-center text-xs text-slate-400">현재 제출 대상 증빙서류가 없습니다.</div>`;
     return;
   }
 
@@ -79,18 +79,18 @@ function renderUrgentDocuments() {
     const safeDocId = _escStudentHtml(doc.id);
     if (doc.status === 'submitted') {
       return `
-        <div class="bg-emerald-50/90 border border-emerald-300/80 rounded-2xl p-3.5 transition-all duration-300 shadow-sm">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <div class="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center">
+        <div class="w-full max-w-full min-w-0 bg-emerald-50/90 border border-emerald-300/80 rounded-2xl p-3.5 transition-all duration-300 shadow-sm">
+          <div class="flex items-center justify-between gap-2 min-w-0">
+            <div class="flex items-center gap-2 min-w-0 flex-1">
+              <div class="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>
               </div>
-              <div>
-                <h4 class="text-xs font-bold text-emerald-900">${_escStudentHtml(doc.title)} (${_escStudentHtml(doc.docName)})</h4>
+              <div class="min-w-0">
+                <h4 class="text-xs font-bold text-emerald-900 break-words">${_escStudentHtml(doc.title)} (${_escStudentHtml(doc.docName)})</h4>
                 <p class="text-[10px] text-emerald-700 font-medium">제출 확인 완료 (교사 나이스 검수 대기 중)</p>
               </div>
             </div>
-            <span class="text-[10px] font-semibold text-emerald-700 bg-white/80 border border-emerald-200 px-2 py-0.5 rounded-full">${_escStudentHtml(doc.submittedAt || '방금 전 접수')}</span>
+            <span class="text-[10px] font-semibold text-emerald-700 bg-white/80 border border-emerald-200 px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap">${_escStudentHtml(doc.submittedAt || '방금 전 접수')}</span>
           </div>
         </div>
       `;
@@ -99,22 +99,20 @@ function renderUrgentDocuments() {
     const borderColor = isUrgent ? 'border-urgent-500' : 'border-alert-500';
     const bgBadge = isUrgent ? 'bg-urgent-500 text-white' : 'bg-alert-500 text-white';
     return `
-      <div id="doc-card-${safeDocId}" class="bg-white border-2 ${borderColor} rounded-2xl p-4 shadow-sm transition-all relative overflow-hidden">
-        <div class="flex items-center justify-between mb-1.5">
-          <span class="text-[11px] font-bold px-2 py-0.5 rounded-md ${bgBadge} shadow-xs">${_escStudentHtml(doc.dDayText)}</span>
-          <span class="text-[11px] font-medium text-slate-400">마감: ${_escStudentHtml(doc.deadline)}</span>
+      <div id="doc-card-${safeDocId}" class="w-full max-w-full min-w-0 bg-white border-2 ${borderColor} rounded-2xl p-4 shadow-sm transition-all relative overflow-hidden">
+        <div class="flex items-center justify-between gap-2 mb-1.5 min-w-0">
+          <span class="text-[11px] font-bold px-2 py-0.5 rounded-md ${bgBadge} shadow-xs shrink-0 whitespace-nowrap">${_escStudentHtml(doc.dDayText)}</span>
+          <span class="text-[11px] font-medium text-slate-400 truncate">마감: ${_escStudentHtml(doc.deadline)}</span>
         </div>
-        <h4 class="text-xs font-bold text-slate-900 mt-1">${_escStudentHtml(doc.title)} · ${_escStudentHtml(doc.docName)}</h4>
-        <p class="text-[11px] text-slate-600 mt-0.5 leading-relaxed">${_escStudentHtml(doc.description)}</p>
-        <div class="mt-3 pt-3 border-t border-slate-100">
-          <p class="text-[10px] text-slate-500 mb-1.5 flex items-center gap-1 font-medium">
-            <span>나이스(NEIS) 제출 후</span>
-            <span class="text-indigo-600 font-bold bg-indigo-50 px-1 py-0.5 rounded">"제출했습니다"</span>
-            <span>를 입력하면 독촉 알림이 중지됩니다.</span>
+        <h4 class="text-xs font-bold text-slate-900 mt-1 break-words">${_escStudentHtml(doc.title)} · ${_escStudentHtml(doc.docName)}</h4>
+        <p class="text-[11px] text-slate-600 mt-0.5 leading-relaxed break-words">${_escStudentHtml(doc.description)}</p>
+        <div class="mt-3 pt-3 border-t border-slate-100 w-full max-w-full min-w-0">
+          <p class="text-[10px] text-slate-500 mb-1.5 leading-relaxed font-medium">
+            나이스(NEIS) 제출 후 <span class="inline-block whitespace-nowrap text-indigo-600 font-bold bg-indigo-50 px-1 py-0.5 rounded">"제출했습니다"</span>를 입력하면 독촉 알림이 중지됩니다.
           </p>
-          <div class="flex gap-1.5">
-            <input type="text" id="input-${safeDocId}" data-doc-confirm-input="1" autocomplete="off" placeholder="&quot;제출했습니다&quot;를 입력하세요" class="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
-            <button onclick="handleDocSubmit('${safeDocId}', this)" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl whitespace-nowrap shadow-xs transition-all">제출 완료 확인</button>
+          <div class="flex flex-col sm:flex-row gap-2 w-full min-w-0">
+            <input type="text" id="input-${safeDocId}" data-doc-confirm-input="1" autocomplete="off" placeholder="&quot;제출했습니다&quot;를 입력하세요" class="w-full min-w-0 sm:flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+            <button onclick="handleDocSubmit('${safeDocId}', this)" class="w-full sm:w-auto shrink-0 whitespace-nowrap px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-xs transition-all">제출 완료 확인</button>
           </div>
           <p id="error-${safeDocId}" class="hidden text-[10px] text-urgent-500 mt-1 font-medium">⚠️ 정확히 "제출했습니다" 문구를 입력해야 확인 처리됩니다.</p>
         </div>
@@ -254,8 +252,12 @@ function renderTimetable() {
 
 function switchMealTab(tab) {
   state.activeMealTab = tab;
-  document.getElementById('mealTab-lunch').className = tab === 'lunch' ? "px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all" : "px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all";
-  document.getElementById('mealTab-dinner').className = tab === 'dinner' ? "px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all" : "px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all";
+  document.getElementById('mealTab-lunch').className = tab === 'lunch'
+    ? "px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all whitespace-nowrap shrink-0"
+    : "px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all whitespace-nowrap shrink-0";
+  document.getElementById('mealTab-dinner').className = tab === 'dinner'
+    ? "px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all whitespace-nowrap shrink-0"
+    : "px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all whitespace-nowrap shrink-0";
   renderMeals();
 }
 
