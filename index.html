@@ -1615,6 +1615,38 @@
 </div>
 </div>
 
+<!-- Dismissible Guide Modal/Sheet: In-App Browser Escape -->
+<div class="hidden absolute inset-0 z-[110] bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-3 sm:p-5" id="inAppBrowserModal" onclick="if (event.target === this) dismissInAppBrowserModal()">
+<div class="bg-white rounded-3xl p-5 shadow-2xl max-w-sm w-full text-center space-y-3.5 relative">
+<button aria-label="닫기" class="absolute top-3.5 right-3.5 p-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors" onclick="dismissInAppBrowserModal()" type="button">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</button>
+<div class="w-12 h-12 mx-auto rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center text-xl shadow-sm">🌐</div>
+<div class="space-y-1">
+<h3 class="text-sm font-bold text-slate-900">외부 브라우저로 열어주세요</h3>
+<p class="text-xs text-slate-600 leading-relaxed" id="inAppBrowserDesc">
+          인앱 브라우저에서는 실시간 알림과 홈 화면 추가 기능이 제한될 수 있습니다.
+        </p>
+</div>
+<div class="hidden space-y-2" id="inAppAndroidGuide">
+<a class="block w-full py-3 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all text-center" href="#" id="inAppChromeIntentBtn" rel="noopener noreferrer">
+          Chrome으로 열기
+        </a>
+</div>
+<div class="hidden bg-indigo-50 border border-indigo-200 rounded-2xl p-3.5 text-left text-[11px] text-indigo-950 space-y-1.5" id="inAppIosGuide">
+<p class="font-bold text-indigo-950">📱 iPhone/iPad 외부 브라우저 열기 안내</p>
+<p class="leading-relaxed text-indigo-900">
+          오른쪽 아래 <strong>⋯</strong>(또는 공유) → <strong>Safari로 열기</strong> → <strong>홈 화면에 추가</strong>를 진행해 주세요.
+        </p>
+</div>
+<div class="pt-1">
+<button class="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold rounded-xl text-xs transition-colors" onclick="dismissInAppBrowserModal()" type="button">
+          현재 브라우저로 계속하기
+        </button>
+</div>
+</div>
+</div>
+
 <!-- Dismissible Guide Modal/Sheet: PWA Push Permission -->
 <div class="hidden absolute inset-0 z-[100] bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-3 sm:p-5" id="pwaPushGuideModal" onclick="if (event.target === this) dismissPwaPushGuide()">
 <div class="bg-white rounded-3xl p-5 shadow-2xl max-w-sm w-full text-center space-y-3.5 relative">

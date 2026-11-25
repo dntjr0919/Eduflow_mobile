@@ -867,6 +867,7 @@ function _enterDashboardAfterLogin() {
   dash.classList.remove('hidden');
   dash.classList.add('flex');
   renderAll();
+  checkInAppBrowserPrompt();
   checkAndEnforcePwaPushGate({ openGuideOnDenied: true });
 }
 
@@ -2642,6 +2643,92 @@ function renderAll() {
 }
 
 // PWA Standalone Push Permission Gate
+function getInAppBrowserType(uaInput) {
+  const ua = String(
+    uaInput !== undefined
+      ? uaInput
+      : (typeof navigator !== 'undefined' ? navigator.userAgent : '') || ''
+  ).toLowerCase();
+  if (!ua) return '';
+  if (ua.includes('kakaotalk')) return 'kakaotalk';
+  if (ua.includes('naver')) return 'naver';
+  if (ua.includes('instagram')) return 'instagram';
+  if (ua.includes('fban') || ua.includes('fbav')) return 'facebook';
+  if (ua.includes('line')) return 'line';
+  return '';
+}
+
+function dismissInAppBrowserModal() {
+  state.inAppBrowserDismissed = true;
+  const modal = document.getElementById('inAppBrowserModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function checkInAppBrowserPrompt() {
+  if (typeof document === 'undefined') return false;
+  if (state.inAppBrowserDismissed || isStandalonePwa()) return false;
+  const inAppType = getInAppBrowserType();
+  if (!inAppType) return false;
+
+  const modal = document.getElementById('inAppBrowserModal');
+  if (!modal) return false;
+
+  const nameMap = {
+    kakaotalk: '카카오톡',
+    naver: '네이버',
+    instagram: '인스타그램',
+    facebook: '페이스북',
+    line: '라인',
+  };
+  const descEl = document.getElementById('inAppBrowserDesc');
+  if (descEl) {
+    const label = nameMap[inAppType] || '인앱';
+    descEl.innerHTML = `<strong>${label} 인앱 브라우저</strong>에서는 실시간 푸시 알림과 홈 화면 추가가 제한될 수 있습니다. 외부 브라우저에서 열어주세요.`;
+  }
+
+  const platform = getPwaDevicePlatform();
+  const androidGuide = document.getElementById('inAppAndroidGuide');
+  const iosGuide = document.getElementById('inAppIosGuide');
+  const chromeBtn = document.getElementById('inAppChromeIntentBtn');
+
+  if (platform === 'android') {
+    if (androidGuide) androidGuide.classList.remove('hidden');
+    if (iosGuide) iosGuide.classList.add('hidden');
+    if (chromeBtn && typeof location !== 'undefined') {
+      chromeBtn.href = `intent://${location.host}${location.pathname}${location.search}#Intent;scheme=https;package=com.android.chrome;end`;
+    }
+  } else if (platform === 'ios') {
+    if (androidGuide) androidGuide.classList.add('hidden');
+    if (iosGuide) iosGuide.classList.remove('hidden');
+  } else {
+    if (androidGuide) androidGuide.classList.add('hidden');
+    if (iosGuide) iosGuide.classList.remove('hidden');
+  }
+
+  modal.classList.remove('hidden');
+  return true;
+}
+
+function ensurePwaPushPermissionForAction(actionLabel = '이 기능') {
+  const hasPushApi = typeof window !== 'undefined' && 'Notification' in window && 'PushManager' in window;
+  if (!hasPushApi) return true;
+
+  const isIosBrowserTab = getPwaDevicePlatform() === 'ios' && !isStandalonePwa();
+  if (isIosBrowserTab || Notification.permission !== 'granted') {
+    state.pwaPushGuideDismissed = false;
+    openPwaPushGuide();
+    if (typeof showToast === 'function') {
+      showToast(`${actionLabel}을(를) 이용하려면 먼저 실시간 알림을 허용해 주세요.`, '🔔');
+    }
+    return false;
+  }
+
+  if (typeof subscribeToWebPush === 'function') {
+    void subscribeToWebPush(true);
+  }
+  return true;
+}
+
 function isStandalonePwa() {
   if (typeof window === 'undefined') return false;
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
@@ -3249,6 +3336,7 @@ if (typeof window !== 'undefined') {
       initSignaturePad();
     }
 
+    checkInAppBrowserPrompt();
     checkAndEnforcePwaPushGate();
     void tryAutoLogin();
   });
@@ -3262,6 +3350,8 @@ if (typeof module !== 'undefined' && module.exports) {
     _getLocalTodayStr,
     _getKoreanTodayDayChar,
     resolvePwaPushGateDecision,
+    getInAppBrowserType,
+    ensurePwaPushPermissionForAction,
     computeScheduleDday,
     filterSchedulesForRole,
     getUpcomingSchedules,
