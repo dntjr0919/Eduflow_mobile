@@ -544,7 +544,7 @@ async function deleteStudentAttendance(attId) {
 
 async function handleAttendanceSubmit(e) {
   e.preventDefault();
-  if (typeof ensurePwaPushPermissionForAction === 'function' && !ensurePwaPushPermissionForAction('출결 보고')) return;
+  if (typeof ensurePwaPushPermissionForAction === 'function') ensurePwaPushPermissionForAction('출결 보고');
   if (!state.selectedAttCategory || !state.selectedAttSubType) {
     showToast('출결 종류(질병·인정·기타)와 출결 구분(지각·조퇴·결석)을 모두 선택해 주세요.', '⚠️');
     return;
@@ -1445,7 +1445,7 @@ function clearSignaturePad(target) {
 }
 
 async function submitCircularSignature(btnEl) {
-  if (typeof ensurePwaPushPermissionForAction === 'function' && !ensurePwaPushPermissionForAction('가정통신문 회신')) return;
+  if (typeof ensurePwaPushPermissionForAction === 'function') ensurePwaPushPermissionForAction('가정통신문 회신');
   const cId = state.currentCircularId;
   const c = mockData.circulars.find(x => x.id === cId);
   if (!c) return;
@@ -1658,7 +1658,7 @@ function renderStudentChat() {
 }
 
 async function sendChatMessage() {
-  if (typeof ensurePwaPushPermissionForAction === 'function' && !ensurePwaPushPermissionForAction('1:1 상담 메시지 전송')) return;
+  if (typeof ensurePwaPushPermissionForAction === 'function') ensurePwaPushPermissionForAction('1:1 상담 메시지 전송');
   const input = document.getElementById('chatInput');
   const text = input.value.trim();
   if (!text) return;

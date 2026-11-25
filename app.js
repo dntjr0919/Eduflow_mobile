@@ -2709,23 +2709,49 @@ function checkInAppBrowserPrompt() {
   return true;
 }
 
+const PWA_PUSH_NUDGE_DATE_KEY = 'eduflow_pwa_push_nudge_date';
+
+function _hasShownPwaPushNudgeToday(todayKst) {
+  if (state.pwaPushGuideDismissed || state.pwaPushNudgeShownDate === todayKst) return true;
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem(PWA_PUSH_NUDGE_DATE_KEY) === todayKst;
+  } catch (_) {
+    return false;
+  }
+}
+
+function _markPwaPushNudgeShownToday(todayKst) {
+  state.pwaPushNudgeShownDate = todayKst;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(PWA_PUSH_NUDGE_DATE_KEY, todayKst);
+    }
+  } catch (_) {}
+}
+
 function ensurePwaPushPermissionForAction(actionLabel = '이 기능') {
   const hasPushApi = typeof window !== 'undefined' && 'Notification' in window && 'PushManager' in window;
   if (!hasPushApi) return true;
 
   const isIosBrowserTab = getPwaDevicePlatform() === 'ios' && !isStandalonePwa();
-  if (isIosBrowserTab || Notification.permission !== 'granted') {
-    state.pwaPushGuideDismissed = false;
-    openPwaPushGuide();
-    if (typeof showToast === 'function') {
-      showToast(`${actionLabel}을(를) 이용하려면 먼저 실시간 알림을 허용해 주세요.`, '🔔');
+  if (!isIosBrowserTab && Notification.permission === 'granted') {
+    if (typeof subscribeToWebPush === 'function') {
+      void subscribeToWebPush(true);
     }
-    return false;
+    return true;
   }
 
-  if (typeof subscribeToWebPush === 'function') {
-    void subscribeToWebPush(true);
+  const todayKst = _getLocalTodayStr();
+  if (!_hasShownPwaPushNudgeToday(todayKst)) {
+    _markPwaPushNudgeShownToday(todayKst);
+    setTimeout(() => {
+      const stillNeedsGuide = (getPwaDevicePlatform() === 'ios' && !isStandalonePwa()) || Notification.permission !== 'granted';
+      if (!stillNeedsGuide) return;
+      state.pwaPushGuideDismissed = false;
+      openPwaPushGuide();
+    }, 400);
   }
+
   return true;
 }
 
@@ -2760,17 +2786,24 @@ function _getDeviceDeniedStepsHtml() {
   if (platform === 'ios') {
     return `
       <p><strong>iPhone (iOS PWA)</strong>:</p>
-      <p>1. <strong>아이폰 설정</strong> 앱 열기</p>
-      <p>2. <strong>알림</strong> → <strong>EduFlow</strong>(또는 Safari) 선택</p>
-      <p>3. <strong>알림 허용</strong>을 켠 뒤 앱으로 돌아와 <strong>[권한 다시 확인]</strong>을 눌러주세요.</p>
+      <p>1. <strong>아이폰 설정</strong> → <strong>알림</strong> → <strong>EduFlow</strong> 선택</p>
+      <p>2. <strong>알림 허용</strong>을 켠 뒤 앱으로 돌아와 <strong>[권한 다시 확인]</strong>을 눌러주세요.</p>
     `;
   }
   if (platform === 'android') {
+    if (isStandalonePwa()) {
+      return `
+        <p><strong>Android 홈 화면 앱 (PWA)</strong>:</p>
+        <p>1. 홈 화면의 <strong>EduFlow 아이콘을 길게 누르기</strong></p>
+        <p>2. <strong>ⓘ(앱 정보)</strong> → <strong>알림</strong> → <strong>알림 허용</strong></p>
+        <p>3. 앱으로 돌아와 <strong>[권한 다시 확인]</strong>을 눌러주세요.</p>
+      `;
+    }
     return `
       <p><strong>Android (Chrome)</strong>:</p>
-      <p>1. 상단 주소창 왼쪽 <strong>설정(🔒/⚙️)</strong> 아이콘 터치</p>
-      <p>2. <strong>권한</strong> → <strong>알림</strong>을 <strong>허용</strong>으로 변경</p>
-      <p class="text-[10px] text-amber-700/90 mt-1">* 홈 화면 앱인 경우 기기 <strong>설정 → 애플리케이션 → EduFlow → 알림 허용</strong> 후 <strong>[권한 다시 확인]</strong>을 눌러주세요.</p>
+      <p>1. 오른쪽 위 <strong>⋮</strong> → <strong>ⓘ(사이트 정보)</strong> → <strong>권한</strong> → <strong>알림 허용</strong></p>
+      <p class="text-[10px] text-amber-700/90">(또는 <strong>⋮ → 설정 → 사이트 설정 → 알림</strong>)</p>
+      <p class="text-[10px] text-amber-800 font-semibold mt-1">※ 시크릿 모드에서는 브라우저 정책상 알림을 켤 수 없습니다. 일반 탭에서 열어주세요.</p>
     `;
   }
   return `
@@ -2915,6 +2948,7 @@ function openPwaPushGuide() {
 
 function dismissPwaPushGuide() {
   state.pwaPushGuideDismissed = true;
+  _markPwaPushNudgeShownToday(_getLocalTodayStr());
   const guideModal = document.getElementById('pwaPushGuideModal');
   if (guideModal) guideModal.classList.add('hidden');
   checkAndEnforcePwaPushGate();
