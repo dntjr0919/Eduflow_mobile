@@ -164,9 +164,7 @@ const DAILY_STATIC_CACHE_KEY = 'eduflow_daily_static_cache_v1';
 const STATIC_CACHE_TTL_MS = 30 * 60 * 1000; // 30분
 
 function _getTodayDateKey() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return _getLocalTodayStr();
 }
 
 function _loadDailyStaticCache(grade, classNo) {
@@ -411,20 +409,16 @@ const KR_HOLIDAYS = [
   '2027-10-09', '2027-10-11', '2027-12-25'
 ];
 
-function getLocalTodayStr() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+function getLocalTodayStr(dateObj) {
+  return _getLocalTodayStr(dateObj);
 }
 
 function isNonBusinessDay(dateObj) {
-  const day = dateObj.getDay();
+  const day = dateObj.getUTCDay();
   if (day === 0 || day === 6) return true;
-  const y = dateObj.getFullYear();
-  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const d = String(dateObj.getDate()).padStart(2, '0');
+  const y = dateObj.getUTCFullYear();
+  const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getUTCDate()).padStart(2, '0');
   return KR_HOLIDAYS.includes(`${y}-${m}-${d}`);
 }
 
@@ -435,14 +429,14 @@ function isNonBusinessDay(dateObj) {
 function addBusinessDays(baseDateStr, businessDays) {
   const parts = String(baseDateStr || '').trim().split('-');
   let d;
-  if (parts.length === 3) {
-    d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0);
+  if (parts.length === 3 && !isNaN(parseInt(parts[0], 10)) && !isNaN(parseInt(parts[1], 10)) && !isNaN(parseInt(parts[2], 10))) {
+    d = new Date(Date.UTC(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0));
   } else {
-    const now = new Date();
-    d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+    const kstParts = _getLocalTodayStr().split('-').map(Number);
+    d = new Date(Date.UTC(kstParts[0], kstParts[1] - 1, kstParts[2], 12, 0, 0));
   }
   const daysToAdd = parseInt(businessDays, 10);
-  const fmt = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  const fmt = (dt) => `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
   if (isNaN(daysToAdd) || daysToAdd === 0) {
     return fmt(d);
   }
@@ -451,7 +445,7 @@ function addBusinessDays(baseDateStr, businessDays) {
   let counted = 0;
   let guard = 0;
   while (counted < target && guard < 365) {
-    d.setDate(d.getDate() + step);
+    d.setUTCDate(d.getUTCDate() + step);
     if (!isNonBusinessDay(d)) {
       counted++;
     }
@@ -468,9 +462,9 @@ function subtractBusinessDays(baseDateStr, businessDays) {
 function formatKoreanDateWithDay(ymd) {
   const parts = String(ymd || '').split('-');
   if (parts.length !== 3) return ymd || '';
-  const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+  const d = new Date(Date.UTC(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0));
   const days = ['일', '월', '화', '수', '목', '금', '토'];
-  return `${parseInt(parts[1], 10)}월 ${parseInt(parts[2], 10)}일(${days[d.getDay()]})`;
+  return `${parseInt(parts[1], 10)}월 ${parseInt(parts[2], 10)}일(${days[d.getUTCDay()]})`;
 }
 
 /**
@@ -1161,13 +1155,22 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null, forceRefre
 
 function _getLocalTodayStr(dateObj) {
   const d = dateObj || new Date();
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
   const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())}`;
+}
+
+function _getKstNowStr(dateObj) {
+  const d = dateObj || new Date();
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())} ${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}:${pad(kst.getUTCSeconds())}`;
 }
 
 function _getKoreanTodayDayChar(dateObj) {
   const d = dateObj || new Date();
-  return ['일', '월', '화', '수', '목', '금', '토'][d.getDay()];
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  return ['일', '월', '화', '수', '목', '금', '토'][kst.getUTCDay()];
 }
 
 function _normalizeTeacherName(name) {
@@ -3237,7 +3240,10 @@ if (typeof window !== 'undefined') {
     const attEnd = document.getElementById('attEndDate');
     const counselDate = document.getElementById('counselDate');
     if (attStart) attStart.value = today;
-    if (attEnd) attEnd.value = today;
+    if (attEnd) {
+      attEnd.value = today;
+      attEnd.min = today;
+    }
     if (counselDate) counselDate.value = today;
     if (typeof initSignaturePad === 'function') {
       initSignaturePad();

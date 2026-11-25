@@ -260,7 +260,9 @@ function renderTeacherHome() {
   if (elField) elField.innerText = `${fieldCnt}명`;
 
   const list = document.getElementById('teacherLiveAttList');
-  const todayStrForUnconf = typeof _getLocalTodayStr === 'function' ? _getLocalTodayStr() : new Date().toISOString().slice(0, 10);
+  const todayStrForUnconf = typeof _getLocalTodayStr === 'function'
+    ? _getLocalTodayStr()
+    : new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const unconfirmedAll = Array.isArray(mockData.teacherUnconfirmedAttendance) ? mockData.teacherUnconfirmedAttendance : [];
   const otherDateUnconfirmed = unconfirmedAll.filter(u => !u.confirmed && u.date && u.date !== todayStrForUnconf);
   let unconfBanner = document.getElementById('teacherUnconfirmedAttBanner');
@@ -738,7 +740,7 @@ async function saveTeacherAttEdit(e) {
           role: 'teacher',
           data: {
             remote_id: item.id,
-            date: typeof getLocalTodayStr === 'function' ? getLocalTodayStr() : new Date().toISOString().slice(0, 10),
+            date: typeof getLocalTodayStr === 'function' ? getLocalTodayStr() : new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10),
             student_id: item.studentId,
             student_name: item.name,
             grade: cu.grade || '',
@@ -2680,7 +2682,11 @@ function openNewCircularModal() {
 
   if (titleEl) titleEl.value = '';
   if (contentEl) contentEl.value = '';
-  if (dueDateEl) dueDateEl.value = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+  if (dueDateEl) {
+    dueDateEl.value = typeof _getLocalTodayStr === 'function'
+      ? _getLocalTodayStr(new Date(Date.now() + 7 * 86400000))
+      : new Date(Date.now() + 7 * 86400000 + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
+  }
   if (reqReplyEl) reqReplyEl.checked = true;
   if (singleRadio) singleRadio.checked = true;
   toggleNewCircularReplyMode();
@@ -2717,7 +2723,9 @@ async function publishNewCircular(btnEl) {
   }
 
   const noticeId = 'CIR-' + Date.now();
-  const dueDate = dueDateInput || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+  const dueDate = dueDateInput || (typeof _getLocalTodayStr === 'function'
+    ? _getLocalTodayStr(new Date(Date.now() + 7 * 86400000))
+    : new Date(Date.now() + 7 * 86400000 + 9 * 60 * 60 * 1000).toISOString().split('T')[0]);
 
   const runPublish = async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
@@ -3028,8 +3036,8 @@ async function handleCreateRemoteTask(e) {
   const timeInputVal = (document.getElementById('remoteTaskTime')?.value || '17:30').trim() || '17:30';
   const prompt = document.getElementById('remoteTaskPrompt').value.trim() || '기본 설정값으로 자동 실행';
   const jobId = 'mob_' + Date.now();
-  const todayDate = typeof getLocalTodayStr === 'function' ? getLocalTodayStr() : new Date().toISOString().split('T')[0];
-  const nowTime = new Date().toTimeString().slice(0, 5);
+  const todayDate = typeof getLocalTodayStr === 'function' ? getLocalTodayStr() : new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const nowTime = typeof _getKstNowStr === 'function' ? _getKstNowStr().slice(11, 16) : new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(11, 16);
   const scheduledStr = timingVal === 'now'
     ? `${todayDate} ${nowTime}`
     : `${todayDate} ${timeInputVal}`;
@@ -3212,8 +3220,8 @@ async function sendTeacherMessage() {
   if (!text) return;
   const room = mockData.chatRooms.find(r => r.roomId === state.activeTeacherChatRoomId);
   if (!room) return;
-  const now = new Date();
-  const timeStr = `오늘 ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const timeStr = `오늘 ${kstNow.getUTCHours()}:${String(kstNow.getUTCMinutes()).padStart(2, '0')}`;
   room.messages.push({ sender: 'teacher', text, time: timeStr });
   input.value = '';
   renderTeacherChatMessages();
@@ -3261,7 +3269,7 @@ async function quickRegisterAttFromChat() {
         ..._getTeacherAuthParams(),
         data: {
           remote_id: attId,
-          date: new Date().toISOString().split('T')[0],
+          date: typeof getLocalTodayStr === 'function' ? getLocalTodayStr() : new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().split('T')[0],
           student_id: room.studentId,
           student_name: room.studentName,
           attendance_type: '출결보고(채팅)',
@@ -3610,9 +3618,9 @@ function openTeacherLessonModal(scheduleIndex) {
   const item = (mockData.teacherSchedule || [])[scheduleIndex];
   if (!item) return;
 
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const todayStr = typeof _getLocalTodayStr === 'function'
+    ? _getLocalTodayStr()
+    : new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const periodNum = String(item.period || '').replace(/[^0-9]/g, '') || String(item.period || '');
   const subject = String(item.subject || '').trim();
   const classLabel = String(item.target || '').trim();
@@ -3920,9 +3928,9 @@ function renderLessonProgressImportList(dateStr) {
 }
 
 function openLessonProgressImportModal() {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  const localToday = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const localToday = typeof _getLocalTodayStr === 'function'
+    ? _getLocalTodayStr()
+    : new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const defaultDate = _getDefaultLessonImportDate(mockData.lessonProgress || [], _lessonModalState.dateStr || localToday);
   const inputEl = document.getElementById('lessonProgImportDate');
   if (inputEl) inputEl.value = defaultDate;

@@ -216,8 +216,8 @@ async function handleDocSubmit(docId, btnEl) {
     }
 
     doc.status = 'submitted';
-    const now = new Date();
-    doc.submittedAt = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')} 제출`;
+    const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    doc.submittedAt = `${kst.getUTCHours()}:${String(kst.getUTCMinutes()).padStart(2, '0')} 제출`;
     const hist = mockData.attendanceHistory.find(h => h.type.includes(doc.title.split(' ')[0]));
     if (hist) hist.docStatus = '학생확인완료';
     renderAll();
@@ -359,9 +359,16 @@ function syncAttEndDateIfNeeded() {
       startEl.value = getLocalTodayStr();
     }
     endEl.value = startEl.value;
+    endEl.min = startEl.value;
     endEl.disabled = true;
   } else {
     endEl.disabled = false;
+    const startVal = startEl.value || '';
+    const endVal = endEl.value || '';
+    endEl.min = startVal;
+    if (startVal && (!endVal || startVal > endVal)) {
+      endEl.value = startVal;
+    }
   }
 }
 
@@ -553,7 +560,16 @@ async function handleAttendanceSubmit(e) {
 
   const submitBtn = e.submitter || (e.target && e.target.querySelector('button[type="submit"]'));
   const sDate = document.getElementById('attStartDate').value;
-  const eDate = isTimeLimited ? sDate : document.getElementById('attEndDate').value;
+  const endEl = document.getElementById('attEndDate');
+  const eDate = isTimeLimited ? sDate : (endEl ? endEl.value : '');
+  if (!isTimeLimited && sDate && (!eDate || eDate < sDate)) {
+    if (endEl) {
+      endEl.value = sDate;
+      endEl.min = sDate;
+    }
+    showToast('종료일은 시작일보다 이전일 수 없어 시작일과 같게 맞췄습니다.', '⚠️');
+    return;
+  }
   const reason = document.getElementById('attReason').value.trim();
   const combinedType = `${state.selectedAttCategory}${state.selectedAttSubType}`;
   const periodStr = isTimeLimited
@@ -1492,7 +1508,9 @@ async function submitCircularSignature(btnEl) {
   const firstRadio = fields.find(f => f.type === 'radio');
   const consentVal = String(replyData.consent || (firstRadio ? replyData[firstRadio.name] : '') || '제출');
   const replyDataJson = JSON.stringify(replyData);
-  const signedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const signedAt = typeof _getKstNowStr === 'function'
+    ? _getKstNowStr()
+    : new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
 
   await withButtonLoading(btnEl, '제출 중...', async () => {
     let savedSigUrl = isBothSig ? parentSignatureBase64 : signatureBase64;
@@ -1641,8 +1659,8 @@ async function sendChatMessage() {
   const input = document.getElementById('chatInput');
   const text = input.value.trim();
   if (!text) return;
-  const now = new Date();
-  const timeStr = `오늘 ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const timeStr = `오늘 ${kst.getUTCHours()}:${String(kst.getUTCMinutes()).padStart(2, '0')}`;
   const room = _getOrCreateStudentChatRoom();
   room.messages.push({ sender: 'user', text, time: timeStr });
   room.unread += 1;

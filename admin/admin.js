@@ -1,18 +1,21 @@
 const AUTO_LOGIN_STORAGE_KEY = 'eduflow_saved_auth';
 const API_ENDPOINT = '/api/firestore';
 
-function getLocalTodayStr() {
-  const d = new Date();
+function getLocalTodayStr(dateObj) {
+  const d = dateObj || new Date();
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
   const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())}`;
 }
 
 function shiftDateStr(dateStr, deltaDays) {
   const parts = String(dateStr || getLocalTodayStr()).split('-').map(Number);
-  const d = parts.length === 3 ? new Date(parts[0], parts[1] - 1, parts[2]) : new Date();
-  d.setDate(d.getDate() + deltaDays);
+  const d = (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2]))
+    ? new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0))
+    : new Date(Date.now() + 9 * 60 * 60 * 1000);
+  d.setUTCDate(d.getUTCDate() + deltaDays);
   const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 
 const adminState = {
@@ -173,10 +176,10 @@ async function refreshAdminData() {
   try {
     const data = await callApi('admin_get_class_overview', {}, true);
     adminState.overview = data;
-    const now = new Date();
+    const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
     const pad = (n) => String(n).padStart(2, '0');
     const timeEl = document.getElementById('last-synced-time');
-    if (timeEl) timeEl.textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    if (timeEl) timeEl.textContent = `${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}:${pad(kst.getUTCSeconds())}`;
     renderAll();
   } catch (err) {
     if (err.status === 401 || err.status === 403) {
@@ -837,18 +840,16 @@ function exportDailyAttendanceCsv() {
 
 function filterAttendanceByPeriod(attendanceRows, period) {
   if (period === 'all') return attendanceRows;
-  const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
+  const todayStr = getLocalTodayStr();
   if (period === 'month') {
     const ym = todayStr.slice(0, 7);
     return attendanceRows.filter((a) => String(a.date || '').startsWith(ym));
   }
   if (period === 'week') {
-    const start = new Date(now);
-    const day = start.getDay();
+    const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const day = kstNow.getUTCDay();
     const diff = day === 0 ? 6 : day - 1;
-    start.setDate(start.getDate() - diff);
-    const startStr = start.toISOString().slice(0, 10);
+    const startStr = shiftDateStr(todayStr, -diff);
     return attendanceRows.filter((a) => {
       const d = String(a.date || '').slice(0, 10);
       return d >= startStr && d <= todayStr;
@@ -1796,7 +1797,7 @@ function renderLessonProgressMatrix(progressList, rosterList) {
   if (!subSelect || !thead || !tbody) return;
 
   const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
-  const todayWeekday = weekdays[new Date().getDay()];
+  const todayWeekday = weekdays[new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCDay()];
   const model = buildLessonMatrixModel(progressList, rosterList, adminState.lessonMatrixSubject, todayWeekday);
   adminState.lessonMatrixSubject = model.targetSubject;
 

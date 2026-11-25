@@ -125,22 +125,22 @@ function _withNormalizedNoticeAttachment(row) {
 function _addBusinessDays(baseDateStr, businessDays) {
   const parts = String(baseDateStr || '').trim().split('-');
   let d;
-  if (parts.length === 3) {
-    d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0);
+  if (parts.length === 3 && !isNaN(parseInt(parts[0], 10)) && !isNaN(parseInt(parts[1], 10)) && !isNaN(parseInt(parts[2], 10))) {
+    d = new Date(Date.UTC(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0));
   } else {
-    const now = new Date();
-    d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+    const kstParts = _kstDateStr().split('-').map(Number);
+    d = new Date(Date.UTC(kstParts[0], kstParts[1] - 1, kstParts[2], 12, 0, 0));
   }
   const days = parseInt(businessDays, 10);
-  const fmt = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  const fmt = (dt) => `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
   if (isNaN(days) || days === 0) return fmt(d);
   const step = days > 0 ? 1 : -1;
   const target = Math.abs(days);
   let counted = 0;
   let guard = 0;
   while (counted < target && guard < 365) {
-    d.setDate(d.getDate() + step);
-    const dow = d.getDay();
+    d.setUTCDate(d.getUTCDate() + step);
+    const dow = d.getUTCDay();
     if (dow !== 0 && dow !== 6) {
       counted++;
     }
@@ -151,7 +151,7 @@ function _addBusinessDays(baseDateStr, businessDays) {
 
 function _computeDocDueDate(ruleCode, baseDate, docRulesRows) {
   const code = String(ruleCode || 'ABSENCE_REPORT').trim();
-  const base = String(baseDate || '').trim() || new Date().toISOString().slice(0, 10);
+  const base = String(baseDate || '').trim() || _kstDateStr();
   const rules = Array.isArray(docRulesRows) ? docRulesRows : [];
   const matched = rules.find((r) => r && (r.rule_code === code || (code === 'ABSENCE_REPORT' && r.remote_id === 'rule_absence')));
   const defaultDays = code === 'FIELD_TRIP_PRE' ? 3 : 5;
@@ -1833,7 +1833,7 @@ module.exports = async function handler(req, res) {
 
     if (action === 'submit_attendance') {
       const rid = String(params.remote_id || '').trim() || `att_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const attDate = String(params.date || new Date().toISOString().slice(0, 10));
+      const attDate = String(params.date || _kstDateStr());
       let sid = String(params.student_id || '').trim();
       const actorRole = String(params.role || '').trim().toLowerCase();
       const session = _verifyRequestSession(params, req);
@@ -2048,7 +2048,7 @@ module.exports = async function handler(req, res) {
           return res.status(403).json({ ok: false, error: '담당 학급의 학생 출결만 일괄 저장할 수 있습니다.' });
         }
       }
-      const dateStr = String(params.date || new Date().toISOString().slice(0, 10));
+      const dateStr = String(params.date || _kstDateStr());
       const batch = db.batch();
       for (const rec of records) {
         const sid = String(rec.student_id || '').trim();
