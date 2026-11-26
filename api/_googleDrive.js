@@ -52,17 +52,72 @@ function _getDriveClient() {
   return google.drive({ version: 'v3', auth });
 }
 
-async function _resolveOrCreateFolder(drive, folderName) {
-  const envFolderId = (process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim();
+function _normalizeDriveConfig(driveConfig) {
+  if (!driveConfig || typeof driveConfig !== 'object') {
+    return {
+      hasTeacherConfig: false,
+      drivePriority: 'workspace',
+      workspaceFolderId: (process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim(),
+      personalGasUrl: (process.env.GOOGLE_APPS_SCRIPT_URL || '').trim(),
+      personalFolderId: ''
+    };
+  }
+  const hasTeacherConfig =
+    driveConfig.drive_priority !== undefined ||
+    driveConfig.workspace_drive_folder_id !== undefined ||
+    driveConfig.personal_gas_url !== undefined ||
+    driveConfig.personal_drive_folder_id !== undefined;
+  const rawPriority = String(driveConfig.drive_priority || 'workspace').trim().toLowerCase();
+  const drivePriority = rawPriority === 'personal' ? 'personal' : 'workspace';
+  const teacherWorkspaceFolderId = String(driveConfig.workspace_drive_folder_id || '').trim();
+  const teacherGasUrl = String(driveConfig.personal_gas_url || '').trim();
+  const teacherPersonalFolderId = String(driveConfig.personal_drive_folder_id || '').trim();
+
+  return {
+    hasTeacherConfig,
+    drivePriority,
+    workspaceFolderId: teacherWorkspaceFolderId || (hasTeacherConfig ? '' : (process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim()),
+    personalGasUrl: teacherGasUrl || (hasTeacherConfig ? '' : (process.env.GOOGLE_APPS_SCRIPT_URL || '').trim()),
+    personalFolderId: teacherPersonalFolderId
+  };
+}
+
+async function _verifyWorkspaceRootFolder(drive, rootFolderId) {
+  if (!rootFolderId) {
+    throw new Error('Workspace Google Drive 폴더 ID(workspace_drive_folder_id)가 설정되어 있지 않습니다.');
+  }
+  let metaRes;
+  try {
+    metaRes = await drive.files.get({
+      fileId: rootFolderId,
+      fields: 'id, name, mimeType, trashed',
+      supportsAllDrives: true
+    });
+  } catch (err) {
+    const msg = err && err.message ? err.message : '폴더 조회 실패';
+    throw new Error(`Workspace Google Drive 폴더(${rootFolderId})에 접근할 수 없습니다: ${msg}`);
+  }
+  const meta = (metaRes && metaRes.data) || {};
+  if (!meta.id || meta.trashed) {
+    throw new Error(`Workspace Google Drive 폴더(${rootFolderId})가 존재하지 않거나 휴지통에 있습니다.`);
+  }
+  if (meta.mimeType && meta.mimeType !== 'application/vnd.google-apps.folder') {
+    throw new Error(`지정한 Workspace Drive ID(${rootFolderId})가 폴더가 아닙니다.`);
+  }
+  return meta.id;
+}
+
+async function _resolveOrCreateFolder(drive, folderName, rootFolderId) {
+  const verifiedRootId = await _verifyWorkspaceRootFolder(drive, rootFolderId);
   const rawPath = String(folderName || 'EduFlow_Uploads').trim();
   const segments = rawPath.split('/').map((s) => s.trim()).filter(Boolean);
 
-  if (segments.length <= 1 && envFolderId) {
-    return envFolderId;
+  if (segments.length <= 1) {
+    return verifiedRootId;
   }
 
-  let parentId = envFolderId || null;
-  for (const seg of (segments.length > 0 ? segments : ['EduFlow_Uploads'])) {
+  let parentId = verifiedRootId;
+  for (const seg of segments) {
     const safeName = seg.replace(/'/g, "\\'");
     const parentClause = parentId ? ` and '${parentId}' in parents` : '';
     const listRes = await drive.files.list({
@@ -91,11 +146,93 @@ async function _resolveOrCreateFolder(drive, folderName) {
   return parentId;
 }
 
+async function _uploadToPersonalGas({
+  gasUrl,
+  personalFolderId,
+  b64Body,
+  fileName,
+  mimeType,
+  folderName,
+  fetchFn
+}) {
+  if (!gasUrl) {
+    return {
+      ok: false,
+      error: '개인 Google Drive 업로드를 위한 Apps Script 웹 앱 URL(personal_gas_url)이 설정되어 있지 않습니다.'
+    };
+  }
+  if (!/^https?:\/\//i.test(gasUrl)) {
+    return {
+      ok: false,
+      error: '유효하지 않은 Apps Script 웹 앱 URL(personal_gas_url) 형식입니다.'
+    };
+  }
+  const doFetch = fetchFn || globalThis.fetch;
+  if (typeof doFetch !== 'function') {
+    return { ok: false, error: 'GAS 웹 앱 호출을 위한 fetch 구현을 찾을 수 없습니다.' };
+  }
+
+  try {
+    const body = {
+      action: 'upload_file',
+      file_base64: b64Body,
+      file_name: fileName,
+      mime_type: mimeType,
+      folder_name: folderName
+    };
+    if (personalFolderId) {
+      body.folder_id = personalFolderId;
+    }
+    const resp = await doFetch(gasUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const text = await resp.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (_) {
+      data = null;
+    }
+    if (!resp.ok || !data || !data.ok) {
+      return {
+        ok: false,
+        error: (data && data.error) || `개인 Google Drive(GAS) 업로드 실패 (HTTP ${resp.status})`
+      };
+    }
+    const fileId = String(data.file_id || data.fileId || '').trim();
+    const webViewLink = String(data.url || data.webViewLink || '').trim();
+    const downloadUrl = String(data.download_url || data.downloadUrl || '').trim();
+    if (!fileId && !downloadUrl && !webViewLink) {
+      return {
+        ok: false,
+        error: '개인 Google Drive(GAS) 응답에 file_id 또는 URL이 포함되지 않았습니다.'
+      };
+    }
+    const resolvedId = fileId || extractDriveFileId(downloadUrl || webViewLink);
+    return {
+      ok: true,
+      fileId: resolvedId,
+      downloadUrl: downloadUrl || (resolvedId ? `https://drive.google.com/uc?export=download&id=${resolvedId}` : webViewLink),
+      webViewLink: webViewLink || (resolvedId ? `https://drive.google.com/file/d/${resolvedId}/view` : downloadUrl)
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `개인 Google Drive(GAS) 호출 오류: ${err && err.message ? err.message : '알 수 없는 오류'}`
+    };
+  }
+}
+
 async function uploadBase64ToDrive({
   base64Data,
   fileName,
   mimeType = 'image/png',
-  folderName = 'EduFlow_Uploads'
+  folderName = 'EduFlow_Uploads',
+  driveConfig = null,
+  _driveClient = null,
+  _fetch = null
 }) {
   const raw = String(base64Data || '').trim();
   if (!raw) {
@@ -115,13 +252,28 @@ async function uploadBase64ToDrive({
     return { ok: false, error: 'Base64 디코딩 결과가 비어 있습니다.' };
   }
 
+  const resolvedFileName = fileName || `eduflow_${Date.now()}.png`;
+  const cfg = _normalizeDriveConfig(driveConfig);
+
+  if (cfg.drivePriority === 'personal') {
+    return _uploadToPersonalGas({
+      gasUrl: cfg.personalGasUrl,
+      personalFolderId: cfg.personalFolderId,
+      b64Body,
+      fileName: resolvedFileName,
+      mimeType: detectedMime,
+      folderName,
+      fetchFn: _fetch
+    });
+  }
+
   try {
-    const drive = _getDriveClient();
-    const folderId = await _resolveOrCreateFolder(drive, folderName);
+    const drive = _driveClient || _getDriveClient();
+    const folderId = await _resolveOrCreateFolder(drive, folderName, cfg.workspaceFolderId);
 
     const createRes = await drive.files.create({
       requestBody: {
-        name: fileName || `eduflow_${Date.now()}.png`,
+        name: resolvedFileName,
         parents: folderId ? [folderId] : undefined
       },
       media: {

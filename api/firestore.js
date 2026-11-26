@@ -8,6 +8,91 @@ const { getFirestore, buildFirestoreErrorPayload } = require('./_firebaseAdmin')
 const googleDrive = require('./_googleDrive');
 const { uploadBase64ToDrive } = googleDrive;
 
+function _computeTeacherDriveStatus(teacherDoc) {
+  const cfg = _extractTeacherDriveConfig(teacherDoc);
+  if (!cfg) {
+    const envFolder = String(process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim();
+    const envGas = String(process.env.GOOGLE_APPS_SCRIPT_URL || '').trim();
+    return {
+      drive_priority: 'workspace',
+      drive_configured: Boolean(envFolder || envGas)
+    };
+  }
+  const priority = cfg.drive_priority === 'personal' ? 'personal' : 'workspace';
+  const configured = priority === 'personal'
+    ? Boolean(cfg.personal_gas_url)
+    : Boolean(cfg.workspace_drive_folder_id);
+  return {
+    drive_priority: priority,
+    drive_configured: configured
+  };
+}
+
+function _extractTeacherDriveConfig(teacherDoc) {
+  if (!teacherDoc || typeof teacherDoc !== 'object') return null;
+  const hasAny =
+    teacherDoc.drive_priority !== undefined ||
+    teacherDoc.workspace_drive_folder_id !== undefined ||
+    teacherDoc.personal_gas_url !== undefined ||
+    teacherDoc.personal_drive_folder_id !== undefined;
+  if (!hasAny) return null;
+  const rawPriority = String(teacherDoc.drive_priority || 'workspace').trim().toLowerCase();
+  return {
+    drive_priority: rawPriority === 'personal' ? 'personal' : 'workspace',
+    workspace_drive_folder_id: String(teacherDoc.workspace_drive_folder_id || '').trim(),
+    personal_gas_url: String(teacherDoc.personal_gas_url || '').trim(),
+    personal_drive_folder_id: String(teacherDoc.personal_drive_folder_id || '').trim()
+  };
+}
+
+async function _resolveTeacherDriveConfig(db, {
+  teacherDoc = null,
+  teacherId = '',
+  schoolCode = '',
+  grade = null,
+  classNo = null
+} = {}) {
+  const directCfg = _extractTeacherDriveConfig(teacherDoc);
+  if (directCfg) return directCfg;
+
+  const tid = String(teacherId || '').trim();
+  if (tid) {
+    try {
+      const snap = await db.collection('계정_교사').doc(tid).get();
+      if (snap && snap.exists) {
+        return _extractTeacherDriveConfig(snap.data());
+      }
+    } catch (_) {}
+  }
+
+  const sc = String(schoolCode || '').trim();
+  const gNum = _toIntOrNull(grade);
+  const cNum = _toIntOrNull(classNo);
+
+  try {
+    let candidates = [];
+    if (sc) {
+      const snap = await db.collection('계정_교사').where('school_code', '==', sc).get();
+      candidates = _snapToRows(snap);
+    } else if (gNum !== null) {
+      const snap = await db.collection('계정_교사').where('grade', '==', gNum).get();
+      candidates = _snapToRows(snap);
+    }
+    const active = candidates.filter((t) => {
+      const st = String(t.status || 'active').trim().toLowerCase();
+      return st !== 'rejected' && st !== 'inactive' && st !== 'disabled';
+    });
+    const matched = active.find((t) => {
+      if (gNum !== null && _toIntOrNull(t.grade) !== gNum) return false;
+      if (cNum !== null && _toIntOrNull(t.class_no) !== cNum) return false;
+      return true;
+    }) || active[0] || null;
+    if (matched) return _extractTeacherDriveConfig(matched);
+  } catch (_) {}
+
+  return null;
+}
+
 function _getEnvSuperAdminIds() {
   return String(process.env.SUPER_ADMIN_IDS || process.env.SUPER_ADMIN_ID || '')
     .split(',')
@@ -824,6 +909,11 @@ async function _handleLogin(db, body) {
 
   const safeUser = { ...userDoc, role, phone: String(userDoc.phone || '') };
   delete safeUser.password_hash;
+  if (role === 'teacher') {
+    const driveStatus = _computeTeacherDriveStatus(userDoc);
+    safeUser.drive_configured = driveStatus.drive_configured;
+    safeUser.drive_priority = driveStatus.drive_priority;
+  }
   const canonicalSub = String(
     userDoc.teacher_id || userDoc.student_id || userDoc.parent_id || userDoc.remote_id || userId
   ).trim();
@@ -859,6 +949,11 @@ async function _handleVerifySession(db, params, req = null) {
   }
   const safeUser = { ...userDoc, role, phone: String(userDoc.phone || '') };
   delete safeUser.password_hash;
+  if (role === 'teacher') {
+    const driveStatus = _computeTeacherDriveStatus(userDoc);
+    safeUser.drive_configured = driveStatus.drive_configured;
+    safeUser.drive_priority = driveStatus.drive_priority;
+  }
   const firebaseToken = await _issueFirebaseCustomToken(userDoc, role);
   return {
     status: 200,
@@ -1652,6 +1747,14 @@ async function _handleGetMobileBundle(db, params) {
       })
   };
 
+  if (isTeacherRole) {
+    const myTeacherDoc = teachersSnap.find((t) =>
+      String(t.teacher_id || '') === userId || String(t.remote_id || '') === userId
+    ) || teachersSnap[0] || null;
+    const driveStatus = _computeTeacherDriveStatus(myTeacherDoc);
+    bundle.drive_configured = driveStatus.drive_configured;
+    bundle.drive_priority = driveStatus.drive_priority;
+  }
   if (filteredStudents !== undefined) {
     bundle.students = filteredStudents;
   }
@@ -2679,11 +2782,18 @@ module.exports = async function handler(req, res) {
       ) {
         return res.status(403).json({ ok: false, error: '본인 학생 계정의 파일만 업로드할 수 있습니다.' });
       }
+      const driveConfig = await _resolveTeacherDriveConfig(db, {
+        teacherId: params.teacher_id || (session.role === 'teacher' ? (session.teacherId || session.sub) : ''),
+        schoolCode: params.school_code || session.schoolCode || '',
+        grade: params.grade ?? session.grade,
+        classNo: params.class_no ?? session.classNo
+      });
       const driveRes = await uploadBase64ToDrive({
         base64Data: params.file_base64 || params.attachment_base64 || params.base64,
         fileName: String(params.file_name || `eduflow_${Date.now()}.bin`),
         mimeType: String(params.mime_type || 'application/octet-stream'),
-        folderName: String(params.folder_name || 'EduFlow_Uploads')
+        folderName: String(params.folder_name || 'EduFlow_Uploads'),
+        driveConfig
       });
       return res.status(driveRes.ok ? 200 : 502).json(driveRes);
     }
@@ -2702,15 +2812,27 @@ module.exports = async function handler(req, res) {
       }
       let attachmentUrl = _resolveNoticeAttachmentUrl(params);
       if (!attachmentUrl && params.attachment_base64) {
+        const driveConfig = await _resolveTeacherDriveConfig(db, {
+          teacherDoc: adminAuth.teacherDoc,
+          teacherId: (existing && existing.teacher_id) || adminAuth.teacherId || '',
+          schoolCode: params.school_code || (existing && existing.school_code) || adminAuth.schoolCode || '',
+          grade: params.target_grade ?? params.grade ?? (existing && existing.target_grade) ?? adminAuth.gradeNum,
+          classNo: params.target_class ?? params.class_no ?? (existing && existing.target_class) ?? adminAuth.classNum
+        });
         const driveRes = await uploadBase64ToDrive({
           base64Data: params.attachment_base64,
           fileName: String(params.attachment_name || `notice_${rid}.pdf`),
           mimeType: String(params.attachment_mime || 'application/pdf'),
-          folderName: 'EduFlow_Notices'
+          folderName: 'EduFlow_Notices',
+          driveConfig
         });
-        if (driveRes.ok) {
-          attachmentUrl = _normalizeNoticeDriveUrl(driveRes.webViewLink || driveRes.downloadUrl);
+        if (!driveRes.ok) {
+          return res.status(502).json({
+            ok: false,
+            error: `Google Drive 첨부파일 업로드 실패: ${driveRes.error || '알 수 없는 오류'}`
+          });
         }
+        attachmentUrl = _normalizeNoticeDriveUrl(driveRes.webViewLink || driveRes.downloadUrl);
       }
       const isPublished = params.is_published === undefined ? true : _toBool(params.is_published);
       const requiresReply = params.requires_reply === undefined ? true : _toBool(params.requires_reply);
@@ -2894,6 +3016,14 @@ module.exports = async function handler(req, res) {
       const safeStudentId = sanitizeSeg(studentId, 'student');
       const driveFolderPath = `가정통신문_회신/${schoolName}_${gradeClassLabel}_${teacherName}/${noticeTitle}_${safeNoticeId}`;
       const baseFileName = `${safeStudentId}_${safeStudentName}`;
+      const driveConfig = (effectiveParentBase64 || effectiveStudentBase64 || params.reply_file_base64)
+        ? await _resolveTeacherDriveConfig(db, {
+            teacherId: noticeData.teacher_id || params.teacher_id || (session.role === 'teacher' ? (session.teacherId || session.sub) : ''),
+            schoolCode: noticeData.school_code || params.school_code || session.schoolCode || '',
+            grade: targetGrade ?? session.grade,
+            classNo: targetClass ?? session.classNo
+          })
+        : null;
 
       let sigDriveUrl = String(params.signature_drive_url || '').trim();
       let sigFileId = String(params.signature_file_id || '').trim();
@@ -2906,7 +3036,8 @@ module.exports = async function handler(req, res) {
           base64Data: parentSigBase64,
           fileName: `${baseFileName}.png`,
           mimeType: 'image/png',
-          folderName: driveFolderPath
+          folderName: driveFolderPath,
+          driveConfig
         });
         if (!driveRes.ok || !driveRes.downloadUrl || !driveRes.fileId) {
           return res.status(502).json({
@@ -2928,7 +3059,8 @@ module.exports = async function handler(req, res) {
           base64Data: effectiveStudentBase64,
           fileName: `${baseFileName}_student.png`,
           mimeType: 'image/png',
-          folderName: driveFolderPath
+          folderName: driveFolderPath,
+          driveConfig
         });
         if (!stuDriveRes.ok || !stuDriveRes.downloadUrl || !stuDriveRes.fileId) {
           return res.status(502).json({
@@ -2948,7 +3080,8 @@ module.exports = async function handler(req, res) {
           base64Data: params.reply_file_base64,
           fileName: `${baseFileName}_${replyFileName}`,
           mimeType: String(params.reply_file_mime || 'application/pdf'),
-          folderName: driveFolderPath
+          folderName: driveFolderPath,
+          driveConfig
         });
         if (!fileRes.ok || !fileRes.downloadUrl || !fileRes.fileId) {
           return res.status(502).json({
@@ -3278,6 +3411,40 @@ module.exports = async function handler(req, res) {
       await db.collection('계정_교사').doc(tid).set(data, { merge: true });
       _invalidateStaticCache('teacher');
       return res.status(200).json({ ok: true, remote_id: tid });
+    }
+
+    if (action === 'update_teacher_drive_settings') {
+      const adminAuth = await _verifyActiveTeacherAuth(db, params);
+      if (!adminAuth.ok) {
+        return res.status(adminAuth.status || 401).json({ ok: false, error: adminAuth.error });
+      }
+      const tid = String(params.teacher_id || params.remote_id || adminAuth.teacherId || '').trim();
+      if (!tid) return res.status(400).json({ ok: false, error: 'teacher_id가 필요합니다.' });
+      if (tid !== adminAuth.teacherId) {
+        return res.status(403).json({ ok: false, error: '본인 교사 계정의 Google Drive 설정만 수정할 수 있습니다.' });
+      }
+      const rawPriority = String(params.drive_priority ?? 'workspace').trim().toLowerCase();
+      if (rawPriority !== 'workspace' && rawPriority !== 'personal') {
+        return res.status(400).json({ ok: false, error: 'drive_priority는 workspace 또는 personal이어야 합니다.' });
+      }
+      const workspaceFolderId = String(params.workspace_drive_folder_id || '').trim();
+      const personalGasUrl = String(params.personal_gas_url || '').trim();
+      const personalFolderId = String(params.personal_drive_folder_id || '').trim();
+      if (personalGasUrl && !/^https?:\/\//i.test(personalGasUrl)) {
+        return res.status(400).json({ ok: false, error: 'personal_gas_url은 http(s) URL 형식이어야 합니다.' });
+      }
+      const driveData = {
+        remote_id: tid,
+        teacher_id: tid,
+        drive_priority: rawPriority,
+        workspace_drive_folder_id: workspaceFolderId,
+        personal_gas_url: personalGasUrl,
+        personal_drive_folder_id: personalFolderId,
+        updated_at: _nowStr()
+      };
+      await db.collection('계정_교사').doc(tid).set(driveData, { merge: true });
+      _invalidateStaticCache('teacher');
+      return res.status(200).json({ ok: true, ...driveData });
     }
 
     if (action === 'send_notification') {

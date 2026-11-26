@@ -2660,6 +2660,18 @@ function closeCandidateNoticeModal() {
   closeModal('candidateNoticeModal');
 }
 
+function _confirmDriveConfiguredForSignature(signatureMode) {
+  if (!signatureMode || signatureMode === 'none') return true;
+  if (typeof gasApi === 'undefined' || !gasApi.isConfigured || !gasApi.isConfigured()) return true;
+  const cu = (typeof mockData !== 'undefined' && mockData && mockData.currentUser) || {};
+  if (cu.driveConfigured !== false) return true;
+  const msg = 'Google Drive 서명 저장 폴더(공유 드라이브 폴더 ID 또는 개인 GAS URL)가 설정되어 있지 않아 학생·학부모 서명 제출 및 가정통신문 사본 서명 인쇄 기능이 작동하지 않을 수 있습니다. 그래도 게시하시겠습니까?';
+  if (typeof confirm === 'function') {
+    return confirm(msg);
+  }
+  return true;
+}
+
 async function publishCandidateNotice(btnEl) {
   const cId = state.currentCandidateNoticeId;
   const c = (mockData.circulars || []).find(x => x.id === cId);
@@ -2677,6 +2689,7 @@ async function publishCandidateNotice(btnEl) {
   const editedFields = _buildCandidateNoticeSchemaPayload();
   const replySchemaJson = JSON.stringify(editedFields);
   const requiresReply = signatureMode !== 'none' || editedFields.length > 0;
+  if (!_confirmDriveConfiguredForSignature(signatureMode)) return;
 
   await withButtonLoading(btnEl, '게시 중...', async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
@@ -2800,6 +2813,7 @@ async function publishNewCircular(btnEl) {
     showToast('가정통신문 본문 내용을 입력해 주세요.', '⚠️');
     return;
   }
+  if (!_confirmDriveConfiguredForSignature(signatureMode)) return;
 
   const noticeId = 'CIR-' + Date.now();
   const dueDate = dueDateInput || (typeof _getLocalTodayStr === 'function'
@@ -3722,6 +3736,7 @@ if (typeof globalThis !== 'undefined') {
     _getSubmittedCircularReplies,
     openSubmittedRepliesModal,
     printSubmittedReplies,
+    _confirmDriveConfiguredForSignature,
   };
 }
 
@@ -4280,5 +4295,6 @@ if (typeof module !== 'undefined' && module.exports) {
     _getSubmittedCircularReplies,
     openSubmittedRepliesModal,
     printSubmittedReplies,
+    _confirmDriveConfiguredForSignature,
   };
 }

@@ -1180,7 +1180,9 @@ function _applyAuthenticatedUser(user) {
     neisOfficeCode: user.neis_office_code || '',
     neisSchoolCode: user.neis_school_code || user.school_code || '',
     customId: user.custom_id || '',
-    customIdChanged: Boolean(user.custom_id_changed)
+    customIdChanged: Boolean(user.custom_id_changed),
+    driveConfigured: role === 'teacher' && user.drive_configured !== undefined ? Boolean(user.drive_configured) : undefined,
+    drivePriority: role === 'teacher' && user.drive_priority ? String(user.drive_priority) : undefined
   };
 }
 
@@ -1690,6 +1692,10 @@ function hydrateMockDataFromBundle(bundle) {
         mockData.currentUser.phone = t.phone || '';
         mockData.currentUser.neisOfficeCode = t.neis_office_code || '';
         mockData.currentUser.neisSchoolCode = t.neis_school_code || '';
+        if (bundle.drive_configured !== undefined) {
+          mockData.currentUser.driveConfigured = Boolean(bundle.drive_configured);
+          mockData.currentUser.drivePriority = String(bundle.drive_priority || 'workspace');
+        }
       }
       mockData.isCounselingOpen = _isTruthyField(t.consultation_enabled);
     } else {
