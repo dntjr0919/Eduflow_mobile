@@ -1627,7 +1627,102 @@ function _getOrCreateStudentChatRoom() {
   return room;
 }
 
+function _parseConsultationHoursRange(rawHours) {
+  const fallback = {
+    startMinutes: 9 * 60,
+    endMinutes: 17 * 60,
+    startLabel: '09:00',
+    endLabel: '17:00',
+    rangeLabel: '09:00~17:00'
+  };
+  const text = String(rawHours || '').trim();
+  if (!text) return fallback;
+  const match = text.match(/(\d{1,2})\s*:\s*(\d{2})\s*[~\-–—]\s*(\d{1,2})\s*:\s*(\d{2})/);
+  if (!match) return fallback;
+  const startH = parseInt(match[1], 10);
+  const startM = parseInt(match[2], 10);
+  const endH = parseInt(match[3], 10);
+  const endM = parseInt(match[4], 10);
+  if (
+    Number.isNaN(startH) || Number.isNaN(startM) ||
+    Number.isNaN(endH) || Number.isNaN(endM) ||
+    startH < 0 || startH > 23 || endH < 0 || endH > 23 ||
+    startM < 0 || startM > 59 || endM < 0 || endM > 59
+  ) {
+    return fallback;
+  }
+  const startMinutes = startH * 60 + startM;
+  const endMinutes = endH * 60 + endM;
+  if (startMinutes >= endMinutes) return fallback;
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const startLabel = `${pad2(startH)}:${pad2(startM)}`;
+  const endLabel = `${pad2(endH)}:${pad2(endM)}`;
+  return {
+    startMinutes,
+    endMinutes,
+    startLabel,
+    endLabel,
+    rangeLabel: `${startLabel}~${endLabel}`
+  };
+}
+
+function _getKstWorkingHoursStatus(consultationHours, nowMs = Date.now()) {
+  const kst = new Date(Number(nowMs) + 9 * 60 * 60 * 1000);
+  const kstDay = kst.getUTCDay();
+  const kstHour = kst.getUTCHours();
+  const kstMinute = kst.getUTCMinutes();
+  const isWeekday = kstDay >= 1 && kstDay <= 5;
+  const currentMinutes = kstHour * 60 + kstMinute;
+  const range = _parseConsultationHoursRange(consultationHours);
+  const isWorkingHours = isWeekday && currentMinutes >= range.startMinutes && currentMinutes < range.endMinutes;
+  let reason = 'working';
+  if (!isWeekday) {
+    reason = 'weekend';
+  } else if (currentMinutes < range.startMinutes) {
+    reason = 'before_hours';
+  } else if (currentMinutes >= range.endMinutes) {
+    reason = 'after_hours';
+  }
+  return {
+    isWorkingHours,
+    isWeekday,
+    reason,
+    kstDay,
+    kstHour,
+    kstMinute,
+    ...range
+  };
+}
+
+function _updateCounselingWorkHoursBanner() {
+  if (typeof document === 'undefined') return;
+  const banner = document.getElementById('counselingWorkHoursBanner');
+  const iconEl = document.getElementById('counselingWorkHoursIcon');
+  const textEl = document.getElementById('counselingWorkHoursText');
+  if (!banner || !textEl) return;
+  const cu = (typeof mockData !== 'undefined' && mockData.currentUser) ? mockData.currentUser : {};
+  const status = _getKstWorkingHoursStatus(cu.consultationHours || '');
+  if (status.isWorkingHours) {
+    banner.className = 'bg-emerald-50 border border-emerald-200/70 rounded-xl px-3 py-2 text-[10px] text-emerald-800 flex items-center gap-1.5';
+    if (iconEl) iconEl.textContent = '💬';
+    textEl.innerHTML = `현재 <strong>근무 시간(${_escStudentHtml(status.rangeLabel)})</strong>입니다. 메시지를 남겨주시면 확인 후 순차적으로 답변해 드립니다.`;
+  } else if (status.reason === 'weekend') {
+    banner.className = 'bg-slate-100 rounded-xl px-3 py-2 text-[10px] text-slate-600 flex items-center gap-1.5';
+    if (iconEl) iconEl.textContent = '⏰';
+    textEl.innerHTML = `현재 <strong>주말(근무 외 시간)</strong>입니다. 메시지를 남겨주시면 평일 근무 시간(${_escStudentHtml(status.rangeLabel)})에 확인합니다.`;
+  } else if (status.reason === 'before_hours') {
+    banner.className = 'bg-slate-100 rounded-xl px-3 py-2 text-[10px] text-slate-600 flex items-center gap-1.5';
+    if (iconEl) iconEl.textContent = '⏰';
+    textEl.innerHTML = `현재 <strong>근무 외 시간(${_escStudentHtml(status.startLabel)} 이전)</strong>입니다. 메시지를 남겨주시면 근무 시간(${_escStudentHtml(status.rangeLabel)})에 확인합니다.`;
+  } else {
+    banner.className = 'bg-slate-100 rounded-xl px-3 py-2 text-[10px] text-slate-600 flex items-center gap-1.5';
+    if (iconEl) iconEl.textContent = '⏰';
+    textEl.innerHTML = `현재 <strong>근무 외 시간(${_escStudentHtml(status.endLabel)} 이후)</strong>입니다. 메시지를 남겨주시면 익일 근무 시간에 확인합니다.`;
+  }
+}
+
 function renderStudentChat() {
+  _updateCounselingWorkHoursBanner();
   const banner = document.getElementById('counselingCtaBanner');
   banner.classList.toggle('hidden', !mockData.isCounselingOpen);
 
@@ -1676,6 +1771,7 @@ async function sendChatMessage() {
       await gasApi.post('send_chat_message', {
         data: {
           room_id: room.roomId,
+          student_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
           sender_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
           sender_name: mockData.currentUser.studentName || mockData.currentUser.parentName || '학생',
           sender_role: state.activeRole,
@@ -1717,6 +1813,7 @@ async function handleCounselingBooking(e) {
       await gasApi.post('send_chat_message', {
         data: {
           room_id: room.roomId,
+          student_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
           sender_id: mockData.currentUser.studentId || mockData.currentUser.userId || '',
           sender_name: mockData.currentUser.studentName || mockData.currentUser.parentName || '학생',
           sender_role: state.activeRole,
@@ -1743,5 +1840,8 @@ if (typeof module !== 'undefined' && module.exports) {
     renderBudget,
     openReceiptModal,
     renderStudentChat,
+    _parseConsultationHoursRange,
+    _getKstWorkingHoursStatus,
+    _updateCounselingWorkHoursBanner,
   };
 }

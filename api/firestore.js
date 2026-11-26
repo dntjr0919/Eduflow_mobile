@@ -568,6 +568,26 @@ function _matchesSessionStudent(session, candidateSid) {
   return false;
 }
 
+async function _matchesSessionStudentWithLookup(db, session, candidateSid) {
+  if (_matchesSessionStudent(session, candidateSid)) return true;
+  const target = String(candidateSid || '').trim();
+  if (!target || !db || !session || !session.ok || !session.sub) return false;
+  if (session.role !== 'student' && session.role !== 'parent') return false;
+  try {
+    const { docId, userDoc } = await _findAccountDoc(db, session.role, session.sub);
+    if (!userDoc) return false;
+    const allowedIds = session.role === 'student'
+      ? [docId, userDoc.remote_id, userDoc.student_id, userDoc.login_id, userDoc.custom_id]
+      : [userDoc.student_id];
+    return allowedIds
+      .map((v) => String(v || '').trim())
+      .filter(Boolean)
+      .includes(target);
+  } catch (_) {
+    return false;
+  }
+}
+
 function _matchesSessionAccountDoc(session, userDoc, fallbackId = '') {
   if (!session || !session.ok || !userDoc) return false;
   const keys = [
@@ -747,10 +767,13 @@ async function _handleLogin(db, body) {
   const canonicalSub = String(
     userDoc.teacher_id || userDoc.student_id || userDoc.parent_id || userDoc.remote_id || userId
   ).trim();
+  const canonicalSid = String(
+    userDoc.student_id || (role === 'student' ? (userDoc.remote_id || userDoc.login_id || userDoc.custom_id || userId) : '')
+  ).trim();
   const { token, expiresAt } = _signSessionToken({
     sub: canonicalSub,
     role,
-    sid: String(userDoc.student_id || '').trim(),
+    sid: canonicalSid,
     sc: String(userDoc.school_code || userDoc.neis_school_code || '').trim(),
   });
   const firebaseToken = await _issueFirebaseCustomToken(userDoc, role);
@@ -831,10 +854,13 @@ async function _handleChangePassword(db, body, req = null) {
   const canonicalSub = String(
     userDoc.teacher_id || userDoc.student_id || userDoc.parent_id || userDoc.remote_id || userId
   ).trim();
+  const canonicalSid = String(
+    userDoc.student_id || (role === 'student' ? (userDoc.remote_id || userDoc.login_id || userDoc.custom_id || userId) : '')
+  ).trim();
   const { token, expiresAt } = _signSessionToken({
     sub: canonicalSub,
     role,
-    sid: String(userDoc.student_id || '').trim(),
+    sid: canonicalSid,
     sc: String(userDoc.school_code || userDoc.neis_school_code || '').trim(),
   });
   return { status: 200, json: { ok: true, message: '비밀번호가 안전하게 변경되었습니다.', token, expires_at: expiresAt } };
@@ -2929,7 +2955,10 @@ module.exports = async function handler(req, res) {
       const hasTeacherCreds = Boolean(params.auth_teacher_id && (params.auth_password || params.auth_password_hash));
       const useTeacherPath = senderRole === 'teacher' || (session.ok && session.role === 'teacher') || (!session.ok && hasTeacherCreds);
       let roomId = String(params.room_id || `ROOM-${params.student_id || 'DEFAULT'}`).trim();
-      let inferredSid = String(params.student_id || params.receiver_id || (roomId.startsWith('ROOM-') ? roomId.slice(5) : '')).trim();
+      const roomSid = (roomId.startsWith('ROOM-') && roomId !== 'ROOM-DEFAULT') ? roomId.slice(5).trim() : '';
+      let inferredSid = useTeacherPath
+        ? String(params.student_id || params.receiver_id || roomSid).trim()
+        : String(params.student_id || roomSid || params.sender_id || '').trim();
       let teacherAuth = null;
       if (useTeacherPath) {
         teacherAuth = await _verifyActiveTeacherAuth(db, params);
@@ -2951,11 +2980,14 @@ module.exports = async function handler(req, res) {
           return res.status(session.status).json({ ok: false, error: session.error });
         }
         const ownSid = session.studentId || session.sub;
-        if (inferredSid && !_matchesSessionStudent(session, inferredSid)) {
+        if (inferredSid && !(await _matchesSessionStudentWithLookup(db, session, inferredSid))) {
           return res.status(403).json({ ok: false, error: '본인(또는 자녀)의 1:1 상담방에만 메시지를 보낼 수 있습니다.' });
         }
         if (roomId && roomId !== 'ROOM-DEFAULT' && roomId !== `ROOM-${ownSid}`) {
-          return res.status(403).json({ ok: false, error: '타인의 1:1 상담방에는 메시지를 보낼 수 없습니다.' });
+          const roomMatches = roomSid && (await _matchesSessionStudentWithLookup(db, session, roomSid));
+          if (!roomMatches) {
+            return res.status(403).json({ ok: false, error: '타인의 1:1 상담방에는 메시지를 보낼 수 없습니다.' });
+          }
         }
         inferredSid = ownSid;
         roomId = `ROOM-${ownSid}`;
@@ -3050,11 +3082,14 @@ module.exports = async function handler(req, res) {
         }
         const ownSid = session.studentId || session.sub;
         const targetSid = roomId.startsWith('ROOM-') ? roomId.slice(5).trim() : String(params.student_id || '').trim();
-        if (targetSid && !_matchesSessionStudent(session, targetSid)) {
+        if (targetSid && !(await _matchesSessionStudentWithLookup(db, session, targetSid))) {
           return res.status(403).json({ ok: false, error: '본인(또는 자녀)의 상담 채팅만 읽음 처리할 수 있습니다.' });
         }
         if (roomId && roomId !== `ROOM-${ownSid}`) {
-          return res.status(403).json({ ok: false, error: '타인의 상담 채팅방은 읽음 처리할 수 없습니다.' });
+          const roomMatches = targetSid && (await _matchesSessionStudentWithLookup(db, session, targetSid));
+          if (!roomMatches) {
+            return res.status(403).json({ ok: false, error: '타인의 상담 채팅방은 읽음 처리할 수 없습니다.' });
+          }
         }
         if (!roomId && ownSid) roomId = `ROOM-${ownSid}`;
       }
@@ -5880,6 +5915,8 @@ module.exports._testHelpers = {
   _signSessionToken,
   _verifySessionToken,
   _verifyRequestSession,
+  _matchesSessionStudent,
+  _matchesSessionStudentWithLookup,
   _verifyPassword,
   _extractSessionToken,
   _handleUpdateMyPhone,

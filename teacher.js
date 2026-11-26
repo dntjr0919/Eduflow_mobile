@@ -2480,6 +2480,32 @@ async function deleteBoardNotice(noticeId, btnEl) {
   });
 }
 
+function _normalizeTeacherSignatureMode(rawMode, requiresReply = true) {
+  const raw = String(rawMode ?? '').trim().toLowerCase();
+  if (raw === 'none' || raw === '0' || raw === 'no' || raw === 'false') return 'none';
+  if (raw === 'student' || raw === 'student_only') return 'student';
+  if (raw === 'both' || raw === '2') return 'both';
+  if (raw === 'parent' || raw === 'parent_only' || raw === 'single' || raw === '1') return 'parent';
+  return requiresReply ? 'parent' : 'none';
+}
+
+function updateCandidateNoticeReplyBadge() {
+  const badgeEl = document.getElementById('candidateNoticeReplyBadge');
+  if (!badgeEl) return;
+  const sigModeEl = document.querySelector('input[name="candidateNoticeSignatureMode"]:checked');
+  const sigMode = _normalizeTeacherSignatureMode(sigModeEl ? sigModeEl.value : 'none', false);
+  const labelMap = {
+    none: '서명 없음',
+    student: '학생 서명 1칸',
+    parent: '학부모 서명 1칸',
+    both: '학생·학부모 2칸'
+  };
+  badgeEl.innerText = labelMap[sigMode] || '서명 없음';
+  badgeEl.className = sigMode === 'none'
+    ? 'text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-600'
+    : 'text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700';
+}
+
 function openCandidateNoticeModal(circularId) {
   const c = (mockData.circulars || []).find(x => x.id === circularId);
   if (!c) return;
@@ -2487,20 +2513,24 @@ function openCandidateNoticeModal(circularId) {
   const titleEl = document.getElementById('candidateNoticeTitle');
   const dueDateEl = document.getElementById('candidateNoticeDueDate');
   const contentEl = document.getElementById('candidateNoticeContent');
-  const badgeEl = document.getElementById('candidateNoticeReplyBadge');
 
   if (titleEl) titleEl.value = c.title || '';
   if (dueDateEl) dueDateEl.value = c.dueDate || '';
   if (contentEl) contentEl.value = c.content || '';
-  if (badgeEl) badgeEl.innerText = c.requiresReply ? '자필서명 필수' : '회신 불필요';
-
-  const sigMode = c.signatureMode === 'both' ? 'both' : 'single';
-  const sigRadio = document.querySelector(`input[name="candidateNoticeSignatureMode"][value="${sigMode}"]`);
-  if (sigRadio) sigRadio.checked = true;
 
   const parsedFields = typeof _parseNoticeReplySchema === 'function'
     ? _parseNoticeReplySchema(c.replySchemaJson, c.replyFields)
     : [];
+  const hasExplicitSig = ['none', '0', 'student', 'student_only', 'parent', 'parent_only', 'both', '2'].includes(
+    String(c.signatureMode ?? '').trim().toLowerCase()
+  );
+  const effectiveRequiresReply = c.requiresReply !== false && String(c.requiresReply) !== '0';
+  const sigMode = (!effectiveRequiresReply && parsedFields.length === 0 && !hasExplicitSig)
+    ? 'none'
+    : _normalizeTeacherSignatureMode(c.signatureMode, effectiveRequiresReply);
+  const sigRadio = document.querySelector(`input[name="candidateNoticeSignatureMode"][value="${sigMode}"]`);
+  if (sigRadio) sigRadio.checked = true;
+  updateCandidateNoticeReplyBadge();
   state.candidateNoticeFields = parsedFields.map((f, idx) => ({
     name: f.name || `field_${idx}`,
     label: f.label || `항목 ${idx + 1}`,
@@ -2627,9 +2657,10 @@ async function publishCandidateNotice(btnEl) {
   }
 
   const sigModeEl = document.querySelector('input[name="candidateNoticeSignatureMode"]:checked');
-  const signatureMode = sigModeEl && sigModeEl.value === 'both' ? 'both' : 'single';
+  const signatureMode = _normalizeTeacherSignatureMode(sigModeEl ? sigModeEl.value : 'none', false);
   const editedFields = _buildCandidateNoticeSchemaPayload();
   const replySchemaJson = JSON.stringify(editedFields);
+  const requiresReply = signatureMode !== 'none' || editedFields.length > 0;
 
   await withButtonLoading(btnEl, '게시 중...', async () => {
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
@@ -2645,7 +2676,7 @@ async function publishCandidateNotice(btnEl) {
             attachment_url: c.attachmentUrl || '',
             reply_schema_json: replySchemaJson,
             signature_mode: signatureMode,
-            requires_reply: c.requiresReply ? 1 : 0,
+            requires_reply: requiresReply ? 1 : 0,
             target_grade: c.targetGrade || mockData.currentUser.grade || '',
             target_class: c.targetClass || mockData.currentUser.classNo || '',
             school_code: c.schoolCode || mockData.currentUser.neisSchoolCode || '',
@@ -2666,6 +2697,7 @@ async function publishCandidateNotice(btnEl) {
     c.replySchemaJson = replySchemaJson;
     c.replyFields = editedFields;
     c.signatureMode = signatureMode;
+    c.requiresReply = requiresReply;
     c.isPublished = true;
 
     closeCandidateNoticeModal();
@@ -2680,7 +2712,7 @@ function openNewCircularModal() {
   const contentEl = document.getElementById('newCircularContent');
   const dueDateEl = document.getElementById('newCircularDueDate');
   const reqReplyEl = document.getElementById('newCircularRequiresReply');
-  const singleRadio = document.querySelector('input[name="newCircularSignatureMode"][value="single"]');
+  const defaultRadio = document.querySelector('input[name="newCircularSignatureMode"][value="parent"]');
 
   if (titleEl) titleEl.value = '';
   if (contentEl) contentEl.value = '';
@@ -2690,7 +2722,7 @@ function openNewCircularModal() {
       : new Date(Date.now() + 7 * 86400000 + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
   }
   if (reqReplyEl) reqReplyEl.checked = true;
-  if (singleRadio) singleRadio.checked = true;
+  if (defaultRadio) defaultRadio.checked = true;
   toggleNewCircularReplyMode();
   openModal('newCircularModal');
 }
@@ -2702,8 +2734,34 @@ function closeNewCircularModal() {
 function toggleNewCircularReplyMode() {
   const reqReplyEl = document.getElementById('newCircularRequiresReply');
   const sigWrap = document.getElementById('newCircularSignatureModeWrap');
-  if (reqReplyEl && sigWrap) {
-    sigWrap.classList.toggle('hidden', !reqReplyEl.checked);
+  if (!reqReplyEl) return;
+  if (!reqReplyEl.checked) {
+    const noneRadio = document.querySelector('input[name="newCircularSignatureMode"][value="none"]');
+    if (noneRadio) noneRadio.checked = true;
+  } else {
+    const checkedEl = document.querySelector('input[name="newCircularSignatureMode"]:checked');
+    if (!checkedEl || checkedEl.value === 'none') {
+      const parentRadio = document.querySelector('input[name="newCircularSignatureMode"][value="parent"]');
+      if (parentRadio) parentRadio.checked = true;
+    }
+  }
+  if (sigWrap) {
+    sigWrap.classList.toggle('opacity-75', !reqReplyEl.checked);
+  }
+}
+
+function onNewCircularSignatureModeChange() {
+  const reqReplyEl = document.getElementById('newCircularRequiresReply');
+  const checkedEl = document.querySelector('input[name="newCircularSignatureMode"]:checked');
+  const sigWrap = document.getElementById('newCircularSignatureModeWrap');
+  if (!reqReplyEl || !checkedEl) return;
+  if (checkedEl.value === 'none') {
+    reqReplyEl.checked = false;
+  } else {
+    reqReplyEl.checked = true;
+  }
+  if (sigWrap) {
+    sigWrap.classList.toggle('opacity-75', !reqReplyEl.checked);
   }
 }
 
@@ -2711,9 +2769,12 @@ async function publishNewCircular(btnEl) {
   const title = (document.getElementById('newCircularTitle')?.value || '').trim();
   const content = (document.getElementById('newCircularContent')?.value || '').trim();
   const dueDateInput = (document.getElementById('newCircularDueDate')?.value || '').trim();
-  const requiresReply = Boolean(document.getElementById('newCircularRequiresReply')?.checked);
+  const reqReplyChecked = Boolean(document.getElementById('newCircularRequiresReply')?.checked);
   const sigModeEl = document.querySelector('input[name="newCircularSignatureMode"]:checked');
-  const signatureMode = (requiresReply && sigModeEl && sigModeEl.value === 'both') ? 'both' : 'single';
+  const signatureMode = reqReplyChecked
+    ? _normalizeTeacherSignatureMode(sigModeEl ? sigModeEl.value : 'parent', true)
+    : 'none';
+  const requiresReply = signatureMode !== 'none';
 
   if (!title) {
     showToast('가정통신문 제목을 입력해 주세요.', '⚠️');
@@ -2774,8 +2835,10 @@ async function publishNewCircular(btnEl) {
       meta: [
         `대상: ${mockData.currentUser.gradeClass || '우리 반'} 전체`,
         requiresReply
-          ? (signatureMode === 'both' ? '회신 필요 (학생·학부모 2칸 서명)' : '회신 필요 (전자서명 1칸)')
-          : '열람용 안내문'
+          ? (signatureMode === 'both'
+              ? '회신 필요 (학생·학부모 2칸 서명)'
+              : (signatureMode === 'student' ? '회신 필요 (학생 서명 1칸)' : '회신 필요 (학부모 서명 1칸)'))
+          : '열람용 안내문 (서명 없음)'
       ]
     });
     closeNewCircularModal();

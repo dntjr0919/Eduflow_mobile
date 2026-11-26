@@ -1164,7 +1164,7 @@ function _applyAuthenticatedUser(user) {
     ...mockData.currentUser,
     role,
     userId: user.teacher_id || user.student_id || user.parent_id || user.remote_id || '',
-    studentId: user.student_id || '',
+    studentId: user.student_id || (role === 'student' ? (user.remote_id || user.login_id || user.custom_id || '') : ''),
     studentName: role === 'parent' ? (user.student_name || '') : rawName,
     maskedName: masked,
     parentName: role === 'parent' ? rawName : (masked ? `${masked} 학부모님` : ''),
@@ -1679,6 +1679,7 @@ function hydrateMockDataFromBundle(bundle) {
     if (t) {
       mockData.currentUser.teacherName = t.name || mockData.currentUser.teacherName || '';
       mockData.currentUser.schoolName = t.school_name || mockData.currentUser.schoolName || '';
+      mockData.currentUser.consultationHours = t.consultation_hours || '';
       if (state.activeRole === 'teacher') {
         mockData.currentUser.grade = t.grade !== undefined && t.grade !== '' ? String(t.grade) : mockData.currentUser.grade;
         mockData.currentUser.classNo = t.class_no !== undefined && t.class_no !== '' ? String(t.class_no) : mockData.currentUser.classNo;
@@ -1687,7 +1688,6 @@ function hydrateMockDataFromBundle(bundle) {
           : '';
         mockData.currentUser.subject = t.subject || '';
         mockData.currentUser.phone = t.phone || '';
-        mockData.currentUser.consultationHours = t.consultation_hours || '';
         mockData.currentUser.neisOfficeCode = t.neis_office_code || '';
         mockData.currentUser.neisSchoolCode = t.neis_school_code || '';
       }
@@ -1886,7 +1886,14 @@ function hydrateMockDataFromBundle(bundle) {
         deadline: n.due_date ? `${n.due_date} 마감` : '상시',
         isPublished: toBoolVal(n.is_published, true),
         requiresReply: toBoolVal(n.requires_reply, true),
-        signatureMode: String(n.signature_mode || 'single').trim().toLowerCase() === 'both' ? 'both' : 'single',
+        signatureMode: (() => {
+          const raw = String(n.signature_mode ?? '').trim().toLowerCase();
+          if (raw === 'none' || raw === '0' || raw === 'no' || raw === 'false') return 'none';
+          if (raw === 'student' || raw === 'student_only') return 'student';
+          if (raw === 'both' || raw === '2') return 'both';
+          if (raw === 'parent' || raw === 'parent_only' || raw === 'single' || raw === '1') return 'parent';
+          return (n.requires_reply === false || String(n.requires_reply) === '0') ? 'none' : 'parent';
+        })(),
         replySchemaJson: n.reply_schema_json || '',
         replyFields: Array.isArray(n.reply_fields) ? n.reply_fields : null,
         attachmentUrl,
