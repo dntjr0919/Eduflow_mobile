@@ -503,7 +503,13 @@ test('scripts/backfill-tenant-fields.js dry-run and apply backfill legacy docs s
       SC01_10401: { student_id: '10401', name: '김철수', grade: 1, class_no: 4, school_code: 'SC01', school_name: '가나고', status: 'active' },
     },
     가정통신문_목록: {
-      n1: { remote_id: 'n1', title: '통신문', school_code: 'SC01', school_name: '가나고', target_grade: 1, target_class: 4, teacher_id: 't1' },
+      n1: { remote_id: 'n1', title: '통신문', school_code: 'SC01', school_name: '가나고', target_grade: 1, target_class: 4, teacher_id: 't1', created_at: '2026-11-20 09:00:00' },
+    },
+    가정통신문_회신: {
+      r_sub: { remote_id: 'r_sub', notice_id: 'n1', student_id: '10401', school_code: 'SC01', school_name: '가나고', grade: 1, class_no: 4, teacher_id: 't1', submitted_at: '2026-11-21 10:00:00', signed_at: '2026-11-21 09:50:00', updated_at: '2026-11-21 10:05:00' },
+      r_sig: { remote_id: 'r_sig', notice_id: 'n1', student_id: '10401', school_code: 'SC01', school_name: '가나고', grade: 1, class_no: 4, teacher_id: 't1', signed_at: '2026-11-22 11:00:00', updated_at: '2026-11-22 11:05:00' },
+      r_upd: { remote_id: 'r_upd', notice_id: 'n1', student_id: '10401', school_code: 'SC01', school_name: '가나고', grade: 1, class_no: 4, teacher_id: 't1', updated_at: '2026-11-23 12:00:00' },
+      r_now: { remote_id: 'r_now', notice_id: 'n1', student_id: '10401', school_code: 'SC01', school_name: '가나고', grade: 1, class_no: 4, teacher_id: 't1' },
     },
     '1:1_상담채팅': {
       legacy_chat: { remote_id: 'legacy_chat', room_id: 'ROOM-10401', message: '옛날 메시지' },
@@ -521,12 +527,12 @@ test('scripts/backfill-tenant-fields.js dry-run and apply backfill legacy docs s
 
   const drySummary = await runBackfill(mockDb, { apply: false });
   assert.equal(drySummary.mode, 'dry-run');
-  assert.equal(drySummary.totalUpdated, 4);
+  assert.equal(drySummary.totalUpdated, 8);
   assert.equal(mockDb._store.get('1:1_상담채팅').get('legacy_chat').school_code, undefined);
 
   const applySummary = await runBackfill(mockDb, { apply: true });
   assert.equal(applySummary.mode, 'apply');
-  assert.equal(applySummary.totalUpdated, 4);
+  assert.equal(applySummary.totalUpdated, 8);
 
   const chat = mockDb._store.get('1:1_상담채팅').get('legacy_chat');
   assert.equal(chat.school_code, 'SC01');
@@ -552,4 +558,11 @@ test('scripts/backfill-tenant-fields.js dry-run and apply backfill legacy docs s
   assert.equal(noti.target_role, 'all');
   assert.equal(noti.student_id, '');
   assert.deepEqual(noti.read_by, []);
+  assert.ok(noti.created_at);
+
+  const replies = mockDb._store.get('가정통신문_회신');
+  assert.equal(replies.get('r_sub').created_at, '2026-11-21 10:00:00');
+  assert.equal(replies.get('r_sig').created_at, '2026-11-22 11:00:00');
+  assert.equal(replies.get('r_upd').created_at, '2026-11-23 12:00:00');
+  assert.match(replies.get('r_now').created_at, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
 });

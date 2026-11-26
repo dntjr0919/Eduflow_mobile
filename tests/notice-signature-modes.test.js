@@ -34,7 +34,7 @@ require.cache[googleDrivePath] = {
 
 const handler = require('../api/firestore.js');
 const { _testHelpers } = handler;
-const { _handleLogin, _normalizeSignatureMode } = _testHelpers;
+const { _handleLogin, _normalizeSignatureMode, _handleGetMobileBundle } = _testHelpers;
 const { _normalizeNoticeSignatureMode } = require('../student.js');
 
 function sha256(val) {
@@ -61,31 +61,45 @@ function createMockDb(initialCollections = {}) {
       data: () => (data ? { ...data } : undefined),
     };
   }
-  function makeQuery(colName, filters = [], maxLimit = Infinity) {
+  function makeQuery(colName, filters = [], orderSpec = null, maxLimit = Infinity) {
     return {
       where(field, op, val) {
-        return makeQuery(colName, [...filters, { field, op, val }], maxLimit);
+        return makeQuery(colName, [...filters, { field, op, val }], orderSpec, maxLimit);
+      },
+      orderBy(field, direction = 'asc') {
+        return makeQuery(colName, filters, { field, direction }, maxLimit);
       },
       limit(n) {
-        return makeQuery(colName, filters, n);
+        return makeQuery(colName, filters, orderSpec, n);
       },
       async get() {
         const colMap = getColMap(colName);
-        const matched = [];
+        let matched = [];
         for (const [id, data] of colMap.entries()) {
           let ok = true;
           for (const f of filters) {
             if (f.op === '==' && data[f.field] !== f.val) ok = false;
+            else if (f.op === 'in' && (!Array.isArray(f.val) || !f.val.includes(data[f.field]))) ok = false;
           }
-          if (ok) matched.push(makeSnap(id, data));
-          if (matched.length >= maxLimit) break;
+          // Firestore orderBy() excludes documents missing the ordered field
+          if (ok && orderSpec && data[orderSpec.field] === undefined) ok = false;
+          if (ok) matched.push({ id, data });
         }
+        if (orderSpec) {
+          matched.sort((a, b) => {
+            const va = String(a.data[orderSpec.field] ?? '');
+            const vb = String(b.data[orderSpec.field] ?? '');
+            return orderSpec.direction === 'desc' ? vb.localeCompare(va) : va.localeCompare(vb);
+          });
+        }
+        if (Number.isFinite(maxLimit)) matched = matched.slice(0, maxLimit);
+        const snaps = matched.map((m) => makeSnap(m.id, m.data));
         return {
-          empty: matched.length === 0,
-          size: matched.length,
-          docs: matched,
+          empty: snaps.length === 0,
+          size: snaps.length,
+          docs: snaps,
           forEach(cb) {
-            matched.forEach(cb);
+            snaps.forEach(cb);
           },
         };
       },
@@ -110,6 +124,15 @@ function createMockDb(initialCollections = {}) {
         },
         where(field, op, val) {
           return makeQuery(colName, [{ field, op, val }]);
+        },
+        orderBy(field, direction = 'asc') {
+          return makeQuery(colName, [], { field, direction });
+        },
+        limit(n) {
+          return makeQuery(colName, [], null, n);
+        },
+        async get() {
+          return makeQuery(colName).get();
         },
       };
     },
@@ -310,4 +333,112 @@ test('index.html exposes all 4 signature mode options in newCircularModal and ca
       );
     }
   }
+});
+
+test('submit_notice_reply persists created_at and is returned by _handleGetMobileBundle for both student and teacher', async () => {
+  const db = createMockDb({
+    '계정_교사': {
+      't_105': {
+        teacher_id: 't_105',
+        name: '박담임',
+        grade: 1,
+        class_no: 5,
+        school_code: '7010057',
+        school_name: '테스트고',
+        status: 'active',
+        password_hash: sha256('teach1234'),
+      },
+    },
+    '계정_학생': {
+      'doc_10536': {
+        student_id: '10536',
+        name: '이승수',
+        grade: 1,
+        class_no: 5,
+        school_code: '7010057',
+        school_name: '테스트고',
+        status: 'active',
+        password_hash: sha256('pass1234'),
+      },
+    },
+    '가정통신문_목록': {
+      'notice_reg_1': {
+        remote_id: 'notice_reg_1',
+        title: '현장체험학습 안내',
+        target_grade: 1,
+        target_class: 5,
+        school_code: '7010057',
+        school_name: '테스트고',
+        teacher_id: 't_105',
+        requires_reply: true,
+        signature_mode: 'parent',
+        is_published: true,
+        created_at: '2026-11-26 09:00:00',
+        updated_at: '2026-11-26 09:00:00',
+      },
+    },
+  });
+  activeMockDb = db;
+
+  const loginRes = await _handleLogin(db, {
+    role: 'student',
+    user_id: '10536',
+    password: 'pass1234',
+  });
+  const token = loginRes.json.token;
+
+  const submitRes = createMockRes();
+  await handler({
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+    body: {
+      action: 'submit_notice_reply',
+      data: {
+        notice_id: 'notice_reg_1',
+        student_id: '10536',
+        student_name: '이승수',
+        consent: '동의',
+        signature_base64: 'data:image/png;base64,AAAA',
+      },
+    },
+  }, submitRes);
+  assert.equal(submitRes.statusCode, 200);
+  const savedReply = db._store.get('가정통신문_회신').get('notice_reg_1_10536');
+  assert.ok(savedReply, 'reply document must be stored');
+  assert.ok(savedReply.created_at && String(savedReply.created_at).trim().length > 0, 'replyDoc must persist created_at');
+
+  // Student bundle must include the submitted reply (not excluded by orderBy('created_at', 'desc'))
+  const studentRes = await _handleGetMobileBundle(db, {
+    role: 'student',
+    student_id: '10536',
+    user_id: 'doc_10536',
+    grade: 1,
+    class_no: 5,
+    school_code: '7010057',
+    force: '1',
+  });
+  const studentBundle = studentRes.json || studentRes;
+  assert.equal(studentBundle.ok, true);
+  assert.equal(
+    studentBundle.notice_replies.some((r) => r.remote_id === 'notice_reg_1_10536' && r.notice_id === 'notice_reg_1'),
+    true,
+    'student _handleGetMobileBundle must return submitted notice reply'
+  );
+
+  // Teacher bundle must also include the submitted reply
+  const teacherRes = await _handleGetMobileBundle(db, {
+    role: 'teacher',
+    user_id: 't_105',
+    grade: 1,
+    class_no: 5,
+    school_code: '7010057',
+    force: '1',
+  });
+  const teacherBundle = teacherRes.json || teacherRes;
+  assert.equal(teacherBundle.ok, true);
+  assert.equal(
+    teacherBundle.notice_replies.some((r) => r.remote_id === 'notice_reg_1_10536' && r.student_id === '10536'),
+    true,
+    'teacher _handleGetMobileBundle must return submitted notice reply'
+  );
 });

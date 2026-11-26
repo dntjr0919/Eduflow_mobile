@@ -2946,6 +2946,7 @@ module.exports = async function handler(req, res) {
         signature_mode: signatureMode,
         is_published: true,
         published_at: existing.published_at || nowStr,
+        created_at: String(existing.created_at || nowStr),
         updated_at: nowStr
       };
       if (params.reply_schema_json !== undefined) {
@@ -3165,6 +3166,7 @@ module.exports = async function handler(req, res) {
         memo: String(params.memo || ''),
         signed_at: signedAt,
         submitted_at: nowStr,
+        created_at: nowStr,
         updated_at: nowStr
       };
       if (replyFileDriveUrl || replyFileId) {
@@ -4602,7 +4604,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       target_student_id: normalizedSid,
       is_read: false,
       read_by: [],
-      created_at: params.created_at || _nowStr(),
+      created_at: String(params.created_at || '').trim() || _nowStr(),
       updated_at: _nowStr(),
     };
     await db.collection('Notifications').doc(rid).set(payload, { merge: true });
@@ -5900,7 +5902,7 @@ async function _upsertBoardNotice(db, params, auth = null) {
     is_pinned: isPinned,
     is_published: isPublished,
     published_at: String(params.published_at || existing.published_at || nowStr).trim(),
-    created_at: String(params.created_at || existing.created_at || nowStr).trim(),
+    created_at: String(params.created_at || existing.created_at || '').trim() || nowStr,
     updated_at: nowStr,
     teacher_id: String(existing.teacher_id || (auth && auth.teacherId) || '').trim(),
     author_name: String(

@@ -53,6 +53,13 @@ function _toIntOrNull(val) {
   return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
+function _nowStr(dateObj) {
+  const d = dateObj || new Date();
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())} ${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}:${pad(kst.getUTCSeconds())}`;
+}
+
 function _normName(val) {
   return String(val || '')
     .trim()
@@ -153,7 +160,7 @@ function _extractRoomStudentId(doc) {
   return '';
 }
 
-function computeBackfillPatch(collectionName, doc, index) {
+function computeBackfillPatch(collectionName, doc, index, fallbackNowStr = _nowStr()) {
   if (!doc || typeof doc !== 'object') return null;
 
   const isNoticeList = collectionName === '가정통신문_목록';
@@ -235,6 +242,12 @@ function computeBackfillPatch(collectionName, doc, index) {
     if (!Array.isArray(doc.read_by)) patch.read_by = [];
   }
 
+  if (!String(doc.created_at || '').trim()) {
+    patch.created_at = String(
+      doc.submitted_at || doc.signed_at || doc.published_at || doc.updated_at || ''
+    ).trim() || fallbackNowStr;
+  }
+
   return Object.keys(patch).length > 0 ? patch : null;
 }
 
@@ -252,6 +265,7 @@ async function runBackfill(db, { apply = false, collections = TARGET_COLLECTIONS
   };
 
   const index = buildAccountIndex(toRows(teacherSnap), toRows(studentSnap), toRows(noticeSnap));
+  const fallbackNowStr = _nowStr();
   const summary = {
     mode: apply ? 'apply' : 'dry-run',
     collections: {},
@@ -264,7 +278,7 @@ async function runBackfill(db, { apply = false, collections = TARGET_COLLECTIONS
     const updates = [];
     snap.forEach((d) => {
       const data = d.data() || {};
-      const patch = computeBackfillPatch(colName, { remote_id: d.id, ...data }, index);
+      const patch = computeBackfillPatch(colName, { remote_id: d.id, ...data }, index, fallbackNowStr);
       if (patch) {
         updates.push({ ref: d.ref, id: d.id, patch });
       }
