@@ -1074,6 +1074,18 @@ function openCircularAttachment(event, rawUrl) {
   return true;
 }
 
+function _isStudentReadOnlyCircular(c) {
+  if (!c) return false;
+  const reqReply = c.requiresReply !== false && c.requires_reply !== false && String(c.requires_reply ?? '') !== '0';
+  if (reqReply) return false;
+  const sigMode = _normalizeNoticeSignatureMode(c.signatureMode ?? c.signature_mode, false);
+  if (sigMode !== 'none') return false;
+  const fields = typeof _parseNoticeReplySchema === 'function'
+    ? _parseNoticeReplySchema(c.replySchemaJson || c.reply_schema_json, c.replyFields || c.reply_fields)
+    : [];
+  return fields.length === 0;
+}
+
 function renderCirculars() {
   const list = document.getElementById('circularsList');
   if (!list) return;
@@ -1084,12 +1096,13 @@ function renderCirculars() {
   }
   const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
   list.innerHTML = publishedList.map(c => {
-    const isSubmitted = c.status === 'submitted' || Boolean(c.myReply);
+    const isReadOnly = _isStudentReadOnlyCircular(c);
+    const isSubmitted = !isReadOnly && (c.status === 'submitted' || Boolean(c.myReply));
     const badgeClass = isSubmitted
       ? 'bg-emerald-100 text-emerald-700'
-      : (c.requiresReply === false ? 'bg-slate-100 text-slate-600' : 'bg-red-100 text-red-600');
-    const badgeText = isSubmitted ? '제출 완료' : (c.requiresReply === false ? '안내' : '미제출');
-    const actionText = isSubmitted ? '열람 →' : (c.requiresReply === false ? '확인 →' : '회신·서명 →');
+      : ((isReadOnly || c.requiresReply === false) ? 'bg-slate-100 text-slate-600' : 'bg-red-100 text-red-600');
+    const badgeText = isSubmitted ? '제출 완료' : (isReadOnly ? '열람용 (회신 불필요)' : (c.requiresReply === false ? '안내' : '미제출'));
+    const actionText = (isSubmitted || isReadOnly) ? '열람 →' : (c.requiresReply === false ? '확인 →' : '회신·서명 →');
     const attachmentUrl = typeof normalizeCircularAttachmentUrl === 'function'
       ? normalizeCircularAttachmentUrl(c)
       : _safeHttpUrl(c.attachmentUrl);
@@ -1899,5 +1912,7 @@ if (typeof module !== 'undefined' && module.exports) {
     _getKstWorkingHoursStatus,
     _updateCounselingWorkHoursBanner,
     _normalizeNoticeSignatureMode,
+    _isStudentReadOnlyCircular,
+    renderCirculars,
   };
 }

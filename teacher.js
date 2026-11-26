@@ -2283,6 +2283,19 @@ async function saveRulesSettings(e) {
 }
 
 // --- TEACHER TAB 3: Circulars & Notices ---
+function _isReadOnlyCircular(c) {
+  if (!c) return false;
+  const reqReply = c.requiresReply !== false && c.requires_reply !== false && String(c.requires_reply ?? '') !== '0';
+  if (reqReply) return false;
+  const rawSig = String(c.signatureMode ?? c.signature_mode ?? '').trim().toLowerCase();
+  const sigMode = (rawSig === 'none' || rawSig === '0' || rawSig === 'no' || rawSig === 'false' || !rawSig) ? 'none' : rawSig;
+  if (sigMode !== 'none') return false;
+  const fields = typeof _parseNoticeReplySchema === 'function'
+    ? _parseNoticeReplySchema(c.replySchemaJson || c.reply_schema_json, c.replyFields || c.reply_fields)
+    : [];
+  return fields.length === 0;
+}
+
 function renderTeacherCirculars() {
   const pendingSection = document.getElementById('teacherPendingCircularsSection');
   const pendingContainer = document.getElementById('teacherPendingCircularsContainer');
@@ -2336,29 +2349,38 @@ function renderTeacherCirculars() {
     return;
   }
   container.innerHTML = published.map(c => {
+    const isReadOnly = _isReadOnlyCircular(c);
     const pct = c.totalCount > 0 ? Math.round((c.submittedCount / c.totalCount) * 100) : 0;
     const unsubmittedCount = Math.max(0, c.totalCount - c.submittedCount);
     const esc = typeof _escapeNoticeHtml === 'function' ? _escapeNoticeHtml : (s => String(s ?? ''));
     const attachmentUrl = typeof normalizeCircularAttachmentUrl === 'function'
       ? normalizeCircularAttachmentUrl(c)
       : '';
-    return `
-      <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-2.5">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-1.5 flex-wrap">
-            <span class="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">${esc(c.deadline)}</span>
-            ${attachmentUrl ? `<a href="${esc(attachmentUrl)}" onclick="return (typeof openCircularAttachment === 'function' ? openCircularAttachment(event, this.href) : (event.stopPropagation(), true))" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-0.5 text-[10px] font-bold text-indigo-600 hover:underline bg-indigo-50 px-2 py-0.5 rounded-lg">📄 원본 PDF ↗</a>` : ''}
-          </div>
-          <span class="text-xs font-bold text-slate-800">${c.submittedCount}/${c.totalCount}명 제출 (${pct}%)</span>
-        </div>
-        <h4 class="text-xs font-bold text-slate-800">${esc(c.title)}</h4>
+    const statusHeaderHtml = isReadOnly
+      ? `<span class="text-[10px] font-bold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-full">열람용 (회신 불필요)</span>`
+      : `<span class="text-xs font-bold text-slate-800">${c.submittedCount}/${c.totalCount}명 제출 (${pct}%)</span>`;
+    const bodyFooterHtml = isReadOnly
+      ? `<p class="text-[11px] text-slate-500">회신·서명이 필요 없는 안내용 가정통신문입니다.</p>`
+      : `
         <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
           <div class="bg-indigo-600 h-full rounded-full transition-all" style="width: ${pct}%"></div>
         </div>
         <div class="flex gap-2 pt-1">
           <button onclick="openUnsubmittedModal('${_escapeTeacherJsAttr(c.id)}')" class="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-xl">미제출자 명단 (${unsubmittedCount}명)</button>
-          <button onclick="showToast('제출된 서명 이미지가 원본 PDF 좌표에 합성되어 인쇄 대기열로 전송되었습니다.', '🖨️')" class="flex-1 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded-xl">서명본 PDF 일괄 출력</button>
+          <button onclick="openSubmittedRepliesModal('${_escapeTeacherJsAttr(c.id)}')" class="flex-1 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded-xl">제출·서명본 확인 (${c.submittedCount}명)</button>
         </div>
+      `;
+    return `
+      <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-2.5">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span class="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">${esc(c.deadline)}</span>
+            ${attachmentUrl ? `<a href="${esc(attachmentUrl)}" onclick="return (typeof openCircularAttachment === 'function' ? openCircularAttachment(event, this.href) : (event.stopPropagation(), true))" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-0.5 text-[10px] font-bold text-indigo-600 hover:underline bg-indigo-50 px-2 py-0.5 rounded-lg">📄 원본 PDF ↗</a>` : ''}
+          </div>
+          ${statusHeaderHtml}
+        </div>
+        <h4 class="text-xs font-bold text-slate-800">${esc(c.title)}</h4>
+        ${bodyFooterHtml}
       </div>
     `;
   }).join('');
@@ -2889,6 +2911,160 @@ function openUnsubmittedModal(circularId) {
 
 function closeUnsubmittedModal() {
   closeModal('unsubmittedModal');
+}
+
+function _safeTeacherReplyUrl(rawUrl) {
+  const s = String(rawUrl || '').trim();
+  if (!s) return '';
+  if (/^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(s)) return s;
+  if (typeof _safeHttpUrl === 'function') return _safeHttpUrl(s);
+  return /^https?:\/\//i.test(s) ? s : '';
+}
+
+function _getSubmittedCircularReplies(circularId) {
+  const c = (mockData.circulars || []).find(x => x.id === circularId);
+  if (!c) return { circular: null, replies: [] };
+  const studentById = new Map();
+  (mockData.students || []).forEach(s => {
+    if (s && s.student_id !== undefined) studentById.set(String(s.student_id), s);
+  });
+
+  if (Array.isArray(c.replies) && c.replies.length > 0) {
+    const mapped = c.replies.map(r => {
+      const sid = String(r.student_id || '');
+      const stu = studentById.get(sid);
+      return {
+        student_id: sid,
+        student_no: stu ? (stu.student_no ?? '') : '',
+        student_name: String(r.student_name || (stu && stu.name) || sid || '학생'),
+        parent_name: String(r.parent_name || (stu && stu.parent_name) || ''),
+        consent: String(r.consent || r.reply_choice || ''),
+        reply_data_json: r.reply_data_json || '',
+        reply_file_drive_url: _safeTeacherReplyUrl(r.reply_file_drive_url),
+        signature_drive_url: _safeTeacherReplyUrl(r.signature_drive_url || r.signature_url || r.signature_data_url),
+        student_signature_drive_url: _safeTeacherReplyUrl(r.student_signature_drive_url || r.student_signature_url),
+        signed_at: String(r.signed_at || r.submitted_at || r.updated_at || '')
+      };
+    });
+    mapped.sort((a, b) => (Number(a.student_no) || 999) - (Number(b.student_no) || 999));
+    return { circular: c, replies: mapped };
+  }
+
+  const submittedIds = Array.isArray(c.submittedStudentIds) ? c.submittedStudentIds.map(String).filter(Boolean) : [];
+  const fallback = submittedIds.map(sid => {
+    const stu = studentById.get(sid);
+    return {
+      student_id: sid,
+      student_no: stu ? (stu.student_no ?? '') : '',
+      student_name: String((stu && stu.name) || sid),
+      parent_name: String((stu && stu.parent_name) || ''),
+      consent: '제출 완료',
+      reply_data_json: '',
+      reply_file_drive_url: '',
+      signature_drive_url: '',
+      student_signature_drive_url: '',
+      signed_at: ''
+    };
+  });
+  return { circular: c, replies: fallback };
+}
+
+function openSubmittedRepliesModal(circularId) {
+  const { circular, replies } = _getSubmittedCircularReplies(circularId);
+  if (!circular || replies.length === 0) {
+    if (typeof showToast === 'function') {
+      showToast('아직 제출된 회신이 없습니다.', 'ℹ️');
+    }
+    return;
+  }
+
+  state.currentSubmittedCircularId = circularId;
+  const titleEl = document.getElementById('submittedRepliesModalTitle');
+  const subtitleEl = document.getElementById('submittedRepliesModalSubtitle');
+  const listEl = document.getElementById('submittedRepliesModalList');
+
+  if (titleEl) titleEl.innerHTML = `<span>📄 제출·서명본 확인 (${replies.length}명)</span>`;
+  if (subtitleEl) subtitleEl.textContent = circular.title || '';
+
+  if (listEl) {
+    listEl.innerHTML = replies.map(r => {
+      const noBadge = r.student_no ? `${_escTeacherHtml(r.student_no)}번 ` : '';
+      const parentSuffix = r.parent_name ? ` · 보호자 ${_escTeacherHtml(r.parent_name)}` : '';
+      const timeLabel = r.signed_at ? _escTeacherHtml(r.signed_at) : '제출 완료';
+
+      const links = [];
+      if (r.reply_file_drive_url) {
+        links.push(`<a href="${_escTeacherHtml(r.reply_file_drive_url)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[11px] font-bold">📄 회신 PDF ↗</a>`);
+      }
+      if (r.signature_drive_url) {
+        links.push(`<a href="${_escTeacherHtml(r.signature_drive_url)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-bold">✍️ 학부모 서명 ↗</a>`);
+      }
+      if (r.student_signature_drive_url) {
+        links.push(`<a href="${_escTeacherHtml(r.student_signature_drive_url)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-lg text-[11px] font-bold">✍️ 학생 서명 ↗</a>`);
+      }
+
+      const linksHtml = links.length > 0
+        ? `<div class="flex flex-wrap gap-1.5 pt-1">${links.join('')}</div>`
+        : `<p class="text-[10px] text-slate-400 pt-0.5">첨부된 서명/PDF 파일 없음 (텍스트·선택 회신)</p>`;
+
+      return `
+        <div class="p-3 bg-slate-50 border border-slate-200/80 rounded-xl space-y-1">
+          <div class="flex items-center justify-between gap-2">
+            <p class="font-bold text-slate-800 text-xs">${noBadge}${_escTeacherHtml(r.student_name)}${parentSuffix}</p>
+            <span class="text-[10px] text-slate-400 shrink-0">${timeLabel}</span>
+          </div>
+          ${r.consent ? `<p class="text-[11px] text-slate-600">회신: <span class="font-semibold text-slate-800">${_escTeacherHtml(r.consent)}</span></p>` : ''}
+          ${linksHtml}
+        </div>
+      `;
+    }).join('');
+  }
+
+  openModal('submittedRepliesModal');
+}
+
+function closeSubmittedRepliesModal() {
+  closeModal('submittedRepliesModal');
+}
+
+function printSubmittedReplies() {
+  const cId = state.currentSubmittedCircularId;
+  const { circular, replies } = _getSubmittedCircularReplies(cId);
+  if (!circular || replies.length === 0) {
+    if (typeof showToast === 'function') showToast('아직 제출된 회신이 없습니다.', 'ℹ️');
+    return;
+  }
+
+  const win = typeof window !== 'undefined' ? window.open('', '_blank', 'width=840,height=720') : null;
+  if (!win) {
+    if (typeof showToast === 'function') {
+      showToast('팝업이 차단되어 인쇄 창을 열 수 없습니다. 팝업 차단을 해제해 주세요.', '⚠️');
+    }
+    return;
+  }
+
+  const rowsHtml = replies.map((r, idx) => {
+    const fileLinks = [];
+    if (r.reply_file_drive_url) fileLinks.push(`<a href="${_escTeacherHtml(r.reply_file_drive_url)}" target="_blank" rel="noopener noreferrer">회신 PDF</a>`);
+    if (r.signature_drive_url) fileLinks.push(`<a href="${_escTeacherHtml(r.signature_drive_url)}" target="_blank" rel="noopener noreferrer">학부모 서명</a>`);
+    if (r.student_signature_drive_url) fileLinks.push(`<a href="${_escTeacherHtml(r.student_signature_drive_url)}" target="_blank" rel="noopener noreferrer">학생 서명</a>`);
+    return `
+      <tr>
+        <td>${idx + 1}</td>
+        <td>${_escTeacherHtml(r.student_no || '-')}</td>
+        <td>${_escTeacherHtml(r.student_name)}</td>
+        <td>${_escTeacherHtml(r.parent_name || '-')}</td>
+        <td>${_escTeacherHtml(r.consent || '제출 완료')}</td>
+        <td>${_escTeacherHtml(r.signed_at || '-')}</td>
+        <td>${fileLinks.length > 0 ? fileLinks.join(' / ') : '-'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  win.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${_escTeacherHtml(circular.title)} - 제출 현황</title><style>body{font-family:sans-serif;padding:24px;color:#1e293b}h1{font-size:18px;margin-bottom:4px}p{font-size:12px;color:#64748b;margin-bottom:16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}th{background:#f8fafc}</style></head><body><h1>${_escTeacherHtml(circular.title)}</h1><p>제출 인원: ${replies.length}명</p><table><thead><tr><th>#</th><th>번호</th><th>학생명</th><th>보호자</th><th>회신 내용</th><th>제출 일시</th><th>첨부/서명 링크</th></tr></thead><tbody>${rowsHtml}</tbody></table></body></html>`);
+  win.document.close();
+  win.focus();
+  win.print();
 }
 
 async function sendBulkPromptToUnsubmitted(btnEl) {
@@ -3541,6 +3717,11 @@ if (typeof globalThis !== 'undefined') {
     renderTeacherDocs,
     renderTeacherChatRooms,
     renderTeacherChatMessages,
+    _isReadOnlyCircular,
+    renderTeacherCirculars,
+    _getSubmittedCircularReplies,
+    openSubmittedRepliesModal,
+    printSubmittedReplies,
   };
 }
 
@@ -4094,5 +4275,10 @@ if (typeof module !== 'undefined' && module.exports) {
     renderTeacherDocs,
     renderTeacherChatRooms,
     renderTeacherChatMessages,
+    _isReadOnlyCircular,
+    renderTeacherCirculars,
+    _getSubmittedCircularReplies,
+    openSubmittedRepliesModal,
+    printSubmittedReplies,
   };
 }

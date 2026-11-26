@@ -1906,6 +1906,20 @@ function hydrateMockDataFromBundle(bundle) {
         submittedCount: nReplies.length,
         totalCount: classTotal > 0 ? classTotal : nReplies.length,
         submittedStudentIds: nReplies.map(r => String(r.student_id || '')),
+        replies: nReplies.map(r => ({
+          student_id: String(r.student_id || ''),
+          student_name: String(r.student_name || ''),
+          parent_name: String(r.parent_name || ''),
+          consent: String(r.consent || r.reply_choice || ''),
+          reply_data_json: r.reply_data_json || '',
+          reply_data: r.reply_data || null,
+          answers_json: r.answers_json || '',
+          reply_file_drive_url: String(r.reply_file_drive_url || ''),
+          signature_drive_url: String(r.signature_drive_url || r.signature_url || r.signature_data_url || ''),
+          student_signature_drive_url: String(r.student_signature_drive_url || r.student_signature_url || ''),
+          signed_at: String(r.signed_at || ''),
+          submitted_at: String(r.submitted_at || r.updated_at || '')
+        })),
         content: n.content || '',
         meta: [`작성: ${n.author_name || '담임교사'}`],
         myReply: myReply ? {

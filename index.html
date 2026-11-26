@@ -1199,6 +1199,24 @@
 </div>
 </div>
 
+<!-- Modal: Submitted Replies & Signatures Viewer -->
+<div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="submittedRepliesModal">
+<div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3.5 max-h-[85%] flex flex-col">
+<div class="flex items-center justify-between pb-2 border-b border-slate-100">
+<div class="min-w-0">
+<h4 class="font-bold text-slate-800 text-sm flex items-center gap-1.5" id="submittedRepliesModalTitle">📄 제출·서명본 확인</h4>
+<p class="text-[11px] text-slate-400 truncate mt-0.5" id="submittedRepliesModalSubtitle"></p>
+</div>
+<button class="text-slate-400 hover:text-slate-600 p-1 shrink-0" onclick="closeSubmittedRepliesModal()" type="button"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg></button>
+</div>
+<div class="space-y-2 overflow-y-auto max-h-64 pr-1 custom-scrollbar text-xs" id="submittedRepliesModalList"></div>
+<div class="flex gap-2 pt-1">
+<button class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all" id="submittedRepliesPrintBtn" onclick="printSubmittedReplies()" type="button">🖨️ 제출 목록 인쇄</button>
+<button class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all" onclick="closeSubmittedRepliesModal()" type="button">닫기</button>
+</div>
+</div>
+</div>
+
 <!-- Modal: Teacher Profile Editor -->
 <div class="hidden absolute inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3" id="teacherProfileModal">
 <div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3.5 max-h-[90%] flex flex-col overflow-y-auto custom-scrollbar">

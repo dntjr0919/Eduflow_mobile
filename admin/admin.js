@@ -318,8 +318,20 @@ function buildLettersLedgerRows() {
   return { notice, notices, schema, rows };
 }
 
+function isReadOnlyNotice(notice, schema) {
+  if (!notice) return false;
+  const reqReply = notice.requires_reply !== false && notice.requires_reply !== 0 && String(notice.requires_reply ?? '') !== '0';
+  if (reqReply) return false;
+  const rawSig = String(notice.signature_mode ?? '').trim().toLowerCase();
+  const sigMode = (rawSig === 'none' || rawSig === '0' || rawSig === 'no' || rawSig === 'false' || !rawSig) ? 'none' : rawSig;
+  if (sigMode !== 'none') return false;
+  const cols = Array.isArray(schema) ? schema : parseNoticeSchema(notice);
+  return cols.length === 0;
+}
+
 function renderLettersTab() {
   const { notice, notices, schema, rows } = buildLettersLedgerRows();
+  const isReadOnly = isReadOnlyNotice(notice, schema);
   const sel = document.getElementById('letter-doc-selector');
   if (sel) {
     if (notices.length === 0) {
@@ -342,28 +354,31 @@ function renderLettersTab() {
   const metaEl = document.getElementById('letter-doc-meta');
   if (metaEl) {
     const dueText = notice && notice.due_date ? notice.due_date : '상시';
-    const sigMode = notice && notice.signature_mode === 'both' ? '학생+학부모 서명' : '단일 서명';
-    metaEl.innerHTML = `<i class="fa-regular fa-clock text-slate-400"></i><span>마감: <strong class="text-slate-800">${escapeHtml(dueText)}</strong></span><span class="text-slate-300">|</span><span class="text-indigo-600 font-semibold">${escapeHtml(sigMode)}</span>`;
+    const sigMode = isReadOnly
+      ? '열람용 (회신 불필요)'
+      : (notice && notice.signature_mode === 'both' ? '학생+학부모 서명' : '단일 서명');
+    const sigCls = isReadOnly ? 'text-slate-600 font-semibold bg-slate-100 px-2 py-0.5 rounded-full' : 'text-indigo-600 font-semibold';
+    metaEl.innerHTML = `<i class="fa-regular fa-clock text-slate-400"></i><span>마감: <strong class="text-slate-800">${escapeHtml(dueText)}</strong></span><span class="text-slate-300">|</span><span class="${sigCls}">${escapeHtml(sigMode)}</span>`;
   }
 
   const total = rows.length;
   const completedCount = rows.filter((r) => r.status === 'completed').length;
-  const pendingCount = total - completedCount;
+  const pendingCount = isReadOnly ? 0 : (total - completedCount);
   const ratePct = total > 0 ? ((completedCount / total) * 100).toFixed(1) : '0.0';
 
   document.getElementById('kpi-letters-total').textContent = String(total);
-  document.getElementById('kpi-letters-completed').textContent = String(completedCount);
-  document.getElementById('kpi-letters-rate').textContent = `${ratePct}% 회신`;
+  document.getElementById('kpi-letters-completed').textContent = isReadOnly ? '-' : String(completedCount);
+  document.getElementById('kpi-letters-rate').textContent = isReadOnly ? '열람용 (회신 불필요)' : `${ratePct}% 회신`;
   document.getElementById('kpi-letters-pending').textContent = String(pendingCount);
-  document.getElementById('kpi-letters-bar-ok').style.width = `${ratePct}%`;
-  document.getElementById('kpi-letters-bar-pending').style.width = `${total > 0 ? ((pendingCount / total) * 100).toFixed(1) : 0}%`;
+  document.getElementById('kpi-letters-bar-ok').style.width = isReadOnly ? '0%' : `${ratePct}%`;
+  document.getElementById('kpi-letters-bar-pending').style.width = (!isReadOnly && total > 0) ? `${((pendingCount / total) * 100).toFixed(1)}%` : '0%';
 
   const navBadge = document.getElementById('badge-letters-rate');
-  if (navBadge) navBadge.textContent = `${Math.round(Number(ratePct))}%`;
+  if (navBadge) navBadge.textContent = isReadOnly ? '열람용' : `${Math.round(Number(ratePct))}%`;
 
   document.getElementById('filter-all').textContent = `전체 (${total})`;
   document.getElementById('filter-completed').textContent = `제출완료 (${completedCount})`;
-  document.getElementById('filter-pending').textContent = `미제출 (${pendingCount})`;
+  document.getElementById('filter-pending').textContent = isReadOnly ? '회신 불필요 (0)' : `미제출 (${pendingCount})`;
 
   const term = adminState.letterSearch.trim().toLowerCase();
   const filteredRows = rows.filter((r) => {
@@ -406,7 +421,9 @@ function renderLettersTab() {
     const isOk = r.status === 'completed';
     const statusBadge = isOk
       ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800"><i class="fa-solid fa-check text-[9px] mr-1"></i>제출완료</span>'
-      : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800"><i class="fa-solid fa-clock text-[9px] mr-1"></i>미제출</span>';
+      : (isReadOnly
+        ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600">열람용 (회신 불필요)</span>'
+        : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800"><i class="fa-solid fa-clock text-[9px] mr-1"></i>미제출</span>');
 
     const schemaCells = schema.length > 0
       ? schema.map((col) => {
@@ -425,7 +442,7 @@ function renderLettersTab() {
       : '<span class="text-slate-300 text-[11px]">-</span>';
 
     return `
-      <tr class="hover:bg-indigo-50/30 transition-colors ${isOk ? '' : 'bg-rose-50/15'}">
+      <tr class="hover:bg-indigo-50/30 transition-colors ${(isOk || isReadOnly) ? '' : 'bg-rose-50/15'}">
         <td class="py-3 px-3.5 table-cell-sticky bg-white font-mono text-slate-500 text-center tabular-nums">${escapeHtml(r.student_id || r.student_no)}</td>
         <td class="py-3 px-4 table-cell-sticky bg-white left-20 font-bold text-slate-900 whitespace-nowrap">
           ${escapeHtml(r.student_name)}
@@ -2675,6 +2692,7 @@ function bindEvents() {
     btn.disabled = true;
     try {
       const rid = document.getElementById('nt-remote-id').value.trim();
+      const reqReply = Boolean(document.getElementById('nt-requires-reply').checked);
       const payload = {
         remote_id: rid || undefined,
         title: document.getElementById('nt-title').value.trim(),
@@ -2682,8 +2700,8 @@ function bindEvents() {
         due_date: document.getElementById('nt-due-date').value.trim(),
         content: document.getElementById('nt-content').value.trim(),
         attachment_url: document.getElementById('nt-attachment-url').value.trim(),
-        requires_reply: Boolean(document.getElementById('nt-requires-reply').checked),
-        signature_mode: document.getElementById('nt-signature-mode').value || 'single',
+        requires_reply: reqReply,
+        signature_mode: reqReply ? (document.getElementById('nt-signature-mode').value || 'single') : 'none',
         is_published: true,
       };
       const res = await callApi('upsert_notice', payload, true);
@@ -3103,6 +3121,8 @@ if (typeof module !== 'undefined' && module.exports) {
     TAB_LIST,
     switchTab,
     renderSchedulesTab,
+    isReadOnlyNotice,
+    renderLettersTab,
     adminState,
   };
 }
