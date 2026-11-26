@@ -325,7 +325,7 @@ test('_handleGetMobileBundle force_refresh=1 bypasses _staticCache and admin wri
   }
   getCol('계정_교사').set('teacher_1', { teacher_id: 'teacher_1', name: '김교사', grade: 1, class_no: 4, school_code: '8140246', status: 'active' });
   getCol('계정_학생').set('8140246_10401', { remote_id: '8140246_10401', student_id: '10401', name: '기존학생', grade: 1, class_no: 4, school_code: '8140246' });
-  getCol('Schedules').set('s1', { remote_id: 's1', title: '기존일정', start_date: '2026-11-25', category: '학사일정', school_code: '8140246' });
+  getCol('Schedules').set('s1', { remote_id: 's1', title: '기존일정', start_date: '2026-11-25', category: '학사일정', school_code: '8140246', teacher_id: 'teacher_1' });
 
   const makeSnap = (id, data) => ({ id, exists: data !== undefined, data: () => (data ? { ...data } : undefined) });
   const makeQuery = (colName, filters = [], maxLimit = Infinity) => ({

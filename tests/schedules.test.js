@@ -25,7 +25,7 @@ require.cache[googleDrivePath] = {
 };
 
 const { _testHelpers } = require('../api/firestore.js');
-const { _handleGetMobileBundle, _isPublicAcademicSchedule } = _testHelpers;
+const { _handleGetMobileBundle, _isPublicAcademicSchedule, _handleDesktopApiAction } = _testHelpers;
 const { computeScheduleDday, filterSchedulesForRole, getUpcomingSchedules, hydrateMockDataFromBundle, mergeTimetableForDay, mockData } = require('../app.js');
 
 function createMockDb(initialCollections = {}) {
@@ -100,6 +100,10 @@ function createMockDb(initialCollections = {}) {
                 colMap.set(docId, { ...data });
               }
             },
+            async delete() {
+              const colMap = getColMap(colName);
+              colMap.delete(docId);
+            },
           };
         },
         where(field, op, val) {
@@ -131,13 +135,13 @@ test('_handleGetMobileBundle allows only 학사일정/수행평가 for student/p
       teacher_1: { teacher_id: 'teacher_1', name: '김교사', grade: 1, class_no: 4, school_code: '8140246' },
     },
     'Schedules': {
-      s1: { remote_id: 's1', title: '2학기 기말고사', start_date: '2026-12-01', end_date: '2026-12-04', category: '학사일정', school_code: '8140246' },
-      s2: { remote_id: 's2', title: '국어 수행평가', start_date: '2026-11-23', end_date: '2026-11-23', category: '수행평가', school_code: '8140246' },
-      s3_work: { remote_id: 's3_work', title: '나이스 마감 처리', start_date: '2026-11-21', category: '업무', school_code: '8140246' },
-      s4_priv: { remote_id: 's4_priv', title: '교사 연수(개인)', start_date: '2026-11-22', category: '개인', school_code: '8140246' },
-      s5_personal: { remote_id: 's5_personal', title: '개인 일정', start_date: '2026-11-24', category: 'personal', school_code: '8140246' },
-      s6_secret: { remote_id: 's6_secret', title: '학생상담 준비', start_date: '2026-11-25', category: '비공개', school_code: '8140246' },
-      s7_teacher: { remote_id: 's7_teacher', title: '교직원 회의', start_date: '2026-11-26', category: '교사', school_code: '8140246' },
+      s1: { remote_id: 's1', title: '2학기 기말고사', start_date: '2026-12-01', end_date: '2026-12-04', category: '학사일정', school_code: '8140246', teacher_id: 'teacher_1' },
+      s2: { remote_id: 's2', title: '국어 수행평가', start_date: '2026-11-23', end_date: '2026-11-23', category: '수행평가', school_code: '8140246', teacher_id: 'teacher_1' },
+      s3_work: { remote_id: 's3_work', title: '나이스 마감 처리', start_date: '2026-11-21', category: '업무', school_code: '8140246', teacher_id: 'teacher_1' },
+      s4_priv: { remote_id: 's4_priv', title: '교사 연수(개인)', start_date: '2026-11-22', category: '개인', school_code: '8140246', teacher_id: 'teacher_1' },
+      s5_personal: { remote_id: 's5_personal', title: '개인 일정', start_date: '2026-11-24', category: 'personal', school_code: '8140246', teacher_id: 'teacher_1' },
+      s6_secret: { remote_id: 's6_secret', title: '학생상담 준비', start_date: '2026-11-25', category: '비공개', school_code: '8140246', teacher_id: 'teacher_1' },
+      s7_teacher: { remote_id: 's7_teacher', title: '교직원 회의', start_date: '2026-11-26', category: '교사', school_code: '8140246', teacher_id: 'teacher_1' },
     },
   });
 
@@ -590,4 +594,183 @@ test('admin/index.html and admin/admin.js switchTab("tab-schedules") reveals tab
   renderSchedulesTab();
   assert.equal(elements['badge-schedules-count'].textContent, '0');
   assert.match(elements['schedules-tbody'].innerHTML, /등록된 학사일정이 없습니다\./);
+});
+
+test('Schedules are strictly isolated by teacher_id within the same school_code across bundle, overview, upsert, and delete', async () => {
+  const db = createMockDb({
+    '계정_교사': {
+      teacher_a: { teacher_id: 'teacher_a', name: '김교사', grade: 1, class_no: 4, school_code: '8140246', school_name: '테스트고' },
+      teacher_b: { teacher_id: 'teacher_b', name: '이교사', grade: 1, class_no: 5, school_code: '8140246', school_name: '테스트고' },
+    },
+    '계정_학생': {
+      '10501': { student_id: '10501', name: '박학생', grade: 1, class_no: 5, school_code: '8140246', school_name: '테스트고', status: 'active' },
+    },
+    'Schedules': {
+      legacy_no_tid: {
+        remote_id: 'legacy_no_tid',
+        title: '교사ID 없는 구일정',
+        start_date: '2026-11-20',
+        category: '학사일정',
+        school_code: '8140246',
+      },
+    },
+  });
+
+  const authA = {
+    teacherId: 'teacher_a',
+    schoolCode: '8140246',
+    schoolName: '테스트고',
+    gradeNum: 1,
+    classNum: 4,
+    isAdmin: true,
+    teacherDoc: { teacher_id: 'teacher_a', name: '김교사', grade: 1, class_no: 4, school_code: '8140246' },
+  };
+  const authB = {
+    teacherId: 'teacher_b',
+    schoolCode: '8140246',
+    schoolName: '테스트고',
+    gradeNum: 1,
+    classNum: 5,
+    isAdmin: true,
+    teacherDoc: { teacher_id: 'teacher_b', name: '이교사', grade: 1, class_no: 5, school_code: '8140246' },
+  };
+
+  // Teacher A creates public + private schedules
+  const resA1 = await _handleDesktopApiAction(db, 'upsert_schedule', {
+    remote_id: 'sched_a_pub',
+    title: 'A반 학사일정',
+    start_date: '2026-11-21',
+    category: '학사일정',
+    is_private: false,
+  }, authA);
+  assert.equal(resA1.status, 200);
+  assert.equal(resA1.json.item.teacher_id, 'teacher_a');
+
+  const resA2 = await _handleDesktopApiAction(db, 'upsert_schedule', {
+    remote_id: 'sched_a_priv',
+    title: 'A교사 개인업무',
+    start_date: '2026-11-22',
+    category: '업무',
+    is_private: true,
+  }, authA);
+  assert.equal(resA2.status, 200);
+  assert.equal(resA2.json.item.teacher_id, 'teacher_a');
+
+  // Teacher B creates public + private schedules
+  const resB1 = await _handleDesktopApiAction(db, 'upsert_schedule', {
+    remote_id: 'sched_b_pub',
+    title: 'B반 수행평가',
+    start_date: '2026-11-23',
+    category: '수행평가',
+    is_private: false,
+  }, authB);
+  assert.equal(resB1.status, 200);
+  assert.equal(resB1.json.item.teacher_id, 'teacher_b');
+
+  const resB2 = await _handleDesktopApiAction(db, 'upsert_schedule', {
+    remote_id: 'sched_b_priv',
+    title: 'B교사 개인일정',
+    start_date: '2026-11-24',
+    category: '개인',
+    is_private: true,
+  }, authB);
+  assert.equal(resB2.status, 200);
+  assert.equal(resB2.json.item.teacher_id, 'teacher_b');
+
+  // 1) _handleGetMobileBundle: Teacher A sees only Teacher A's schedules; Teacher B sees only Teacher B's schedules
+  const bundleA = await _handleGetMobileBundle(db, {
+    role: 'teacher',
+    user_id: 'teacher_a',
+    grade: 1,
+    class_no: 4,
+    school_code: '8140246',
+    force: '1',
+  });
+  assert.equal(bundleA.status, 200);
+  assert.deepEqual(bundleA.json.schedules.map((s) => s.remote_id), ['sched_a_pub', 'sched_a_priv']);
+
+  const bundleB = await _handleGetMobileBundle(db, {
+    role: 'teacher',
+    user_id: 'teacher_b',
+    grade: 1,
+    class_no: 5,
+    school_code: '8140246',
+    force: '1',
+  });
+  assert.equal(bundleB.status, 200);
+  assert.deepEqual(bundleB.json.schedules.map((s) => s.remote_id), ['sched_b_pub', 'sched_b_priv']);
+
+  // 2) _handleGetMobileBundle: Student/Parent in Teacher B's class sees only Teacher B's public schedules
+  const stuB = await _handleGetMobileBundle(db, {
+    role: 'student',
+    user_id: '10501',
+    student_id: '10501',
+    grade: 1,
+    class_no: 5,
+    school_code: '8140246',
+    force: '1',
+  });
+  assert.equal(stuB.status, 200);
+  assert.deepEqual(stuB.json.schedules.map((s) => s.remote_id), ['sched_b_pub']);
+
+  const parB = await _handleGetMobileBundle(db, {
+    role: 'parent',
+    user_id: 'p_10501',
+    student_id: '10501',
+    grade: 1,
+    class_no: 5,
+    school_code: '8140246',
+    force: '1',
+  });
+  assert.equal(parB.status, 200);
+  assert.deepEqual(parB.json.schedules.map((s) => s.remote_id), ['sched_b_pub']);
+
+  // 3) admin_get_class_overview: Teacher A & Teacher B see only their own schedules
+  const overviewA = await _handleDesktopApiAction(db, 'admin_get_class_overview', {}, authA);
+  assert.equal(overviewA.status, 200);
+  assert.deepEqual(overviewA.json.schedules.map((s) => s.remote_id), ['sched_a_pub', 'sched_a_priv']);
+
+  const overviewB = await _handleDesktopApiAction(db, 'admin_get_class_overview', {}, authB);
+  assert.equal(overviewB.status, 200);
+  assert.deepEqual(overviewB.json.schedules.map((s) => s.remote_id), ['sched_b_pub', 'sched_b_priv']);
+
+  // 4) Cross-teacher upsert/delete & teacherless legacy doc mutation are blocked (403)
+  const crossUpsertByB = await _handleDesktopApiAction(db, 'upsert_schedule', {
+    remote_id: 'sched_a_pub',
+    title: '변조 시도',
+    start_date: '2026-11-21',
+  }, authB);
+  assert.equal(crossUpsertByB.status, 403);
+
+  const crossDeleteByB = await _handleDesktopApiAction(db, 'delete_schedule', {
+    remote_id: 'sched_a_pub',
+  }, authB);
+  assert.equal(crossDeleteByB.status, 403);
+
+  const legacyUpsertByB = await _handleDesktopApiAction(db, 'upsert_schedule', {
+    remote_id: 'legacy_no_tid',
+    title: '구일정 탈취',
+    start_date: '2026-11-20',
+  }, authB);
+  assert.equal(legacyUpsertByB.status, 403);
+
+  const legacyDeleteByB = await _handleDesktopApiAction(db, 'delete_schedule', {
+    remote_id: 'legacy_no_tid',
+  }, authB);
+  assert.equal(legacyDeleteByB.status, 403);
+
+  // Own teacher can update & delete
+  const ownUpsertA = await _handleDesktopApiAction(db, 'upsert_schedule', {
+    remote_id: 'sched_a_pub',
+    title: 'A반 학사일정(수정)',
+    start_date: '2026-11-21',
+    category: '학사일정',
+  }, authA);
+  assert.equal(ownUpsertA.status, 200);
+  assert.equal(ownUpsertA.json.item.teacher_id, 'teacher_a');
+
+  const ownDeleteA = await _handleDesktopApiAction(db, 'delete_schedule', {
+    remote_id: 'sched_a_pub',
+  }, authA);
+  assert.equal(ownDeleteA.status, 200);
 });
