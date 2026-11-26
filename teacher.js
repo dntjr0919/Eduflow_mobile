@@ -1214,7 +1214,9 @@ function _saveFaceMinMatchPct(pct) {
   try {
     if (typeof localStorage === 'undefined') return;
     localStorage.setItem(FACE_MIN_MATCH_STORAGE_KEY, String(_normalizeFaceMinMatchPct(pct)));
-  } catch (_) {}
+  } catch (err) {
+    console.warn('[EduFlow Teacher] faceMinMatch 저장 실패:', err && err.message ? err.message : err);
+  }
 }
 
 function _syncAttFaceMinMatchSelect() {
@@ -3328,7 +3330,9 @@ function _saveLessonRosterMapping(mapKey, rosterKey) {
     const map = _loadLessonRosterMap();
     map[mapKey] = rosterKey;
     localStorage.setItem(LESSON_ROSTER_MAP_KEY, JSON.stringify(map));
-  } catch (_) {}
+  } catch (err) {
+    console.warn('[EduFlow Teacher] lessonRosterMap 저장 실패:', err && err.message ? err.message : err);
+  }
 }
 
 function _normLessonToken(val) {

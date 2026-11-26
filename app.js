@@ -81,18 +81,28 @@ function _setChatTabRealtimeActive(isActive) {
 
   const cu = mockData.currentUser || {};
   const role = String(cu.role || state.activeRole || 'student').toLowerCase();
+  const schoolCode = String(cu.neisSchoolCode || cu.schoolCode || '').trim();
   const gradeNum = cu.grade ? Number(cu.grade) : null;
   const classNum = cu.classNo ? Number(cu.classNo) : null;
 
   // 1:1_상담채팅 실시간 리스너 (채팅 탭 진입 시에만 활성화, 본인 방 또는 담당 학급으로 제한)
   try {
     let chatQuery = fs.collection('1:1_상담채팅');
-    if (role !== 'teacher' && cu.studentId) {
-      chatQuery = chatQuery.where('room_id', '==', `ROOM-${cu.studentId}`).limit(50);
-    } else if (gradeNum && classNum) {
-      chatQuery = chatQuery.where('grade', '==', gradeNum).where('class_no', '==', classNum).limit(50);
-    } else {
+    if (role !== 'teacher') {
+      if (!cu.studentId) return;
+      chatQuery = chatQuery.where('room_id', '==', `ROOM-${cu.studentId}`);
+      if (schoolCode) chatQuery = chatQuery.where('school_code', '==', schoolCode);
+      if (typeof chatQuery.orderBy === 'function') chatQuery = chatQuery.orderBy('created_at', 'desc');
       chatQuery = chatQuery.limit(50);
+    } else if (gradeNum && classNum && schoolCode) {
+      chatQuery = chatQuery
+        .where('school_code', '==', schoolCode)
+        .where('grade', '==', gradeNum)
+        .where('class_no', '==', classNum);
+      if (typeof chatQuery.orderBy === 'function') chatQuery = chatQuery.orderBy('created_at', 'desc');
+      chatQuery = chatQuery.limit(50);
+    } else {
+      return;
     }
     _activeChatListenerKey = scopeKey;
     _unsubChatListener = chatQuery.onSnapshot((snap) => {
@@ -125,39 +135,133 @@ function _startRealtimeListeners() {
   _stopNotiListener();
 
   const cu = mockData.currentUser || {};
-  const schoolCode = String(cu.neisSchoolCode || '').trim();
+  const role = String(cu.role || state.activeRole || 'student').toLowerCase();
+  const userId = String(cu.userId || '').trim();
+  const studentId = String(cu.studentId || '').trim();
+  const schoolCode = String(cu.neisSchoolCode || cu.schoolCode || '').trim();
   const gradeNum = cu.grade ? Number(cu.grade) : null;
+  const classNum = cu.classNo ? Number(cu.classNo) : null;
+  if (!schoolCode) return;
 
-  // Notifications 실시간 리스너 (학교/학년 스코프 제한, 단일 필드 쿼리)
+  // Notifications 실시간 리스너 (firestore.rules matchesNotificationTarget() 조건과 일치)
   try {
-    let notiQuery = fs.collection('Notifications');
-    if (schoolCode) {
-      notiQuery = notiQuery.where('school_code', '==', schoolCode).limit(10);
-    } else if (gradeNum) {
-      notiQuery = notiQuery.where('grade', '==', gradeNum).limit(10);
+    const withOrderLimit = (q, n) => {
+      const ordered = typeof q.orderBy === 'function' ? q.orderBy('created_at', 'desc') : q;
+      return ordered.limit(n);
+    };
+    const queries = [];
+    if (role === 'teacher') {
+      if (gradeNum !== null && classNum !== null) {
+        queries.push(
+          withOrderLimit(
+            fs.collection('Notifications')
+              .where('school_code', '==', schoolCode)
+              .where('target_role', 'in', ['teacher', 'all'])
+              .where('grade', '==', gradeNum)
+              .where('class_no', '==', classNum),
+            10
+          )
+        );
+      } else if (userId) {
+        queries.push(
+          withOrderLimit(
+            fs.collection('Notifications')
+              .where('school_code', '==', schoolCode)
+              .where('target_role', 'in', ['teacher', 'all'])
+              .where('teacher_id', '==', userId),
+            10
+          )
+        );
+      }
     } else {
-      notiQuery = notiQuery.where('is_read', '==', false).limit(10);
+      const allowedRoles = ['all', role];
+      if (studentId) {
+        queries.push(
+          withOrderLimit(
+            fs.collection('Notifications')
+              .where('school_code', '==', schoolCode)
+              .where('student_id', '==', studentId)
+              .where('target_role', 'in', allowedRoles),
+            10
+          )
+        );
+      }
+      if (gradeNum !== null && classNum !== null) {
+        queries.push(
+          withOrderLimit(
+            fs.collection('Notifications')
+              .where('school_code', '==', schoolCode)
+              .where('student_id', '==', '')
+              .where('grade', '==', gradeNum)
+              .where('class_no', '==', classNum)
+              .where('target_role', 'in', allowedRoles),
+            10
+          )
+        );
+      }
     }
-    _activeNotiListenerKey = scopeKey;
-    _unsubNotiListener = notiQuery.onSnapshot((snap) => {
-      const notiRows = [];
-      snap.forEach((doc) => {
-        const d = doc.data() || {};
-        if (d.is_read === true) return;
-        notiRows.push({ remote_id: doc.id, ...d });
+    if (queries.length === 0) return;
+
+    const bucketMap = new Map();
+    const emitMergedNotifications = () => {
+      const mergedMap = new Map();
+      bucketMap.forEach((rows) => {
+        rows.forEach((r) => {
+          if (r && r.remote_id) mergedMap.set(r.remote_id, r);
+        });
       });
+      const notiRows = Array.from(mergedMap.values())
+        .sort((a, b) => String(b.created_at || b.updated_at || '').localeCompare(String(a.created_at || a.updated_at || '')))
+        .slice(0, 20);
       hydrateMockDataFromBundle({ ok: true, notifications: notiRows });
       if (typeof renderNotifications === 'function') renderNotifications();
-    }, (err) => {
-      console.warn('[Firestore onSnapshot Notifications]', err && err.message ? err.message : err);
-    });
-  } catch (_) {
+    };
+
+    _activeNotiListenerKey = scopeKey;
+    const unsubs = queries.map((q, idx) =>
+      q.onSnapshot((snap) => {
+        const rows = [];
+        snap.forEach((doc) => {
+          const d = { remote_id: doc.id, ...(doc.data() || {}) };
+          if (_isNotificationRead(d)) return;
+          rows.push(d);
+        });
+        bucketMap.set(idx, rows);
+        emitMergedNotifications();
+      }, (err) => {
+        console.warn('[Firestore onSnapshot Notifications]', err && err.message ? err.message : err);
+      })
+    );
+    _unsubNotiListener = () => {
+      unsubs.forEach((fn) => {
+        try { if (typeof fn === 'function') fn(); } catch (e) { console.warn('[Noti unsub]', e && e.message ? e.message : e); }
+      });
+    };
+  } catch (err) {
+    console.warn('[Firestore Notifications listener init]', err && err.message ? err.message : err);
     _activeNotiListenerKey = '';
   }
 }
 
 function _isTruthyField(val) {
   return val === true || val === 1 || String(val || '').trim().toLowerCase() === 'true' || String(val || '').trim() === '1';
+}
+
+function _isNotificationRead(n) {
+  if (!n || typeof n !== 'object') return false;
+  if (_isTruthyField(n.is_read)) return true;
+  const targetSid = String(n.target_student_id || n.student_id || '').trim();
+  if (!targetSid && Array.isArray(n.read_by)) {
+    const cu = mockData.currentUser || {};
+    const readerIds = [cu.userId, cu.studentId]
+      .map((x) => String(x || '').trim())
+      .filter(Boolean);
+    if (readerIds.length > 0) {
+      const readBy = n.read_by.map((x) => String(x).trim());
+      if (readerIds.some((id) => readBy.includes(id))) return true;
+    }
+  }
+  return false;
 }
 
 const DAILY_STATIC_CACHE_KEY = 'eduflow_daily_static_cache_v1';
@@ -703,7 +807,7 @@ function renderNotificationsModal() {
     return;
   }
   list.innerHTML = items.map(n => {
-    const isUnread = String(n.is_read) !== '1';
+    const isUnread = !_isNotificationRead(n);
     const ch = (n.channel || '').toLowerCase();
     let boxCls = 'bg-slate-50 border-slate-200/80';
     let badgeCls = 'text-indigo-600';
@@ -1933,9 +2037,8 @@ function hydrateMockDataFromBundle(bundle) {
       ? (mockData.urgentDocuments || []).some(d => String(d.studentId) === cuSid && d.status === 'pending')
       : false;
     mockData.notifications = [...bundle.notifications]
-      .filter(n => !(state.activeRole !== 'teacher' && n.channel === 'doc_reminder' && !hasPendingStudentDoc))
-      .reverse();
-    const hasUnread = mockData.notifications.some(n => String(n.is_read) !== '1');
+      .filter(n => !(state.activeRole !== 'teacher' && n.channel === 'doc_reminder' && !hasPendingStudentDoc));
+    const hasUnread = mockData.notifications.some(n => !_isNotificationRead(n));
     const dot = document.getElementById('unreadDot');
     if (dot) dot.classList.toggle('hidden', !hasUnread);
     renderNotificationsModal();
@@ -3126,6 +3229,9 @@ async function subscribeToWebPush(silent = false) {
         data: {
           user_id: cu.userId || cu.studentId || 'anonymous',
           role: state.activeRole,
+          school_code: cu.neisSchoolCode || cu.schoolCode || '',
+          grade: cu.grade ? Number(cu.grade) : null,
+          class_no: cu.classNo ? Number(cu.classNo) : null,
           endpoint: subJson.endpoint || '',
           p256dh: (subJson.keys && subJson.keys.p256dh) || '',
           auth: (subJson.keys && subJson.keys.auth) || '',

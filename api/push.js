@@ -15,7 +15,8 @@ module.exports = async function handler(req, res) {
 
   const vapidPublicKey = (process.env.VAPID_PUBLIC_KEY || '').trim();
   const vapidPrivateKey = (process.env.VAPID_PRIVATE_KEY || '').trim();
-  const vapidSubject = (process.env.VAPID_SUBJECT || 'mailto:admin@eduflow.local').trim();
+  const prodHost = String(process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || '').trim().replace(/^https?:\/\//, '');
+  const vapidSubject = (process.env.VAPID_SUBJECT || (prodHost ? `mailto:admin@${prodHost}` : 'mailto:noreply@eduflow.kr')).trim();
 
   if (req.method === 'GET') {
     return res.status(200).json({
@@ -95,7 +96,39 @@ module.exports = async function handler(req, res) {
 
     const snap = await queryRef.get();
     let subs = [];
-    snap.forEach((doc) => subs.push(doc.data() || {}));
+    snap.forEach((doc) => subs.push({ _docId: doc.id, ...(doc.data() || {}) }));
+
+    if (!targetEndpoint && !targetUserId) {
+      const targetSchoolCode = String(claims.sc || body.school_code || body.neis_school_code || '').trim();
+      const targetGrade = (body.grade !== undefined && body.grade !== null && body.grade !== '' && Number.isFinite(Number(body.grade)))
+        ? Math.trunc(Number(body.grade))
+        : null;
+      const targetClassNo = (body.class_no !== undefined && body.class_no !== null && body.class_no !== '' && Number.isFinite(Number(body.class_no)))
+        ? Math.trunc(Number(body.class_no))
+        : null;
+
+      if (targetSchoolCode) {
+        subs = subs.filter((s) => String(s.school_code || '').trim() === targetSchoolCode);
+      }
+      if (targetGrade !== null) {
+        subs = subs.filter((s) => (
+          s.grade !== undefined &&
+          s.grade !== null &&
+          s.grade !== '' &&
+          Number.isFinite(Number(s.grade)) &&
+          Math.trunc(Number(s.grade)) === targetGrade
+        ));
+      }
+      if (targetClassNo !== null) {
+        subs = subs.filter((s) => (
+          s.class_no !== undefined &&
+          s.class_no !== null &&
+          s.class_no !== '' &&
+          Number.isFinite(Number(s.class_no)) &&
+          Math.trunc(Number(s.class_no)) === targetClassNo
+        ));
+      }
+    }
 
     if (targetStudentIds.length > 0) {
       const idSet = new Set(targetStudentIds);
@@ -132,6 +165,22 @@ module.exports = async function handler(req, res) {
         )
       )
     );
+
+    const expiredDocIds = [];
+    results.forEach((r, idx) => {
+      if (r.status === 'rejected') {
+        const err = r.reason || {};
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          const docId = validSubs[idx] && validSubs[idx]._docId;
+          if (docId) expiredDocIds.push(docId);
+        }
+      }
+    });
+    if (expiredDocIds.length > 0) {
+      await Promise.allSettled(
+        expiredDocIds.map((docId) => db.collection('Push_Subscriptions').doc(docId).delete())
+      );
+    }
 
     const sent = results.filter((r) => r.status === 'fulfilled').length;
     const errors = results

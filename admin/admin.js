@@ -98,13 +98,17 @@ function saveTeacherAuth(auth) {
       expiresAt: Number(auth.expiresAt || 0),
       savedAt: Date.now(),
     }));
-  } catch (_) {}
+  } catch (err) {
+    console.warn('[EduFlow Admin] 자동 로그인 저장 실패:', err && err.message ? err.message : err);
+  }
 }
 
 function clearSavedAuth() {
   try {
     localStorage.removeItem(AUTO_LOGIN_STORAGE_KEY);
-  } catch (_) {}
+  } catch (err) {
+    console.warn('[EduFlow Admin] 자동 로그인 삭제 실패:', err && err.message ? err.message : err);
+  }
 }
 
 async function callApi(action, payload = {}, includeAuth = true) {

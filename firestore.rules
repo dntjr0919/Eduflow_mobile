@@ -1,17 +1,59 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSameSchool() {
+      return request.auth.token.school_code != null &&
+        request.auth.token.school_code != '' &&
+        resource.data.school_code == request.auth.token.school_code;
+    }
+
+    function matchesNotificationTarget() {
+      let role = request.auth.token.role;
+      let targetRole = ('target_role' in resource.data && resource.data.target_role != null)
+        ? resource.data.target_role
+        : 'all';
+      let roleAllowed = (
+        (role == 'teacher' && targetRole in ['teacher', 'all', '']) ||
+        (role in ['student', 'parent'] && targetRole in ['all', '', role])
+      );
+      let targetSid = ('target_student_id' in resource.data && resource.data.target_student_id != null && resource.data.target_student_id != '')
+        ? resource.data.target_student_id
+        : (('student_id' in resource.data && resource.data.student_id != null) ? resource.data.student_id : '');
+      let isPersonalForStudent = role in ['student', 'parent'] &&
+        request.auth.token.student_id != null &&
+        request.auth.token.student_id != '' &&
+        targetSid == request.auth.token.student_id;
+      let isOwnTeacherDoc = role == 'teacher' &&
+        'teacher_id' in resource.data &&
+        resource.data.teacher_id == request.auth.uid;
+      let gradeOk = !('grade' in resource.data) ||
+        resource.data.grade == null ||
+        resource.data.grade == '' ||
+        resource.data.grade == request.auth.token.grade;
+      let classOk = !('class_no' in resource.data) ||
+        resource.data.class_no == null ||
+        resource.data.class_no == '' ||
+        resource.data.class_no == request.auth.token.class_no;
+      let studentOk = role == 'teacher' ||
+        isPersonalForStudent ||
+        targetSid == '';
+      return roleAllowed && studentOk && (isPersonalForStudent || isOwnTeacherDoc || (gradeOk && classOk));
+    }
+
     match /{collection}/{docId} {
       allow read: if request.auth != null && (
         (
-          collection == '1:1_상담채팅' && (
+          collection == '1:1_상담채팅' && isSameSchool() && (
             (
               request.auth.token.role in ['student', 'parent'] &&
+              request.auth.token.student_id != null &&
               request.auth.token.student_id != '' &&
               resource.data.room_id == ('ROOM-' + request.auth.token.student_id)
             ) ||
             (
               request.auth.token.role == 'teacher' &&
+              request.auth.token.grade != null &&
+              request.auth.token.class_no != null &&
               resource.data.grade == request.auth.token.grade &&
               resource.data.class_no == request.auth.token.class_no
             )
@@ -19,8 +61,8 @@ service cloud.firestore {
         ) ||
         (
           collection == 'Notifications' &&
-          request.auth.token.school_code != '' &&
-          resource.data.school_code == request.auth.token.school_code
+          isSameSchool() &&
+          matchesNotificationTarget()
         )
       );
 

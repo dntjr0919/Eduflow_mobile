@@ -23,10 +23,10 @@ self.addEventListener('install', (event) => {
         STATIC_ASSETS.map((asset) =>
           fetch(asset, { cache: 'no-store' })
             .then((resp) => (resp && resp.ok ? cache.put(asset, resp) : undefined))
-            .catch(() => {})
+            .catch((err) => { console.warn('[SW asset cache]', asset, err && err.message ? err.message : err); })
         )
       ))
-      .catch(() => {})
+      .catch((err) => { console.warn('[SW install]', err && err.message ? err.message : err); })
   );
   self.skipWaiting();
 });

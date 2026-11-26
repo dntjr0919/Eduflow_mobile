@@ -1,6 +1,6 @@
 /**
  * Firebase Admin SDK 초기화 및 Firestore 복합 인덱스 안내 헬퍼
- * 1순위: 로컬 JSON (eduflow-db-b44f3-5692e5dea8c3.json)
+ * 1순위: 환경변수 지정 서비스 계정 JSON (FIREBASE_SERVICE_ACCOUNT_KEY / FIREBASE_SERVICE_ACCOUNT_PATH / GOOGLE_APPLICATION_CREDENTIALS)
  * 2순위: Vercel 환경변수 (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY)
  */
 const fs = require('fs');
@@ -8,14 +8,23 @@ const path = require('path');
 const { initializeApp, getApps, cert } = require('firebase-admin/app');
 const { getFirestore: getAdminFirestore } = require('firebase-admin/firestore');
 
-const DEFAULT_CRED_FILENAME = 'eduflow-db-b44f3-5692e5dea8c3.json';
-
 function _resolveCredential() {
+  const envJson = String(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '').trim();
+  if (envJson) {
+    try {
+      const parsed = JSON.parse(envJson);
+      if (parsed && parsed.project_id && parsed.client_email && parsed.private_key) {
+        return cert(parsed);
+      }
+    } catch (err) {
+      console.warn('[FirebaseAdmin] FIREBASE_SERVICE_ACCOUNT_KEY 파싱 실패:', err && err.message ? err.message : err);
+    }
+  }
+
   const candidates = [
     process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '',
-    path.join(process.cwd(), DEFAULT_CRED_FILENAME),
-    path.join(__dirname, '..', DEFAULT_CRED_FILENAME)
-  ].filter(Boolean);
+    process.env.GOOGLE_APPLICATION_CREDENTIALS || '',
+  ].map((p) => String(p).trim()).filter(Boolean);
 
   for (const credPath of candidates) {
     if (fs.existsSync(credPath)) {

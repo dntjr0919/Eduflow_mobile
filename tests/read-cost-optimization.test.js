@@ -164,6 +164,9 @@ test('app.js _startRealtimeListeners guards against duplicate re-subscription an
     where(field, op, val) {
       return makeQueryObj(col, [...filters, { field, op, val }]);
     },
+    orderBy(field, dir) {
+      return makeQueryObj(col, [...filters, { orderBy: field, dir }]);
+    },
     limit(n) {
       return makeQueryObj(col, [...filters, { limit: n }]);
     },
@@ -192,9 +195,9 @@ test('app.js _startRealtimeListeners guards against duplicate re-subscription an
     neisSchoolCode: '8140246',
   };
 
-  // Initial refreshFromGas -> starts Notifications only (scoped by school_code), NOT chat
+  // Initial refreshFromGas -> starts Notifications only (personal + class scoped), NOT chat
   _startRealtimeListeners();
-  assert.equal(subscriptions.length, 1);
+  assert.equal(subscriptions.length, 2);
   assert.equal(subscriptions[0].col, 'Notifications');
   assert.ok(subscriptions[0].filters.some((f) => f.field === 'school_code' && f.val === '8140246'));
   assert.equal(_getRealtimeListenerState().hasNoti, true);
@@ -202,13 +205,13 @@ test('app.js _startRealtimeListeners guards against duplicate re-subscription an
 
   // Calling _startRealtimeListeners again with same scope does NOT re-subscribe
   _startRealtimeListeners();
-  assert.equal(subscriptions.length, 1);
+  assert.equal(subscriptions.length, 2);
   assert.equal(unsubCalls.length, 0);
 
   // Entering chat tab activates 1:1_상담채팅 listener
   _setChatTabRealtimeActive(true);
-  assert.equal(subscriptions.length, 2);
-  assert.equal(subscriptions[1].col, '1:1_상담채팅');
+  assert.equal(subscriptions.length, 3);
+  assert.equal(subscriptions[2].col, '1:1_상담채팅');
   assert.equal(_getRealtimeListenerState().hasChat, true);
 
   // Leaving chat tab unsubscribes 1:1_상담채팅 listener
