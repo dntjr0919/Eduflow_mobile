@@ -1269,8 +1269,60 @@
 <input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="tpNeisSchoolCode" placeholder="예: 7010057" type="text"/>
 </div>
 </div>
+<div class="pt-2 border-t border-slate-100 space-y-2">
+<div class="flex items-center justify-between gap-2">
+<div class="flex items-center gap-1.5">
+<span class="text-[11px] font-bold text-slate-700">☁️ 모바일 서명·첨부 Google Drive 설정</span>
+<button aria-label="Google Drive 설정 안내" class="w-4 h-4 rounded-full bg-slate-200 hover:bg-indigo-100 text-slate-600 hover:text-indigo-700 text-[10px] font-bold inline-flex items-center justify-center transition-colors" id="tpDriveInfoBtn" onclick="toggleTeacherDriveInfo()" type="button">ⓘ</button>
+</div>
+</div>
+<div class="hidden p-2.5 bg-indigo-50/80 border border-indigo-200 rounded-xl text-[11px] text-slate-700 leading-relaxed" id="tpDriveInfoBox">
+개인 구글 계정 드라이브에 학생 가정통신문 서명 이미지를 안전하게 저장하기 위한 설정입니다. 아래 <strong>[Apps Script 코드 복사하기]</strong> 버튼을 눌러 개인 Google 계정으로 웹 앱을 배포한 뒤 발급된 URL을 붙여넣으세요.
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1" for="tpDrivePriority">모바일 서명·첨부 Drive 저장 1순위</label>
+<select class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="tpDrivePriority">
+<option value="workspace">Workspace 공유 드라이브 (workspace)</option>
+<option value="personal">개인 Google 계정 (GAS 웹 앱) (personal)</option>
+</select>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1" for="tpWorkspaceDriveFolderId">Workspace 공유 드라이브 폴더 ID</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="tpWorkspaceDriveFolderId" placeholder="예: 1AbCdEf... (공유 드라이브 폴더 ID)" type="text"/>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1" for="tpPersonalGasUrl">개인 Google Apps Script 웹 앱 URL</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="tpPersonalGasUrl" placeholder="https://script.google.com/macros/s/.../exec" type="url"/>
+</div>
+<div>
+<label class="block text-[10px] font-semibold text-slate-600 mb-1" for="tpPersonalDriveFolderId">(선택) 개인 Drive 폴더 ID</label>
+<input class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none" id="tpPersonalDriveFolderId" placeholder="비워두면 내 드라이브/EduFlow_Uploads에 자동 저장" type="text"/>
+</div>
+<button class="w-full py-2 px-3 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold rounded-xl text-[11px] transition-all flex items-center justify-center gap-1.5" id="tpCopyGasCodeBtn" onclick="copyTeacherGasCodeAndShowGuide()" type="button">📋 Apps Script 코드 복사하기 (배포 가이드 보기)</button>
+</div>
 <button class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-indigo-200 transition-all mt-1" type="submit">프로필 저장하기</button>
 </form>
+</div>
+</div>
+
+<!-- Modal: Teacher GAS Deployment Guide -->
+<div class="hidden absolute inset-0 z-[60] bg-black/50 backdrop-blur-xs flex flex-col justify-end p-3" id="teacherGasGuideModal">
+<div class="bg-white rounded-3xl p-5 shadow-2xl space-y-3 max-h-[88%] flex flex-col overflow-y-auto custom-scrollbar">
+<div class="flex items-center justify-between pb-2 border-b border-slate-100">
+<h4 class="font-bold text-slate-800 text-sm flex items-center gap-1.5"><span>📋 개인 Google Drive 웹 앱 배포 가이드</span></h4>
+<button class="text-slate-400 hover:text-slate-600 p-1" onclick="closeTeacherGasGuideModal()" type="button"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg></button>
+</div>
+<div class="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-800 font-semibold">
+✅ 최신 Apps Script 코드가 클립보드에 복사되었습니다. 아래 순서대로 개인 Google 계정에 배포해 주세요.
+</div>
+<ol class="space-y-2 text-xs text-slate-700 list-decimal pl-4 leading-relaxed">
+<li>개인 Google 계정(<code class="px-1 py-0.5 bg-slate-100 rounded text-[11px]">@gmail.com</code>)으로 <a class="text-indigo-600 underline font-semibold" href="https://script.google.com" rel="noopener noreferrer" target="_blank">script.google.com</a> 로그인 → <strong>새 프로젝트</strong></li>
+<li>복사한 코드 붙여넣기 → 저장 (<code class="px-1 py-0.5 bg-slate-100 rounded text-[11px]">Ctrl+S</code>)</li>
+<li>우측 상단 <strong>배포 → 새 배포 → 유형: 웹 앱</strong> 선택</li>
+<li>실행 주체: <strong>나</strong>, 액세스 권한: <strong>모든 사용자</strong> 선택 후 배포</li>
+<li>생성된 웹 앱 URL(<code class="px-1 py-0.5 bg-slate-100 rounded text-[11px]">https://script.google.com/macros/s/.../exec</code>)을 입력칸에 붙여넣고 <strong>프로필 저장하기</strong> 클릭</li>
+</ol>
+<button class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-all" onclick="closeTeacherGasGuideModal()" type="button">확인</button>
 </div>
 </div>
 

@@ -459,3 +459,290 @@ test('teacher.js _confirmDriveConfiguredForSignature warns when driveConfigured 
   assert.equal(teacher._confirmDriveConfiguredForSignature('parent'), true);
   assert.equal(confirmCalls.length, 2);
 });
+
+test('student.js and teacher.js resolve Drive URLs and file_ids to thumbnail + lh3 fallback', () => {
+  const student = require('../student.js');
+  const teacher = require('../teacher.js');
+  const sampleId = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+
+  for (const mod of [student, teacher]) {
+    const fromUc = mod._resolveDriveImageUrls(`https://drive.google.com/uc?export=download&id=${sampleId}`);
+    assert.equal(fromUc.fileId, sampleId);
+    assert.equal(fromUc.primary, `https://drive.google.com/thumbnail?id=${sampleId}&sz=w1000`);
+    assert.equal(fromUc.fallback, `https://lh3.googleusercontent.com/d/${sampleId}`);
+
+    const fromView = mod._resolveDriveImageUrls(`https://drive.google.com/file/d/${sampleId}/view`);
+    assert.equal(fromView.primary, `https://drive.google.com/thumbnail?id=${sampleId}&sz=w1000`);
+    assert.equal(fromView.fallback, `https://lh3.googleusercontent.com/d/${sampleId}`);
+
+    const fromRawId = mod._resolveDriveImageUrls(sampleId);
+    assert.equal(fromRawId.primary, `https://drive.google.com/thumbnail?id=${sampleId}&sz=w1000`);
+    assert.equal(fromRawId.fallback, `https://lh3.googleusercontent.com/d/${sampleId}`);
+
+    const fromDataUrl = mod._resolveDriveImageUrls(SAMPLE_B64);
+    assert.equal(fromDataUrl.primary, SAMPLE_B64);
+    assert.equal(fromDataUrl.fallback, '');
+
+    const fromUnsafe = mod._resolveDriveImageUrls('javascript:alert(1)');
+    assert.equal(fromUnsafe.primary, '');
+  }
+
+  const fakeImg = { src: '', dataset: {}, removeAttribute() { this.src = ''; } };
+  const applied = student._applyDriveImageWithFallback(fakeImg, `https://drive.google.com/uc?export=download&id=${sampleId}`);
+  assert.equal(applied, true);
+  assert.equal(fakeImg.src, `https://drive.google.com/thumbnail?id=${sampleId}&sz=w1000`);
+  assert.equal(typeof fakeImg.onerror, 'function');
+  fakeImg.onerror();
+  assert.equal(fakeImg.src, `https://lh3.googleusercontent.com/d/${sampleId}`);
+  // Second onerror does not loop
+  fakeImg.onerror();
+  assert.equal(fakeImg.onerror, null);
+});
+
+test('teacher.js openSubmittedRepliesModal renders Drive signature img with thumbnail and lh3 fallback', () => {
+  const teacher = require('../teacher.js');
+  const sampleId = '1ZyXwVuTsRqPoNmLkJiHgFeDcBa987654';
+  const elements = new Map();
+  const makeEl = () => ({ innerHTML: '', textContent: '' });
+  elements.set('submittedRepliesModalTitle', makeEl());
+  elements.set('submittedRepliesModalSubtitle', makeEl());
+  elements.set('submittedRepliesModalList', makeEl());
+
+  global.document = {
+    getElementById: (id) => elements.get(id) || null
+  };
+  global.openModal = () => {};
+  global.state = { currentSubmittedCircularId: null };
+  global.mockData = {
+    students: [{ student_id: 'stu_1', student_no: 1, name: '홍길동', parent_name: '홍부모' }],
+    circulars: [{
+      id: 'c_1',
+      title: '현장체험학습 동의서',
+      replies: [{
+        student_id: 'stu_1',
+        student_name: '홍길동',
+        consent: '동의',
+        signature_drive_url: `https://drive.google.com/uc?export=download&id=${sampleId}`,
+        student_signature_file_id: sampleId
+      }]
+    }]
+  };
+
+  teacher.openSubmittedRepliesModal('c_1');
+  const html = elements.get('submittedRepliesModalList').innerHTML;
+  assert.match(html, new RegExp(`https://drive\\.google\\.com/thumbnail\\?id=${sampleId}&amp;sz=w1000`));
+  assert.match(html, new RegExp(`https://lh3\\.googleusercontent\\.com/d/${sampleId}`));
+  assert.match(html, /onerror=/);
+});
+
+test('teacher.js GAS template matches docs/gas-drive-upload.gs and index.html wires Drive UI', () => {
+  const fs = require('node:fs');
+  const teacher = require('../teacher.js');
+  const gasFile = fs.readFileSync(path.resolve(__dirname, '../docs/gas-drive-upload.gs'), 'utf8').replace(/\r\n/g, '\n').trim();
+  const templateCode = String(teacher.TEACHER_GAS_DRIVE_UPLOAD_TEMPLATE || '').replace(/\r\n/g, '\n').trim();
+  assert.equal(templateCode, gasFile);
+
+  const html = fs.readFileSync(path.resolve(__dirname, '../index.html'), 'utf8');
+  for (const id of [
+    'tpDrivePriority',
+    'tpWorkspaceDriveFolderId',
+    'tpPersonalGasUrl',
+    'tpPersonalDriveFolderId',
+    'tpDriveInfoBtn',
+    'tpDriveInfoBox',
+    'tpCopyGasCodeBtn',
+    'teacherGasGuideModal'
+  ]) {
+    assert.ok(html.includes(`id="${id}"`), `index.html missing #${id}`);
+  }
+});
+
+test('api/firestore.js upsert_teacher_profile saves Drive settings and bundle hides them from students', async () => {
+  const store = new Map();
+  function setDoc(col, id, data) {
+    if (!store.has(col)) store.set(col, new Map());
+    store.get(col).set(id, { ...data });
+  }
+  function getCol(col) {
+    if (!store.has(col)) store.set(col, new Map());
+    return store.get(col);
+  }
+  const sha = (v) => crypto.createHash('sha256').update(String(v), 'utf8').digest('hex');
+  setDoc('계정_교사', 'teacher_001', {
+    remote_id: 'teacher_001',
+    teacher_id: 'teacher_001',
+    name: '김교사',
+    grade: 1,
+    class_no: 2,
+    school_code: 'SC01',
+    status: 'active',
+    password_hash: sha('pw1234')
+  });
+  setDoc('계정_학생', 'stu_001', {
+    remote_id: 'stu_001',
+    student_id: 'stu_001',
+    name: '김학생',
+    grade: 1,
+    class_no: 2,
+    school_code: 'SC01',
+    status: 'active',
+    password_hash: sha('pw1234')
+  });
+
+  const makeSnap = (docs) => ({
+    docs,
+    empty: docs.length === 0,
+    size: docs.length,
+    forEach(cb) { docs.forEach(cb); }
+  });
+  const mockDb = {
+    collection(col) {
+      const makeQuery = (filters = []) => ({
+        where(f2, o2, v2) { return makeQuery([...filters, { field: f2, op: o2, val: v2 }]); },
+        orderBy() { return makeQuery(filters); },
+        limit() { return makeQuery(filters); },
+        async get() {
+          const docs = [];
+          for (const [id, data] of getCol(col).entries()) {
+            const match = filters.every((f) => {
+              if (f.op === '==') return data[f.field] === f.val;
+              if (f.op === 'in' && Array.isArray(f.val)) return f.val.includes(data[f.field]);
+              if (f.op === '>=') return String(data[f.field] || '') >= String(f.val || '');
+              return true;
+            });
+            if (match) docs.push({ id, exists: true, data: () => ({ ...data }) });
+          }
+          return makeSnap(docs);
+        }
+      });
+      return {
+        doc(id) {
+          return {
+            async get() {
+              const d = getCol(col).get(id);
+              return { id, exists: Boolean(d), data: () => (d ? { ...d } : undefined) };
+            },
+            async set(data, opts) {
+              const prev = (opts && opts.merge && getCol(col).get(id)) || {};
+              getCol(col).set(id, { ...prev, ...data });
+            }
+          };
+        },
+        where(field, op, val) { return makeQuery([{ field, op, val }]); },
+        orderBy() { return makeQuery([]); },
+        limit() { return makeQuery([]); },
+        async get() { return makeQuery([]).get(); }
+      };
+    }
+  };
+
+  const firebaseAdminPath = path.resolve(__dirname, '../api/_firebaseAdmin.js');
+  const prevFirebaseCache = require.cache[firebaseAdminPath];
+  const firestorePath = path.resolve(__dirname, '../api/firestore.js');
+  const prevFirestoreCache = require.cache[firestorePath];
+  require.cache[firebaseAdminPath] = {
+    id: firebaseAdminPath,
+    filename: firebaseAdminPath,
+    loaded: true,
+    exports: {
+      getFirestore: () => mockDb,
+      buildFirestoreErrorPayload: (err) => ({ ok: false, error: err.message })
+    }
+  };
+  delete require.cache[firestorePath];
+
+  try {
+    const handler = require('../api/firestore.js');
+    const makeRes = () => {
+      const out = { statusCode: 200, body: null };
+      return {
+        out,
+        status(code) { out.statusCode = code; return this; },
+        json(obj) { out.body = obj; return this; },
+        setHeader() {}
+      };
+    };
+
+    const rBadUrl = makeRes();
+    await handler({
+      method: 'POST',
+      headers: {},
+      body: {
+        action: 'upsert_teacher_profile',
+        auth_teacher_id: 'teacher_001',
+        auth_password: 'pw1234',
+        drive_priority: 'personal',
+        personal_gas_url: 'ftp://invalid-url'
+      }
+    }, rBadUrl);
+    assert.equal(rBadUrl.out.statusCode, 400);
+
+    const rSave = makeRes();
+    await handler({
+      method: 'POST',
+      headers: {},
+      body: {
+        action: 'upsert_teacher_profile',
+        auth_teacher_id: 'teacher_001',
+        auth_password: 'pw1234',
+        name: '김교사수정',
+        drive_priority: 'personal',
+        workspace_drive_folder_id: 'ws_folder_001',
+        personal_gas_url: 'https://script.google.com/macros/s/abc123/exec',
+        personal_drive_folder_id: 'p_folder_002'
+      }
+    }, rSave);
+    assert.equal(rSave.out.statusCode, 200);
+    assert.equal(rSave.out.body.drive_priority, 'personal');
+    assert.equal(rSave.out.body.drive_configured, true);
+
+    const savedTeacher = getCol('계정_교사').get('teacher_001');
+    assert.equal(savedTeacher.drive_priority, 'personal');
+    assert.equal(savedTeacher.workspace_drive_folder_id, 'ws_folder_001');
+    assert.equal(savedTeacher.personal_gas_url, 'https://script.google.com/macros/s/abc123/exec');
+    assert.equal(savedTeacher.personal_drive_folder_id, 'p_folder_002');
+
+    // Bundle for teacher includes own Drive fields
+    const teacherBundleRes = await handler._testHelpers._handleGetMobileBundle(mockDb, {
+      role: 'teacher',
+      user_id: 'teacher_001',
+      school_code: 'SC01',
+      grade: 1,
+      class_no: 2,
+      force_refresh: 1
+    });
+    const teacherBundle = teacherBundleRes.json || teacherBundleRes;
+    assert.equal(teacherBundle.drive_configured, true);
+    assert.equal(teacherBundle.drive_priority, 'personal');
+    assert.equal(teacherBundle.workspace_drive_folder_id, 'ws_folder_001');
+    assert.equal(teacherBundle.personal_gas_url, 'https://script.google.com/macros/s/abc123/exec');
+    assert.equal(teacherBundle.personal_drive_folder_id, 'p_folder_002');
+
+    // Bundle for student MUST NOT expose any teacher Drive fields
+    const studentBundleRes = await handler._testHelpers._handleGetMobileBundle(mockDb, {
+      role: 'student',
+      user_id: 'stu_001',
+      student_id: 'stu_001',
+      school_code: 'SC01',
+      grade: 1,
+      class_no: 2,
+      force_refresh: 1
+    });
+    const studentBundle = studentBundleRes.json || studentBundleRes;
+    assert.equal('drive_configured' in studentBundle, false);
+    assert.equal('drive_priority' in studentBundle, false);
+    assert.equal('personal_gas_url' in studentBundle, false);
+    assert.equal('workspace_drive_folder_id' in studentBundle, false);
+    assert.equal('personal_drive_folder_id' in studentBundle, false);
+    const leakedTeacher = (studentBundle.teachers || [])[0] || {};
+    assert.equal('personal_gas_url' in leakedTeacher, false);
+    assert.equal('workspace_drive_folder_id' in leakedTeacher, false);
+    assert.equal('personal_drive_folder_id' in leakedTeacher, false);
+    assert.equal('drive_priority' in leakedTeacher, false);
+  } finally {
+    if (prevFirebaseCache) require.cache[firebaseAdminPath] = prevFirebaseCache;
+    else delete require.cache[firebaseAdminPath];
+    if (prevFirestoreCache) require.cache[firestorePath] = prevFirestoreCache;
+    else delete require.cache[firestorePath];
+  }
+});

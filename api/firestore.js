@@ -1666,15 +1666,33 @@ async function _handleGetMobileBundle(db, params) {
     const { password_hash: _pw, ...safe } = d;
     return safe;
   };
+  const _stripTeacherDriveFields = (d) => {
+    if (!d || typeof d !== 'object') return d;
+    const {
+      drive_priority: _dp,
+      workspace_drive_folder_id: _wdf,
+      personal_gas_url: _pgu,
+      personal_drive_folder_id: _pdf,
+      drive_configured: _dc,
+      ...safe
+    } = d;
+    return safe;
+  };
   const classTenant = { ...tenant, requireClass: true };
+  const isTeacherRole = role === 'teacher';
   const teachersSnap = teachersRaw
     .filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }))
-    .map(_stripSensitiveFields);
+    .map(_stripSensitiveFields)
+    .map((d) => {
+      const isSelfTeacher = isTeacherRole && (
+        String(d.teacher_id || '') === userId || String(d.remote_id || '') === userId
+      );
+      return isSelfTeacher ? d : _stripTeacherDriveFields(d);
+    });
   const filteredStudents = Array.isArray(studentsRows)
     ? studentsRows.filter((d) => _matchesTenant(d, classTenant)).map(_stripSensitiveFields)
     : undefined;
   const studentIdSet = new Set((filteredStudents || []).map((s) => String(s.student_id || s.remote_id || '')).filter(Boolean));
-  const isTeacherRole = role === 'teacher';
   const filteredNotices = noticesRaw
     .filter((d) => {
       if (!_matchesTenant(d, tenant)) return false;
@@ -1754,6 +1772,11 @@ async function _handleGetMobileBundle(db, params) {
     const driveStatus = _computeTeacherDriveStatus(myTeacherDoc);
     bundle.drive_configured = driveStatus.drive_configured;
     bundle.drive_priority = driveStatus.drive_priority;
+    if (myTeacherDoc) {
+      bundle.workspace_drive_folder_id = String(myTeacherDoc.workspace_drive_folder_id || '').trim();
+      bundle.personal_gas_url = String(myTeacherDoc.personal_gas_url || '').trim();
+      bundle.personal_drive_folder_id = String(myTeacherDoc.personal_drive_folder_id || '').trim();
+    }
   }
   if (filteredStudents !== undefined) {
     bundle.students = filteredStudents;
@@ -1805,14 +1828,27 @@ async function _handleGetMobileBundle(db, params) {
   if (docRulesRows !== undefined) {
     bundle.doc_rules = docRulesRows.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
   }
+  const teacherScope = { teacherId: userId, schoolCode, schoolName };
   if (schedulesRaw !== undefined) {
+    const hasStudentClass = gradeNum !== null && classNum !== null;
+    const homeroomTeacherIds = !isTeacherRole && hasStudentClass
+      ? new Set(
+          (teachersRaw || [])
+            .filter((t) => _matchesTenant(t, classTenant))
+            .map((t) => String(t.teacher_id || t.remote_id || '').trim())
+            .filter(Boolean)
+        )
+      : null;
     bundle.schedules = (schedulesRaw || [])
       .filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }))
-      .filter((d) => (isTeacherRole ? true : _isPublicAcademicSchedule(d)))
+      .filter((d) => {
+        if (isTeacherRole) return _belongsToTeacher(d, teacherScope);
+        const docTid = String((d && d.teacher_id) || '').trim();
+        return Boolean(docTid && homeroomTeacherIds && homeroomTeacherIds.has(docTid)) && _isPublicAcademicSchedule(d);
+      })
       .sort((a, b) => String(a.start_date || a.date || '').localeCompare(String(b.start_date || b.date || '')));
   }
   if (isTeacherRole) {
-    const teacherScope = { teacherId: userId, schoolCode, schoolName };
     if (subjectRostersRaw !== undefined) {
       bundle.subject_rosters = (subjectRostersRaw || []).filter((d) => _belongsToTeacher(d, teacherScope));
     }
@@ -3407,10 +3443,39 @@ module.exports = async function handler(req, res) {
         if (params.neis_school_code !== undefined) data.neis_school_code = String(params.neis_school_code);
         if (params.school_code !== undefined) data.school_code = String(params.school_code);
         if (params.comcigan_school_code !== undefined) data.comcigan_school_code = String(params.comcigan_school_code);
+        if (params.drive_priority !== undefined) {
+          const rawPriority = String(params.drive_priority || 'workspace').trim().toLowerCase();
+          if (rawPriority !== 'workspace' && rawPriority !== 'personal') {
+            return res.status(400).json({ ok: false, error: 'drive_priority는 workspace 또는 personal이어야 합니다.' });
+          }
+          data.drive_priority = rawPriority;
+        }
+        if (params.workspace_drive_folder_id !== undefined) {
+          data.workspace_drive_folder_id = String(params.workspace_drive_folder_id || '').trim();
+        }
+        if (params.personal_gas_url !== undefined) {
+          const personalGasUrl = String(params.personal_gas_url || '').trim();
+          if (personalGasUrl && !/^https?:\/\//i.test(personalGasUrl)) {
+            return res.status(400).json({ ok: false, error: 'personal_gas_url은 http(s) URL 형식이어야 합니다.' });
+          }
+          data.personal_gas_url = personalGasUrl;
+        }
+        if (params.personal_drive_folder_id !== undefined) {
+          data.personal_drive_folder_id = String(params.personal_drive_folder_id || '').trim();
+        }
       }
-      await db.collection('계정_교사').doc(tid).set(data, { merge: true });
+      const teacherRef = db.collection('계정_교사').doc(tid);
+      await teacherRef.set(data, { merge: true });
+      const updatedSnap = await teacherRef.get();
+      const updatedDoc = updatedSnap.exists ? (updatedSnap.data() || {}) : data;
+      const driveStatus = _computeTeacherDriveStatus(updatedDoc);
       _invalidateStaticCache('teacher');
-      return res.status(200).json({ ok: true, remote_id: tid });
+      return res.status(200).json({
+        ok: true,
+        remote_id: tid,
+        drive_priority: driveStatus.drive_priority,
+        drive_configured: driveStatus.drive_configured
+      });
     }
 
     if (action === 'update_teacher_drive_settings') {
@@ -4781,12 +4846,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
           .filter((d) => _belongsToTeacher(d, auth))
           .sort((a, b) => String(b.date || b.updated_at || '').localeCompare(String(a.date || a.updated_at || ''))),
         schedules: (schedulesRaw || [])
-          .filter((d) => {
-            if (!d || typeof d !== 'object') return false;
-            if (!_matchesTenant(d, { ...tenant, gradeNum: null, classNum: null })) return false;
-            if (!_isPublicAcademicSchedule(d)) return _belongsToTeacher(d, auth);
-            return true;
-          })
+          .filter((d) => _matchesTenant(d, { ...tenant, gradeNum: null, classNum: null }) && _belongsToTeacher(d, auth))
           .sort((a, b) => String(a.start_date || a.date || '').localeCompare(String(b.start_date || b.date || ''))),
       },
     };
@@ -5257,12 +5317,8 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     const docRef = db.collection('Schedules').doc(rid);
     const existingSnap = params.remote_id ? await docRef.get() : null;
     const existing = existingSnap && existingSnap.exists ? { remote_id: existingSnap.id, ...(existingSnap.data() || {}) } : null;
-    if (existing) {
-      const hasTid = Boolean(String(existing.teacher_id || '').trim());
-      const allowed = hasTid ? _belongsToTeacher(existing, auth) : _matchesTenant(existing, { ...tenant, gradeNum: null, classNum: null });
-      if (!allowed) {
-        return { status: 403, json: { ok: false, error: '본인 학교·학급 또는 본인이 등록한 일정만 수정할 수 있습니다.' } };
-      }
+    if (existing && !_belongsToTeacher(existing, auth)) {
+      return { status: 403, json: { ok: false, error: '본인이 등록한 일정만 수정할 수 있습니다.' } };
     }
     const nowStr = _nowStr();
     const endDate = String(params.end_date || startDate).trim() || startDate;
@@ -5278,7 +5334,7 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       memo: String(params.memo || params.description || '').trim(),
       is_private: isPrivate,
       visibility: isPrivate ? 'private' : 'public',
-      teacher_id: String((existing && existing.teacher_id) || auth.teacherId || '').trim(),
+      teacher_id: auth.teacherId,
       school_code: auth.schoolCode,
       school_name: auth.schoolName,
       grade: params.grade !== undefined ? _toIntOrNull(params.grade) : auth.gradeNum,
@@ -5302,10 +5358,8 @@ async function _handleDesktopApiAction(db, action, params, auth) {
       return { status: 404, json: { ok: false, error: '해당 학사일정을 찾을 수 없습니다.' } };
     }
     const targetDoc = { remote_id: snap.id, ...(snap.data() || {}) };
-    const hasTid = Boolean(String(targetDoc.teacher_id || '').trim());
-    const allowed = hasTid ? _belongsToTeacher(targetDoc, auth) : _matchesTenant(targetDoc, { ...tenant, gradeNum: null, classNum: null });
-    if (!allowed) {
-      return { status: 403, json: { ok: false, error: '본인 학교·학급 또는 본인이 등록한 일정만 삭제할 수 있습니다.' } };
+    if (!_belongsToTeacher(targetDoc, auth)) {
+      return { status: 403, json: { ok: false, error: '본인이 등록한 일정만 삭제할 수 있습니다.' } };
     }
     await docRef.delete();
     _invalidateStaticCache('schedules:');
@@ -6310,7 +6364,9 @@ function _buildNoticeReplyLedger(students, notice, replies) {
         consent: reply ? String(reply.consent || reply.reply_choice || '제출') : '',
         memo: reply ? String(reply.memo || '') : '',
         signature_drive_url: reply ? String(reply.signature_drive_url || '') : '',
+        signature_file_id: reply ? String(reply.signature_file_id || '') : '',
         student_signature_drive_url: reply ? String(reply.student_signature_drive_url || '') : '',
+        student_signature_file_id: reply ? String(reply.student_signature_file_id || '') : '',
         reply_file_drive_url: reply ? String(reply.reply_file_drive_url || '') : '',
         signed_at: reply ? String(reply.signed_at || '') : '',
         submitted_at: reply ? String(reply.submitted_at || reply.updated_at || '') : '',

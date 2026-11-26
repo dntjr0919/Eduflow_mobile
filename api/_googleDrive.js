@@ -211,11 +211,18 @@ async function _uploadToPersonalGas({
       };
     }
     const resolvedId = fileId || extractDriveFileId(downloadUrl || webViewLink);
+    if (!resolvedId) {
+      return {
+        ok: false,
+        error: '개인 Google Drive(GAS) 응답에서 유효한 file_id를 추출하지 못했습니다.'
+      };
+    }
     return {
       ok: true,
       fileId: resolvedId,
-      downloadUrl: downloadUrl || (resolvedId ? `https://drive.google.com/uc?export=download&id=${resolvedId}` : webViewLink),
-      webViewLink: webViewLink || (resolvedId ? `https://drive.google.com/file/d/${resolvedId}/view` : downloadUrl)
+      file_id: resolvedId,
+      downloadUrl: downloadUrl || `https://drive.google.com/uc?export=download&id=${resolvedId}`,
+      webViewLink: webViewLink || `https://drive.google.com/file/d/${resolvedId}/view`
     };
   } catch (err) {
     return {
@@ -284,7 +291,13 @@ async function uploadBase64ToDrive({
       supportsAllDrives: true
     });
 
-    const fileId = createRes.data.id;
+    const fileId = String((createRes.data && createRes.data.id) || '').trim();
+    if (!fileId) {
+      return {
+        ok: false,
+        error: 'Google Drive 업로드 응답에 file_id가 없습니다.'
+      };
+    }
     await drive.permissions.create({
       fileId,
       requestBody: { role: 'reader', type: 'anyone' },
@@ -294,6 +307,7 @@ async function uploadBase64ToDrive({
     return {
       ok: true,
       fileId,
+      file_id: fileId,
       downloadUrl: `https://drive.google.com/uc?export=download&id=${fileId}`,
       webViewLink: createRes.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`
     };

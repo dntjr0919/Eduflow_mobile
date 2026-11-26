@@ -22,6 +22,64 @@ function _safeStudentImageUrl(rawUrl) {
   return '';
 }
 
+function _extractDriveFileId(input) {
+  const s = String(input || '').trim();
+  if (!s) return '';
+  const queryMatch = s.match(/[?&]id=([A-Za-z0-9_-]{10,128})/);
+  if (queryMatch) return queryMatch[1];
+  const filePathMatch = s.match(/\/file\/d\/([A-Za-z0-9_-]{10,128})/);
+  if (filePathMatch) return filePathMatch[1];
+  const shortPathMatch = s.match(/\/d\/([A-Za-z0-9_-]{10,128})/);
+  if (shortPathMatch) return shortPathMatch[1];
+  if (/^[A-Za-z0-9_-]{10,128}$/.test(s)) return s;
+  return '';
+}
+
+function _resolveDriveImageUrls(rawUrlOrId) {
+  const s = String(rawUrlOrId || '').trim();
+  if (!s) return { primary: '', fallback: '', fileId: '' };
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(s)) {
+    return { primary: s, fallback: '', fileId: '' };
+  }
+  const isRawId = /^[A-Za-z0-9_-]{10,128}$/.test(s);
+  const isDriveUrl = /^https?:\/\/(?:drive\.google\.com|lh3\.googleusercontent\.com)\//i.test(s);
+  if (isRawId || isDriveUrl) {
+    const fileId = _extractDriveFileId(s);
+    if (fileId) {
+      return {
+        primary: `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`,
+        fallback: `https://lh3.googleusercontent.com/d/${fileId}`,
+        fileId
+      };
+    }
+  }
+  const safe = _safeStudentImageUrl(s);
+  return { primary: safe, fallback: '', fileId: '' };
+}
+
+function _applyDriveImageWithFallback(imgEl, rawUrlOrId) {
+  const resolved = _resolveDriveImageUrls(rawUrlOrId);
+  if (!imgEl) return Boolean(resolved.primary);
+  imgEl.onerror = null;
+  if (imgEl.dataset) delete imgEl.dataset.fbApplied;
+  if (!resolved.primary) {
+    imgEl.removeAttribute('src');
+    return false;
+  }
+  if (resolved.fallback) {
+    imgEl.onerror = function () {
+      if (this.dataset && this.dataset.fbApplied) {
+        this.onerror = null;
+        return;
+      }
+      if (this.dataset) this.dataset.fbApplied = '1';
+      this.src = resolved.fallback;
+    };
+  }
+  imgEl.src = resolved.primary;
+  return true;
+}
+
 function switchBottomTab(tabName) {
   if (typeof state !== 'undefined' && state) state.activeStudentTab = tabName;
   const studentTabs = ['home', 'attendance', 'letters', 'counseling'];
@@ -1312,14 +1370,14 @@ function openCircularModal(id) {
     const parentSigBox = document.getElementById('modalCircularSubmittedParentSigBox');
     const sigLabel = document.getElementById('modalCircularSubmittedSigLabel');
     const sigImg = document.getElementById('modalCircularSubmittedSigImg');
-    const safeStudentSigUrl = _safeStudentImageUrl(reply.studentSignatureUrl);
-    const safeParentSigUrl = _safeStudentImageUrl(reply.signatureUrl);
-    const hasStudentSig = Boolean(safeStudentSigUrl);
-    const hasParentSig = Boolean(safeParentSigUrl);
+    const studentSigResolved = _resolveDriveImageUrls(reply.studentSignatureUrl);
+    const parentSigResolved = _resolveDriveImageUrls(reply.signatureUrl);
+    const hasStudentSig = Boolean(studentSigResolved.primary);
+    const hasParentSig = Boolean(parentSigResolved.primary);
 
     if (studentSigBox && studentSigImg) {
       if (hasStudentSig) {
-        studentSigImg.src = safeStudentSigUrl;
+        _applyDriveImageWithFallback(studentSigImg, reply.studentSignatureUrl);
         studentSigBox.classList.remove('hidden');
       } else {
         studentSigImg.removeAttribute('src');
@@ -1328,7 +1386,7 @@ function openCircularModal(id) {
     }
     if (parentSigBox && sigImg) {
       if (hasParentSig) {
-        sigImg.src = safeParentSigUrl;
+        _applyDriveImageWithFallback(sigImg, reply.signatureUrl);
         parentSigBox.classList.remove('hidden');
       } else {
         sigImg.removeAttribute('src');
@@ -1596,11 +1654,11 @@ async function submitCircularSignature(btnEl) {
           payloadData.parent_signature_base64 = parentSignatureBase64;
         }
         const res = await gasApi.post('submit_notice_reply', { data: payloadData });
-        if (res && res.signature_drive_url) {
-          savedSigUrl = res.signature_drive_url;
+        if (res && (res.signature_drive_url || res.signature_file_id)) {
+          savedSigUrl = res.signature_drive_url || res.signature_file_id;
         }
-        if (res && res.student_signature_drive_url) {
-          savedStudentSigUrl = res.student_signature_drive_url;
+        if (res && (res.student_signature_drive_url || res.student_signature_file_id)) {
+          savedStudentSigUrl = res.student_signature_drive_url || res.student_signature_file_id;
         }
       } catch (err) {
         showToast(`전자서명 저장 실패: ${err.message}`, '⚠️');
@@ -1914,5 +1972,8 @@ if (typeof module !== 'undefined' && module.exports) {
     _normalizeNoticeSignatureMode,
     _isStudentReadOnlyCircular,
     renderCirculars,
+    _extractDriveFileId,
+    _resolveDriveImageUrls,
+    _applyDriveImageWithFallback,
   };
 }

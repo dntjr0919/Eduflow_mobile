@@ -43,6 +43,9 @@ function doPost(e) {
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
     var savedId = file.getId();
+    if (!savedId) {
+      return _jsonResponse({ ok: false, error: 'Google Drive file_id를 생성하지 못했습니다.' });
+    }
     return _jsonResponse({
       ok: true,
       file_id: savedId,

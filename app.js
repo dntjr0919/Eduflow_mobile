@@ -1182,7 +1182,10 @@ function _applyAuthenticatedUser(user) {
     customId: user.custom_id || '',
     customIdChanged: Boolean(user.custom_id_changed),
     driveConfigured: role === 'teacher' && user.drive_configured !== undefined ? Boolean(user.drive_configured) : undefined,
-    drivePriority: role === 'teacher' && user.drive_priority ? String(user.drive_priority) : undefined
+    drivePriority: role === 'teacher' && user.drive_priority ? String(user.drive_priority) : undefined,
+    workspaceDriveFolderId: role === 'teacher' ? String(user.workspace_drive_folder_id || '') : undefined,
+    personalGasUrl: role === 'teacher' ? String(user.personal_gas_url || '') : undefined,
+    personalDriveFolderId: role === 'teacher' ? String(user.personal_drive_folder_id || '') : undefined
   };
 }
 
@@ -1696,6 +1699,9 @@ function hydrateMockDataFromBundle(bundle) {
           mockData.currentUser.driveConfigured = Boolean(bundle.drive_configured);
           mockData.currentUser.drivePriority = String(bundle.drive_priority || 'workspace');
         }
+        mockData.currentUser.workspaceDriveFolderId = String(bundle.workspace_drive_folder_id ?? t.workspace_drive_folder_id ?? '');
+        mockData.currentUser.personalGasUrl = String(bundle.personal_gas_url ?? t.personal_gas_url ?? '');
+        mockData.currentUser.personalDriveFolderId = String(bundle.personal_drive_folder_id ?? t.personal_drive_folder_id ?? '');
       }
       mockData.isCounselingOpen = _isTruthyField(t.consultation_enabled);
     } else {
@@ -1921,8 +1927,10 @@ function hydrateMockDataFromBundle(bundle) {
           reply_data: r.reply_data || null,
           answers_json: r.answers_json || '',
           reply_file_drive_url: String(r.reply_file_drive_url || ''),
-          signature_drive_url: String(r.signature_drive_url || r.signature_url || r.signature_data_url || ''),
-          student_signature_drive_url: String(r.student_signature_drive_url || r.student_signature_url || ''),
+          signature_drive_url: String(r.signature_drive_url || r.signature_url || r.signature_data_url || r.signature_file_id || ''),
+          signature_file_id: String(r.signature_file_id || ''),
+          student_signature_drive_url: String(r.student_signature_drive_url || r.student_signature_url || r.student_signature_file_id || ''),
+          student_signature_file_id: String(r.student_signature_file_id || ''),
           signed_at: String(r.signed_at || ''),
           submitted_at: String(r.submitted_at || r.updated_at || '')
         })),
@@ -1931,8 +1939,8 @@ function hydrateMockDataFromBundle(bundle) {
         myReply: myReply ? {
           consent: myReply.consent || myReply.reply_choice || '',
           replyDataJson: myReply.reply_data_json || '',
-          signatureUrl: myReply.signature_drive_url || myReply.signature_url || myReply.signature_data_url || '',
-          studentSignatureUrl: myReply.student_signature_drive_url || myReply.student_signature_url || '',
+          signatureUrl: myReply.signature_drive_url || myReply.signature_url || myReply.signature_data_url || myReply.signature_file_id || '',
+          studentSignatureUrl: myReply.student_signature_drive_url || myReply.student_signature_url || myReply.student_signature_file_id || '',
           signedAt: myReply.signed_at || myReply.submitted_at || myReply.updated_at || ''
         } : null
       };

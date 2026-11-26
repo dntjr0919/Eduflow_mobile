@@ -515,6 +515,145 @@ async function syncNeisMealsNow(btnEl) {
   });
 }
 
+const TEACHER_GAS_DRIVE_UPLOAD_TEMPLATE = `/**
+ * EduFlow Mobile - 개인 Gmail용 Google Drive 업로드 Apps Script 템플릿
+ *
+ * 배포 방법:
+ * 1. https://script.google.com 에서 새 프로젝트 생성 후 본 코드를 붙여넣습니다.
+ * 2. 우측 상단 [배포] > [새 배포] > 유형: [웹 앱] 선택
+ * 3. 실행 주체: [나(본인)], 액세스 권한: [모든 사용자] 로 설정 후 배포
+ * 4. 발급된 웹 앱 URL(.../exec)을 교사 설정의 \`personal_gas_url\`에 저장합니다.
+ */
+
+function doPost(e) {
+  try {
+    var raw = (e && e.postData && e.postData.contents) ? e.postData.contents : '{}';
+    var payload = JSON.parse(raw);
+    var action = String(payload.action || '').trim();
+
+    if (action !== 'upload_file') {
+      return _jsonResponse({ ok: false, error: '지원하지 않는 action입니다: ' + action });
+    }
+
+    var b64 = String(payload.file_base64 || '').trim();
+    if (!b64) {
+      return _jsonResponse({ ok: false, error: 'file_base64가 비어 있습니다.' });
+    }
+
+    var dataUrlMatch = b64.match(/^data:([^;]+);base64,(.+)$/);
+    var mimeType = String(payload.mime_type || 'application/octet-stream').trim();
+    if (dataUrlMatch) {
+      if (!payload.mime_type && dataUrlMatch[1]) mimeType = dataUrlMatch[1];
+      b64 = dataUrlMatch[2];
+    }
+
+    var fileName = String(payload.file_name || ('eduflow_' + Date.now() + '.bin')).trim();
+    var folderId = String(payload.folder_id || '').trim();
+    var folderName = String(payload.folder_name || 'EduFlow_Uploads').trim();
+
+    var targetFolder = _resolveTargetFolder(folderId, folderName);
+    var bytes = Utilities.base64Decode(b64);
+    var blob = Utilities.newBlob(bytes, mimeType, fileName);
+    var file = targetFolder.createFile(blob);
+
+    // 링크가 있는 모든 사용자에게 보기 권한 부여
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+    var savedId = file.getId();
+    if (!savedId) {
+      return _jsonResponse({ ok: false, error: 'Google Drive file_id를 생성하지 못했습니다.' });
+    }
+    return _jsonResponse({
+      ok: true,
+      file_id: savedId,
+      url: file.getUrl(),
+      download_url: 'https://drive.google.com/uc?export=download&id=' + savedId
+    });
+  } catch (err) {
+    return _jsonResponse({
+      ok: false,
+      error: err && err.message ? err.message : String(err)
+    });
+  }
+}
+
+function _resolveTargetFolder(folderId, folderName) {
+  if (folderId) {
+    return DriveApp.getFolderById(folderId);
+  }
+  var segments = String(folderName || 'EduFlow_Uploads')
+    .split('/')
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s.length > 0; });
+
+  if (segments.length === 0) {
+    segments = ['EduFlow_Uploads'];
+  }
+
+  var current = DriveApp.getRootFolder();
+  for (var i = 0; i < segments.length; i++) {
+    var seg = segments[i];
+    var iter = current.getFoldersByName(seg);
+    current = iter.hasNext() ? iter.next() : current.createFolder(seg);
+  }
+  return current;
+}
+
+function _jsonResponse(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+
+function toggleTeacherDriveInfo() {
+  const box = document.getElementById('tpDriveInfoBox');
+  if (box) box.classList.toggle('hidden');
+}
+
+function openTeacherGasGuideModal() {
+  openModal('teacherGasGuideModal');
+}
+
+function closeTeacherGasGuideModal() {
+  closeModal('teacherGasGuideModal');
+}
+
+async function copyTeacherGasCodeAndShowGuide() {
+  const code = TEACHER_GAS_DRIVE_UPLOAD_TEMPLATE;
+  let copied = false;
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(code);
+      copied = true;
+    } catch (_) {
+      copied = false;
+    }
+  }
+  if (!copied && typeof document !== 'undefined' && document.createElement && document.body) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = code;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      copied = typeof document.execCommand === 'function' ? document.execCommand('copy') : false;
+      document.body.removeChild(ta);
+    } catch (_) {
+      copied = false;
+    }
+  }
+  if (typeof showToast === 'function') {
+    showToast(
+      copied ? 'Apps Script 코드가 클립보드에 복사되었습니다.' : '아래 가이드에 따라 Apps Script를 배포해 주세요.',
+      copied ? '📋' : 'ℹ️'
+    );
+  }
+  openTeacherGasGuideModal();
+  return copied;
+}
+
 function openTeacherProfileModal() {
   const cu = mockData.currentUser;
   document.getElementById('tpName').value = cu.teacherName || '';
@@ -526,12 +665,32 @@ function openTeacherProfileModal() {
   document.getElementById('tpConsultationHours').value = cu.consultationHours || '';
   document.getElementById('tpNeisOfficeCode').value = cu.neisOfficeCode || '';
   document.getElementById('tpNeisSchoolCode').value = cu.neisSchoolCode || '';
+  const priorityEl = document.getElementById('tpDrivePriority');
+  const wsFolderEl = document.getElementById('tpWorkspaceDriveFolderId');
+  const personalUrlEl = document.getElementById('tpPersonalGasUrl');
+  const personalFolderEl = document.getElementById('tpPersonalDriveFolderId');
+  const infoBoxEl = document.getElementById('tpDriveInfoBox');
+  if (priorityEl) priorityEl.value = cu.drivePriority === 'personal' ? 'personal' : 'workspace';
+  if (wsFolderEl) wsFolderEl.value = cu.workspaceDriveFolderId || '';
+  if (personalUrlEl) personalUrlEl.value = cu.personalGasUrl || '';
+  if (personalFolderEl) personalFolderEl.value = cu.personalDriveFolderId || '';
+  if (infoBoxEl) infoBoxEl.classList.add('hidden');
   openModal('teacherProfileModal');
 }
 
 async function saveTeacherProfile(e) {
   e.preventDefault();
   const submitBtn = e.submitter || (e.target && e.target.querySelector('button[type="submit"]'));
+  const priorityEl = document.getElementById('tpDrivePriority');
+  const wsFolderEl = document.getElementById('tpWorkspaceDriveFolderId');
+  const personalUrlEl = document.getElementById('tpPersonalGasUrl');
+  const personalFolderEl = document.getElementById('tpPersonalDriveFolderId');
+  const drivePriority = (priorityEl && priorityEl.value === 'personal') ? 'personal' : 'workspace';
+  const personalGasUrl = personalUrlEl ? personalUrlEl.value.trim() : '';
+  if (personalGasUrl && !/^https?:\/\//i.test(personalGasUrl)) {
+    showToast('개인 Google Apps Script 웹 앱 URL은 http(s):// 형식이어야 합니다.', '⚠️');
+    return;
+  }
   const payload = {
     teacher_id: mockData.currentUser.userId || 'teacher01',
     name: document.getElementById('tpName').value.trim(),
@@ -542,13 +701,18 @@ async function saveTeacherProfile(e) {
     phone: document.getElementById('tpPhone').value.trim(),
     consultation_hours: document.getElementById('tpConsultationHours').value.trim(),
     neis_office_code: document.getElementById('tpNeisOfficeCode').value.trim(),
-    neis_school_code: document.getElementById('tpNeisSchoolCode').value.trim()
+    neis_school_code: document.getElementById('tpNeisSchoolCode').value.trim(),
+    drive_priority: drivePriority,
+    workspace_drive_folder_id: wsFolderEl ? wsFolderEl.value.trim() : '',
+    personal_gas_url: personalGasUrl,
+    personal_drive_folder_id: personalFolderEl ? personalFolderEl.value.trim() : ''
   };
 
   await withButtonLoading(submitBtn, '저장 중...', async () => {
+    let res = null;
     if (gasApi.isConfigured()) {
       try {
-        await gasApi.post('upsert_teacher_profile', { ..._getTeacherAuthParams(), ...payload });
+        res = await gasApi.post('upsert_teacher_profile', { ..._getTeacherAuthParams(), ...payload });
       } catch (err) {
         showToast(`교사 프로필 저장 실패: ${err.message}`, '⚠️');
         return;
@@ -567,6 +731,15 @@ async function saveTeacherProfile(e) {
     mockData.currentUser.consultationHours = payload.consultation_hours;
     mockData.currentUser.neisOfficeCode = payload.neis_office_code;
     mockData.currentUser.neisSchoolCode = payload.neis_school_code;
+    mockData.currentUser.drivePriority = payload.drive_priority;
+    mockData.currentUser.workspaceDriveFolderId = payload.workspace_drive_folder_id;
+    mockData.currentUser.personalGasUrl = payload.personal_gas_url;
+    mockData.currentUser.personalDriveFolderId = payload.personal_drive_folder_id;
+    mockData.currentUser.driveConfigured = (res && res.drive_configured !== undefined)
+      ? Boolean(res.drive_configured)
+      : (payload.drive_priority === 'personal'
+        ? Boolean(payload.personal_gas_url)
+        : Boolean(payload.workspace_drive_folder_id));
     if (typeof mergeTimetableForDay === 'function') {
       mockData.homeroomSchedule = mergeTimetableForDay(
         mockData.rawTimetableBase || [],
@@ -2935,6 +3108,50 @@ function _safeTeacherReplyUrl(rawUrl) {
   return /^https?:\/\//i.test(s) ? s : '';
 }
 
+function _extractDriveFileId(input) {
+  const s = String(input || '').trim();
+  if (!s) return '';
+  const queryMatch = s.match(/[?&]id=([A-Za-z0-9_-]{10,128})/);
+  if (queryMatch) return queryMatch[1];
+  const filePathMatch = s.match(/\/file\/d\/([A-Za-z0-9_-]{10,128})/);
+  if (filePathMatch) return filePathMatch[1];
+  const shortPathMatch = s.match(/\/d\/([A-Za-z0-9_-]{10,128})/);
+  if (shortPathMatch) return shortPathMatch[1];
+  if (/^[A-Za-z0-9_-]{10,128}$/.test(s)) return s;
+  return '';
+}
+
+function _resolveDriveImageUrls(rawUrlOrId) {
+  const s = String(rawUrlOrId || '').trim();
+  if (!s) return { primary: '', fallback: '', fileId: '' };
+  if (/^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(s)) {
+    return { primary: s, fallback: '', fileId: '' };
+  }
+  const isRawId = /^[A-Za-z0-9_-]{10,128}$/.test(s);
+  const isDriveUrl = /^https?:\/\/(?:drive\.google\.com|lh3\.googleusercontent\.com)\//i.test(s);
+  if (isRawId || isDriveUrl) {
+    const fileId = _extractDriveFileId(s);
+    if (fileId) {
+      return {
+        primary: `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`,
+        fallback: `https://lh3.googleusercontent.com/d/${fileId}`,
+        fileId
+      };
+    }
+  }
+  const safe = _safeTeacherReplyUrl(s);
+  return { primary: safe, fallback: '', fileId: '' };
+}
+
+function _renderTeacherSignaturePreviewHtml(rawUrlOrId, label) {
+  const resolved = _resolveDriveImageUrls(rawUrlOrId);
+  if (!resolved.primary) return '';
+  const onErrorAttr = resolved.fallback
+    ? ` onerror="if(this.dataset.fbApplied){this.onerror=null;return;}this.dataset.fbApplied='1';this.src='${_escTeacherHtml(resolved.fallback)}';"`
+    : '';
+  return `<div class="space-y-1"><p class="text-[10px] font-semibold text-slate-500">${_escTeacherHtml(label)}</p><img src="${_escTeacherHtml(resolved.primary)}" alt="${_escTeacherHtml(label)}" class="max-h-20 object-contain bg-white border border-slate-200 rounded-lg p-1"${onErrorAttr}/></div>`;
+}
+
 function _getSubmittedCircularReplies(circularId) {
   const c = (mockData.circulars || []).find(x => x.id === circularId);
   if (!c) return { circular: null, replies: [] };
@@ -2955,8 +3172,8 @@ function _getSubmittedCircularReplies(circularId) {
         consent: String(r.consent || r.reply_choice || ''),
         reply_data_json: r.reply_data_json || '',
         reply_file_drive_url: _safeTeacherReplyUrl(r.reply_file_drive_url),
-        signature_drive_url: _safeTeacherReplyUrl(r.signature_drive_url || r.signature_url || r.signature_data_url),
-        student_signature_drive_url: _safeTeacherReplyUrl(r.student_signature_drive_url || r.student_signature_url),
+        signature_drive_url: _safeTeacherReplyUrl(r.signature_drive_url || r.signature_url || r.signature_data_url) || _extractDriveFileId(r.signature_file_id),
+        student_signature_drive_url: _safeTeacherReplyUrl(r.student_signature_drive_url || r.student_signature_url) || _extractDriveFileId(r.student_signature_file_id),
         signed_at: String(r.signed_at || r.submitted_at || r.updated_at || '')
       };
     });
@@ -3007,16 +3224,28 @@ function openSubmittedRepliesModal(circularId) {
       const timeLabel = r.signed_at ? _escTeacherHtml(r.signed_at) : '제출 완료';
 
       const links = [];
+      const previews = [];
       if (r.reply_file_drive_url) {
         links.push(`<a href="${_escTeacherHtml(r.reply_file_drive_url)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[11px] font-bold">📄 회신 PDF ↗</a>`);
       }
       if (r.signature_drive_url) {
-        links.push(`<a href="${_escTeacherHtml(r.signature_drive_url)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-bold">✍️ 학부모 서명 ↗</a>`);
+        previews.push(_renderTeacherSignaturePreviewHtml(r.signature_drive_url, '학부모 서명'));
+        const openSigUrl = _resolveDriveImageUrls(r.signature_drive_url).fileId
+          ? `https://drive.google.com/file/d/${_resolveDriveImageUrls(r.signature_drive_url).fileId}/view`
+          : r.signature_drive_url;
+        links.push(`<a href="${_escTeacherHtml(openSigUrl)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-bold">✍️ 학부모 서명 ↗</a>`);
       }
       if (r.student_signature_drive_url) {
-        links.push(`<a href="${_escTeacherHtml(r.student_signature_drive_url)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-lg text-[11px] font-bold">✍️ 학생 서명 ↗</a>`);
+        previews.push(_renderTeacherSignaturePreviewHtml(r.student_signature_drive_url, '학생 서명'));
+        const openStuSigUrl = _resolveDriveImageUrls(r.student_signature_drive_url).fileId
+          ? `https://drive.google.com/file/d/${_resolveDriveImageUrls(r.student_signature_drive_url).fileId}/view`
+          : r.student_signature_drive_url;
+        links.push(`<a href="${_escTeacherHtml(openStuSigUrl)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-lg text-[11px] font-bold">✍️ 학생 서명 ↗</a>`);
       }
 
+      const previewsHtml = previews.filter(Boolean).length > 0
+        ? `<div class="flex flex-wrap gap-2 pt-1.5">${previews.filter(Boolean).join('')}</div>`
+        : '';
       const linksHtml = links.length > 0
         ? `<div class="flex flex-wrap gap-1.5 pt-1">${links.join('')}</div>`
         : `<p class="text-[10px] text-slate-400 pt-0.5">첨부된 서명/PDF 파일 없음 (텍스트·선택 회신)</p>`;
@@ -3028,6 +3257,7 @@ function openSubmittedRepliesModal(circularId) {
             <span class="text-[10px] text-slate-400 shrink-0">${timeLabel}</span>
           </div>
           ${r.consent ? `<p class="text-[11px] text-slate-600">회신: <span class="font-semibold text-slate-800">${_escTeacherHtml(r.consent)}</span></p>` : ''}
+          ${previewsHtml}
           ${linksHtml}
         </div>
       `;
@@ -3737,6 +3967,13 @@ if (typeof globalThis !== 'undefined') {
     openSubmittedRepliesModal,
     printSubmittedReplies,
     _confirmDriveConfiguredForSignature,
+    _extractDriveFileId,
+    _resolveDriveImageUrls,
+    openTeacherProfileModal,
+    saveTeacherProfile,
+    toggleTeacherDriveInfo,
+    copyTeacherGasCodeAndShowGuide,
+    TEACHER_GAS_DRIVE_UPLOAD_TEMPLATE,
   };
 }
 
@@ -4296,5 +4533,12 @@ if (typeof module !== 'undefined' && module.exports) {
     openSubmittedRepliesModal,
     printSubmittedReplies,
     _confirmDriveConfiguredForSignature,
+    _extractDriveFileId,
+    _resolveDriveImageUrls,
+    openTeacherProfileModal,
+    saveTeacherProfile,
+    toggleTeacherDriveInfo,
+    copyTeacherGasCodeAndShowGuide,
+    TEACHER_GAS_DRIVE_UPLOAD_TEMPLATE,
   };
 }
