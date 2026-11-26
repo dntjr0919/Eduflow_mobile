@@ -855,7 +855,7 @@ function selectRole(role) {
   const idLabel = document.getElementById('loginIdLabel');
   const idInput = document.getElementById('loginIdInput');
   if (role === 'student') {
-    idLabel.innerText = "학번 (5자리)";
+    idLabel.innerText = "아이디";
     idInput.placeholder = "학번 5자리(예: 10315)";
   } else if (role === 'parent') {
     idLabel.innerText = "학부모 아이디";
