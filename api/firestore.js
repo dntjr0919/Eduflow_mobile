@@ -316,6 +316,15 @@ function _validateStringInput(val, { maxLen = 2000, required = false, label = '�
   return { ok: true, value: s };
 }
 
+function _normalizeSignatureMode(rawMode, requiresReply = true) {
+  const raw = String(rawMode ?? '').trim().toLowerCase();
+  if (raw === 'none' || raw === '0' || raw === 'no' || raw === 'false') return 'none';
+  if (raw === 'student' || raw === 'student_only') return 'student';
+  if (raw === 'both' || raw === '2') return 'both';
+  if (raw === 'parent' || raw === 'parent_only' || raw === 'single' || raw === '1') return 'parent';
+  return requiresReply ? 'parent' : 'none';
+}
+
 function _parsePayload(req) {
   let raw = {};
   if (req.method === 'GET') {
@@ -2651,7 +2660,8 @@ module.exports = async function handler(req, res) {
         }
       }
       const isPublished = params.is_published === undefined ? true : _toBool(params.is_published);
-      const signatureMode = String(params.signature_mode || '').trim().toLowerCase() === 'both' ? 'both' : 'single';
+      const requiresReply = params.requires_reply === undefined ? true : _toBool(params.requires_reply);
+      const signatureMode = _normalizeSignatureMode(params.signature_mode, requiresReply);
       const nowStr = _nowStr();
       const noticePayload = {
         remote_id: rid,
@@ -2666,7 +2676,7 @@ module.exports = async function handler(req, res) {
         teacher_id: String((existing && existing.teacher_id) || adminAuth.teacherId || ''),
         author_name: String(params.author_name || (existing && existing.author_name) || (adminAuth.teacherDoc && adminAuth.teacherDoc.name) || '담임교사'),
         attachment_url: attachmentUrl,
-        requires_reply: params.requires_reply === undefined ? true : _toBool(params.requires_reply),
+        requires_reply: requiresReply,
         signature_mode: signatureMode,
         is_published: isPublished,
         created_at: String((existing && existing.created_at) || nowStr),
@@ -2703,8 +2713,11 @@ module.exports = async function handler(req, res) {
         return res.status(403).json({ ok: false, error: '본인 학급 또는 본인이 작성한 가정통신문만 게시·수정할 수 있습니다.' });
       }
       const nowStr = _nowStr();
+      const requiresReply = params.requires_reply !== undefined
+        ? _toBool(params.requires_reply)
+        : (existing.requires_reply === undefined ? true : _toBool(existing.requires_reply));
       const rawSigMode = params.signature_mode !== undefined ? params.signature_mode : existing.signature_mode;
-      const signatureMode = String(rawSigMode || '').trim().toLowerCase() === 'both' ? 'both' : 'single';
+      const signatureMode = _normalizeSignatureMode(rawSigMode, requiresReply);
       const mergedPayload = {
         remote_id: rid,
         title: String(params.title !== undefined ? params.title : (existing.title || '')).trim(),
@@ -2718,9 +2731,7 @@ module.exports = async function handler(req, res) {
         teacher_id: String(existing.teacher_id || adminAuth.teacherId || '').trim(),
         author_name: String(params.author_name !== undefined ? params.author_name : (existing.author_name || (adminAuth.teacherDoc && adminAuth.teacherDoc.name) || '담임교사')).trim(),
         attachment_url: _resolveNoticeAttachmentUrl(params) || _resolveNoticeAttachmentUrl(existing) || '',
-        requires_reply: params.requires_reply !== undefined
-          ? _toBool(params.requires_reply)
-          : (existing.requires_reply === undefined ? true : _toBool(existing.requires_reply)),
+        requires_reply: requiresReply,
         signature_mode: signatureMode,
         is_published: true,
         published_at: existing.published_at || nowStr,
@@ -2791,6 +2802,34 @@ module.exports = async function handler(req, res) {
       const sanitizeSeg = (val, fallback = '') => String(val ?? '').trim().replace(/[\\/:*?"<>|]/g, '_') || fallback;
       const noticeSnap = await db.collection('가정통신문_목록').doc(noticeId).get();
       const noticeData = noticeSnap.exists ? (noticeSnap.data() || {}) : {};
+      const noticeRequiresReply = noticeData.requires_reply === undefined ? true : _toBool(noticeData.requires_reply);
+      const rawReplySigMode = noticeData.signature_mode !== undefined ? noticeData.signature_mode : params.signature_mode;
+      const signatureMode = _normalizeSignatureMode(rawReplySigMode, noticeRequiresReply);
+      const effectiveParentBase64 = signatureMode === 'none' || signatureMode === 'student'
+        ? ''
+        : String(params.parent_signature_base64 || params.signature_base64 || '').trim();
+      const effectiveStudentBase64 = signatureMode === 'none' || signatureMode === 'parent'
+        ? ''
+        : String(params.student_signature_base64 || (signatureMode === 'student' ? (params.signature_base64 || '') : '')).trim();
+      const hasParentSigInput = Boolean(
+        effectiveParentBase64 ||
+        (signatureMode !== 'none' && signatureMode !== 'student' && params.signature_drive_url && !String(params.signature_drive_url).startsWith('data:'))
+      );
+      const hasStudentSigInput = Boolean(
+        effectiveStudentBase64 ||
+        (signatureMode !== 'none' && signatureMode !== 'parent' && params.student_signature_drive_url && !String(params.student_signature_drive_url).startsWith('data:'))
+      );
+      if (session.role !== 'teacher') {
+        if (signatureMode === 'student' && !hasStudentSigInput) {
+          return res.status(400).json({ ok: false, error: '학생 전자서명이 필요합니다.' });
+        }
+        if (signatureMode === 'parent' && !hasParentSigInput) {
+          return res.status(400).json({ ok: false, error: '학부모(보호자) 전자서명이 필요합니다.' });
+        }
+        if (signatureMode === 'both' && (!hasStudentSigInput || !hasParentSigInput)) {
+          return res.status(400).json({ ok: false, error: '학생과 학부모(보호자) 전자서명이 모두 필요합니다.' });
+        }
+      }
       const schoolName = sanitizeSeg(noticeData.school_name || params.school_name, '학교미지정');
       const targetGrade = _toIntOrNull(noticeData.target_grade ?? noticeData.grade ?? params.grade);
       const targetClass = _toIntOrNull(noticeData.target_class ?? noticeData.class_no ?? params.class_no);
@@ -2808,7 +2847,7 @@ module.exports = async function handler(req, res) {
       if (sigDriveUrl.startsWith('data:')) {
         sigDriveUrl = '';
       }
-      const parentSigBase64 = params.parent_signature_base64 || params.signature_base64 || '';
+      const parentSigBase64 = effectiveParentBase64;
       if (parentSigBase64) {
         const driveRes = await uploadBase64ToDrive({
           base64Data: parentSigBase64,
@@ -2831,9 +2870,9 @@ module.exports = async function handler(req, res) {
       if (studentSigDriveUrl.startsWith('data:')) {
         studentSigDriveUrl = '';
       }
-      if (params.student_signature_base64) {
+      if (effectiveStudentBase64) {
         const stuDriveRes = await uploadBase64ToDrive({
-          base64Data: params.student_signature_base64,
+          base64Data: effectiveStudentBase64,
           fileName: `${baseFileName}_student.png`,
           mimeType: 'image/png',
           folderName: driveFolderPath
@@ -2874,7 +2913,6 @@ module.exports = async function handler(req, res) {
         ? params.reply_data_json
         : JSON.stringify(params.reply_data_json || params.reply_data || {});
       const signedAt = String(params.signed_at || nowStr);
-      const signatureMode = String(params.signature_mode || noticeData.signature_mode || '').trim().toLowerCase() === 'both' ? 'both' : 'single';
       const replyDoc = {
         remote_id: rid,
         notice_id: noticeId,
@@ -5908,6 +5946,7 @@ function _buildNoticeReplyLedger(students, notice, replies) {
 
 module.exports._testHelpers = {
   _parsePayload,
+  _normalizeSignatureMode,
   _validateStringInput,
   _handleGetMobileBundle,
   _handleLogin,

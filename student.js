@@ -1202,6 +1202,15 @@ function _getCircularDefaultTextValue(field) {
   return '';
 }
 
+function _normalizeNoticeSignatureMode(rawMode, requiresReply = true) {
+  const raw = String(rawMode ?? '').trim().toLowerCase();
+  if (raw === 'none' || raw === '0' || raw === 'no' || raw === 'false') return 'none';
+  if (raw === 'student' || raw === 'student_only') return 'student';
+  if (raw === 'both' || raw === '2') return 'both';
+  if (raw === 'parent' || raw === 'parent_only' || raw === 'single' || raw === '1') return 'parent';
+  return requiresReply ? 'parent' : 'none';
+}
+
 function openCircularModal(id) {
   state.currentCircularId = id;
   const c = mockData.circulars.find(x => x.id === id);
@@ -1314,7 +1323,16 @@ function openCircularModal(id) {
       }
     }
     if (sigLabel) {
-      sigLabel.innerText = (hasStudentSig || c.signatureMode === 'both') ? '학부모(보호자) 전자서명' : '전자서명';
+      const submittedSigMode = _normalizeNoticeSignatureMode(c.signatureMode, c.requiresReply !== false);
+      if (hasStudentSig && !hasParentSig) {
+        sigLabel.innerText = '학생 전자서명';
+      } else if (hasStudentSig || submittedSigMode === 'both') {
+        sigLabel.innerText = '학부모(보호자) 전자서명';
+      } else if (submittedSigMode === 'student') {
+        sigLabel.innerText = '학생 전자서명';
+      } else {
+        sigLabel.innerText = '학부모(보호자) 전자서명';
+      }
     }
     if (sigWrap) {
       sigWrap.classList.toggle('hidden', !hasStudentSig && !hasParentSig);
@@ -1351,13 +1369,29 @@ function openCircularModal(id) {
       });
     }
 
-    const needsSig = c.requiresReply !== false;
-    const isBothSig = c.signatureMode === 'both';
+    const sigMode = _normalizeNoticeSignatureMode(c.signatureMode, c.requiresReply !== false);
+    const needsSig = sigMode !== 'none';
+    const isBothSig = sigMode === 'both';
+    const singleSigTitle = document.getElementById('modalCircularSingleSigTitle');
+    const singleSigPh = document.getElementById('signaturePlaceholder');
+    const singleSigHint = document.getElementById('modalCircularSingleSigHint');
+    if (sigMode === 'student') {
+      if (singleSigTitle) singleSigTitle.innerText = '학생 전자서명';
+      if (singleSigPh) singleSigPh.innerText = '학생 본인 정자(서명)를 작성해 주세요';
+      if (singleSigHint) singleSigHint.innerText = '학생 본인이 손가락 또는 마우스로 정자 서명하세요.';
+    } else if (sigMode === 'parent') {
+      if (singleSigTitle) singleSigTitle.innerText = '학부모(보호자) 전자서명';
+      if (singleSigPh) singleSigPh.innerText = '학부모(보호자) 정자(서명)를 작성해 주세요';
+      if (singleSigHint) singleSigHint.innerText = '학부모(보호자)가 손가락 또는 마우스로 정자 서명하세요.';
+    }
     if (sigSection) sigSection.classList.toggle('hidden', !needsSig);
-    if (singleSigWrap) singleSigWrap.classList.toggle('hidden', isBothSig);
-    if (bothSigWrap) bothSigWrap.classList.toggle('hidden', !isBothSig);
+    if (singleSigWrap) singleSigWrap.classList.toggle('hidden', !needsSig || isBothSig);
+    if (bothSigWrap) bothSigWrap.classList.toggle('hidden', !needsSig || !isBothSig);
     if (readOnlyNote) readOnlyNote.classList.toggle('hidden', needsSig || activeFields.length > 0);
-    if (submitBtn) submitBtn.classList.toggle('hidden', !needsSig && activeFields.length === 0);
+    if (submitBtn) {
+      submitBtn.classList.toggle('hidden', !needsSig && activeFields.length === 0);
+      submitBtn.innerText = needsSig ? '서명 및 회신 제출하기' : '회신 제출하기';
+    }
     clearSignaturePad();
   }
 
@@ -1478,8 +1512,9 @@ async function submitCircularSignature(btnEl) {
     replyData[f.name] = val;
   }
 
-  const needsSig = c.requiresReply !== false;
-  const isBothSig = c.signatureMode === 'both';
+  const sigMode = _normalizeNoticeSignatureMode(c.signatureMode, c.requiresReply !== false);
+  const needsSig = sigMode !== 'none';
+  const isBothSig = sigMode === 'both';
   let signatureBase64 = '';
   let studentSignatureBase64 = '';
   let parentSignatureBase64 = '';
@@ -1498,13 +1533,21 @@ async function submitCircularSignature(btnEl) {
     studentSignatureBase64 = stuCanvas ? stuCanvas.toDataURL('image/png') : '';
     parentSignatureBase64 = parCanvas ? parCanvas.toDataURL('image/png') : '';
     signatureBase64 = parentSignatureBase64;
-  } else if (needsSig) {
+  } else if (sigMode === 'student') {
     if (!state.hasDrawnSignature) {
-      showToast('서명란에 터치 전자서명을 작성해 주세요.', '✍️');
+      showToast('학생 전자서명란에 서명을 작성해 주세요.', '✍️');
+      return;
+    }
+    const canvas = document.getElementById('signaturePad');
+    studentSignatureBase64 = canvas ? canvas.toDataURL('image/png') : '';
+  } else if (sigMode === 'parent') {
+    if (!state.hasDrawnSignature) {
+      showToast('학부모(보호자) 서명란에 터치 전자서명을 작성해 주세요.', '✍️');
       return;
     }
     const canvas = document.getElementById('signaturePad');
     signatureBase64 = canvas ? canvas.toDataURL('image/png') : '';
+    parentSignatureBase64 = signatureBase64;
   }
 
   const firstRadio = fields.find(f => f.type === 'radio');
@@ -1515,8 +1558,8 @@ async function submitCircularSignature(btnEl) {
     : new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
 
   await withButtonLoading(btnEl, '제출 중...', async () => {
-    let savedSigUrl = isBothSig ? parentSignatureBase64 : signatureBase64;
-    let savedStudentSigUrl = isBothSig ? studentSignatureBase64 : '';
+    let savedSigUrl = (sigMode === 'both' || sigMode === 'parent') ? (parentSignatureBase64 || signatureBase64) : '';
+    let savedStudentSigUrl = (sigMode === 'both' || sigMode === 'student') ? studentSignatureBase64 : '';
     if (typeof gasApi !== 'undefined' && gasApi.isConfigured()) {
       try {
         const payloadData = {
@@ -1525,14 +1568,18 @@ async function submitCircularSignature(btnEl) {
           student_name: mockData.currentUser.studentName || '학생',
           parent_id: mockData.currentUser.userId || '',
           parent_name: mockData.currentUser.parentName || '학부모',
-          signature_mode: isBothSig ? 'both' : 'single',
+          signature_mode: sigMode,
           consent: consentVal,
           reply_data_json: replyDataJson,
           signature_base64: signatureBase64,
           signed_at: signedAt
         };
-        if (isBothSig) {
+        if (sigMode === 'both') {
           payloadData.student_signature_base64 = studentSignatureBase64;
+          payloadData.parent_signature_base64 = parentSignatureBase64;
+        } else if (sigMode === 'student') {
+          payloadData.student_signature_base64 = studentSignatureBase64;
+        } else if (sigMode === 'parent') {
           payloadData.parent_signature_base64 = parentSignatureBase64;
         }
         const res = await gasApi.post('submit_notice_reply', { data: payloadData });
@@ -1843,5 +1890,6 @@ if (typeof module !== 'undefined' && module.exports) {
     _parseConsultationHoursRange,
     _getKstWorkingHoursStatus,
     _updateCounselingWorkHoursBanner,
+    _normalizeNoticeSignatureMode,
   };
 }
