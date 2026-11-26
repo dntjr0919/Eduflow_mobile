@@ -1823,6 +1823,10 @@ async function sendChatMessage() {
           sender_name: mockData.currentUser.studentName || mockData.currentUser.parentName || '학생',
           sender_role: state.activeRole,
           receiver_id: 'teacher_001',
+          grade: mockData.currentUser.grade || '',
+          class_no: mockData.currentUser.classNo || '',
+          school_code: mockData.currentUser.neisSchoolCode || mockData.currentUser.schoolCode || '',
+          school_name: mockData.currentUser.schoolName || '',
           message: text,
           is_read: 0
         }
@@ -1865,6 +1869,10 @@ async function handleCounselingBooking(e) {
           sender_name: mockData.currentUser.studentName || mockData.currentUser.parentName || '학생',
           sender_role: state.activeRole,
           receiver_id: 'teacher_001',
+          grade: mockData.currentUser.grade || '',
+          class_no: mockData.currentUser.classNo || '',
+          school_code: mockData.currentUser.neisSchoolCode || mockData.currentUser.schoolCode || '',
+          school_name: mockData.currentUser.schoolName || '',
           message: msg,
           is_read: 0
         }

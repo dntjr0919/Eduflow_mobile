@@ -2157,12 +2157,6 @@ async function sendDocReminderNotification(docId, btnEl) {
           grade: mockData.currentUser.grade || '',
           class_no: mockData.currentUser.classNo || ''
         });
-        await _dispatchWebPush({
-          title,
-          message,
-          target_role: 'all',
-          target_student_ids: [doc.studentId]
-        });
       } catch (err) {
         showToast(`독촉 알림 전송 실패: ${err.message}`, '⚠️');
         return;
@@ -2922,12 +2916,6 @@ async function sendBulkPromptToUnsubmitted(btnEl) {
           grade: mockData.currentUser.grade || '',
           class_no: mockData.currentUser.classNo || ''
         });
-        await _dispatchWebPush({
-          title,
-          message,
-          target_role: 'all',
-          target_student_ids: targetIds
-        });
       } catch (err) {
         showToast(`독촉 알림 발송 실패: ${err.message}`, '⚠️');
         return;
@@ -2972,15 +2960,9 @@ async function handleSendNotification(e) {
           title,
           message,
           target_role: targetRole,
-          target_student_id: targetStudentId,
+          target_student_id: targetStudentId === 'ALL' ? '' : targetStudentId,
           grade: mockData.currentUser.grade || '',
           class_no: mockData.currentUser.classNo || ''
-        });
-        await _dispatchWebPush({
-          title,
-          message,
-          target_role: targetRole,
-          target_student_id: targetStudentId
         });
       } catch (err) {
         showToast(`알림 발송 실패: ${err.message}`, '⚠️');

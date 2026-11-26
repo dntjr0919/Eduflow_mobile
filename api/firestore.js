@@ -72,6 +72,57 @@ function _withInferredClass(doc) {
   };
 }
 
+async function _resolveStudentTenantScope(db, studentId, opts = {}) {
+  const sid = String(studentId || '').trim();
+  const teacherAuth = opts.teacherAuth || null;
+  let schoolCode = String(opts.schoolCode || (teacherAuth ? teacherAuth.schoolCode : '') || '').trim();
+  let schoolName = String(opts.schoolName || (teacherAuth ? teacherAuth.schoolName : '') || '').trim();
+  let grade = _toIntOrNull(opts.grade ?? (teacherAuth ? teacherAuth.gradeNum : null));
+  let classNo = _toIntOrNull(opts.classNo ?? (teacherAuth ? teacherAuth.classNum : null));
+  let studentName = String(opts.studentName || '').trim();
+
+  if (db && sid && (grade === null || classNo === null || !schoolCode || !schoolName || !studentName)) {
+    try {
+      let stuData = null;
+      const candidateIds = schoolCode ? [`${schoolCode}_${sid}`, sid] : [sid];
+      for (const docId of candidateIds) {
+        const snap = await db.collection('계정_학생').doc(docId).get();
+        if (snap.exists) {
+          stuData = snap.data() || {};
+          break;
+        }
+      }
+      if (!stuData) {
+        const qSnap = await db.collection('계정_학생').where('student_id', '==', sid).limit(5).get();
+        qSnap.forEach((d) => {
+          const candidate = d.data() || {};
+          if (!stuData) stuData = candidate;
+          if (teacherAuth && _isStrictClassMember({ remote_id: d.id, ...candidate }, teacherAuth)) {
+            stuData = candidate;
+          } else if (!teacherAuth && schoolCode && String(candidate.school_code || candidate.neis_school_code || '').trim() === schoolCode) {
+            stuData = candidate;
+          }
+        });
+      }
+      if (stuData) {
+        if (grade === null) grade = _toIntOrNull(stuData.grade);
+        if (classNo === null) classNo = _toIntOrNull(stuData.class_no);
+        if (!schoolCode) schoolCode = String(stuData.school_code || stuData.neis_school_code || '').trim();
+        if (!schoolName) schoolName = String(stuData.school_name || '').trim();
+        if (!studentName) studentName = String(stuData.name || stuData.student_name || '').trim();
+      }
+    } catch (_) {}
+  }
+
+  if (sid && (grade === null || classNo === null)) {
+    const inf = _inferGradeClassFromStudentId(sid);
+    if (grade === null) grade = inf.grade;
+    if (classNo === null) classNo = inf.class_no;
+  }
+
+  return { schoolCode, schoolName, grade, classNo, studentName };
+}
+
 function _toBool(val) {
   if (typeof val === 'boolean') return val;
   if (typeof val === 'number') return val !== 0;
@@ -2112,38 +2163,19 @@ module.exports = async function handler(req, res) {
           }
         }
       }
-      let resolvedGrade = _toIntOrNull(params.grade ?? (teacherAuth ? teacherAuth.gradeNum : null));
-      let resolvedClassNo = _toIntOrNull(params.class_no ?? (teacherAuth ? teacherAuth.classNum : null));
-      let resolvedSchoolCode = String(params.school_code || params.neis_school_code || (teacherAuth ? teacherAuth.schoolCode : '') || '').trim();
-      let resolvedSchoolName = String(params.school_name || (teacherAuth ? teacherAuth.schoolName : '') || '').trim();
-      let resolvedStudentName = String(params.student_name || '').trim();
-      if (sid && (resolvedGrade === null || resolvedClassNo === null || !resolvedSchoolCode || !resolvedStudentName)) {
-        const stuDocId = resolvedSchoolCode ? `${resolvedSchoolCode}_${sid}` : sid;
-        const stuSnap = await db.collection('계정_학생').doc(stuDocId).get();
-        let stuData = stuSnap.exists ? (stuSnap.data() || {}) : null;
-        if (!stuData) {
-          const qSnap = await db.collection('계정_학생').where('student_id', '==', sid).limit(5).get();
-          qSnap.forEach((d) => {
-            const candidate = d.data() || {};
-            if (!stuData) stuData = candidate;
-            if (teacherAuth && _isStrictClassMember({ remote_id: d.id, ...candidate }, teacherAuth)) {
-              stuData = candidate;
-            }
-          });
-        }
-        if (stuData) {
-          if (resolvedGrade === null) resolvedGrade = _toIntOrNull(stuData.grade);
-          if (resolvedClassNo === null) resolvedClassNo = _toIntOrNull(stuData.class_no);
-          if (!resolvedSchoolCode) resolvedSchoolCode = String(stuData.school_code || stuData.neis_school_code || '').trim();
-          if (!resolvedSchoolName) resolvedSchoolName = String(stuData.school_name || '').trim();
-          if (!resolvedStudentName) resolvedStudentName = String(stuData.name || stuData.student_name || '').trim();
-        }
-        if (resolvedGrade === null || resolvedClassNo === null) {
-          const inf = _inferGradeClassFromStudentId(sid);
-          if (resolvedGrade === null) resolvedGrade = inf.grade;
-          if (resolvedClassNo === null) resolvedClassNo = inf.class_no;
-        }
-      }
+      const resolvedScope = await _resolveStudentTenantScope(db, sid, {
+        schoolCode: params.school_code || params.neis_school_code || (teacherAuth ? teacherAuth.schoolCode : (session.ok ? session.schoolCode : '')),
+        schoolName: params.school_name || (teacherAuth ? teacherAuth.schoolName : ''),
+        grade: params.grade ?? (teacherAuth ? teacherAuth.gradeNum : null),
+        classNo: params.class_no ?? (teacherAuth ? teacherAuth.classNum : null),
+        studentName: params.student_name || '',
+        teacherAuth,
+      });
+      const resolvedGrade = resolvedScope.grade;
+      const resolvedClassNo = resolvedScope.classNo;
+      const resolvedSchoolCode = resolvedScope.schoolCode;
+      const resolvedSchoolName = resolvedScope.schoolName;
+      const resolvedStudentName = resolvedScope.studentName;
       if (teacherAuth && !_isStrictClassMember({
         student_id: sid,
         grade: resolvedGrade,
@@ -2163,6 +2195,7 @@ module.exports = async function handler(req, res) {
           school_name: resolvedSchoolName,
           grade: resolvedGrade,
           class_no: resolvedClassNo,
+          ...(teacherAuth ? { teacher_id: teacherAuth.teacherId } : {}),
           attendance_type: String(params.attendance_type || ''),
           att_category: String(params.att_category || ''),
           att_sub_type: String(params.att_sub_type || ''),
@@ -2330,6 +2363,7 @@ module.exports = async function handler(req, res) {
             school_name: adminAuth.schoolName,
             grade: adminAuth.gradeNum,
             class_no: adminAuth.classNum,
+            teacher_id: adminAuth.teacherId,
             attendance_type: String(rec.attendance_type || '출석'),
             att_category: String(rec.att_category || ''),
             att_sub_type: String(rec.att_sub_type || ''),
@@ -2390,17 +2424,35 @@ module.exports = async function handler(req, res) {
       }
       const rid = String(params.remote_id || `doc_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
       const update = { remote_id: rid, updated_at: _nowStr() };
-      const inferred = _inferGradeClassFromStudentId(params.student_id);
-      const resolvedGrade = _toIntOrNull(params.grade) ?? inferred.grade;
-      const resolvedClassNo = _toIntOrNull(params.class_no) ?? inferred.class_no;
+      const docSid = String(
+        params.student_id ||
+        (existingDocData && existingDocData.student_id) ||
+        (!useTeacherPath && session.ok ? (session.studentId || session.sub) : '') ||
+        ''
+      ).trim();
+      const docTenant = await _resolveStudentTenantScope(db, docSid, {
+        schoolCode: params.school_code || (existingDocData && existingDocData.school_code) || (teacherAuth ? teacherAuth.schoolCode : (session.ok ? session.schoolCode : '')),
+        schoolName: params.school_name || (existingDocData && existingDocData.school_name) || (teacherAuth ? teacherAuth.schoolName : ''),
+        grade: params.grade ?? (existingDocData && existingDocData.grade) ?? (teacherAuth ? teacherAuth.gradeNum : null),
+        classNo: params.class_no ?? (existingDocData && existingDocData.class_no) ?? (teacherAuth ? teacherAuth.classNum : null),
+        studentName: params.student_name || (existingDocData && existingDocData.student_name) || '',
+        teacherAuth,
+      });
       let responseDueDate = '';
       if (action === 'mark_document_submitted') {
         update.status = 'submitted';
         update.submitted_at = _nowStr();
         if (params.attachment_url) update.attachment_url = String(params.attachment_url);
-        if (resolvedGrade !== null) update.grade = resolvedGrade;
-        if (resolvedClassNo !== null) update.class_no = resolvedClassNo;
+        if (docTenant.grade !== null) update.grade = docTenant.grade;
+        if (docTenant.classNo !== null) update.class_no = docTenant.classNo;
+        if (docTenant.schoolCode) update.school_code = docTenant.schoolCode;
+        if (docTenant.schoolName) update.school_name = docTenant.schoolName;
       } else if (action === 'confirm_document') {
+        if (teacherAuth && teacherAuth.teacherId) update.teacher_id = teacherAuth.teacherId;
+        if (docTenant.grade !== null && (!existingDocData || existingDocData.grade === undefined || existingDocData.grade === null)) update.grade = docTenant.grade;
+        if (docTenant.classNo !== null && (!existingDocData || existingDocData.class_no === undefined || existingDocData.class_no === null)) update.class_no = docTenant.classNo;
+        if (docTenant.schoolCode && (!existingDocData || !existingDocData.school_code)) update.school_code = docTenant.schoolCode;
+        if (docTenant.schoolName && (!existingDocData || !existingDocData.school_name)) update.school_name = docTenant.schoolName;
         const reqStatus = String(params.status || '').trim().toLowerCase();
         if (reqStatus === '미제출' || reqStatus === 'pending') {
           update.status = 'pending';
@@ -2440,12 +2492,12 @@ module.exports = async function handler(req, res) {
           dueDate = _computeDocDueDate(ruleCode, baseDate, _snapToRows(rulesSnap));
         }
         responseDueDate = dueDate;
-        const targetGrade = resolvedGrade ?? (teacherAuth ? teacherAuth.gradeNum : null);
-        const targetClassNo = resolvedClassNo ?? (teacherAuth ? teacherAuth.classNum : null);
-        const targetSchoolCode = String(params.school_code || (teacherAuth ? teacherAuth.schoolCode : '') || '').trim();
-        const targetSchoolName = String(params.school_name || (teacherAuth ? teacherAuth.schoolName : '') || '').trim();
+        const targetGrade = docTenant.grade;
+        const targetClassNo = docTenant.classNo;
+        const targetSchoolCode = docTenant.schoolCode;
+        const targetSchoolName = docTenant.schoolName;
         if (teacherAuth && !_isStrictClassMember({
-          student_id: String(params.student_id || ''),
+          student_id: docSid,
           grade: targetGrade,
           class_no: targetClassNo,
           school_code: targetSchoolCode,
@@ -2454,12 +2506,13 @@ module.exports = async function handler(req, res) {
           return res.status(403).json({ ok: false, error: '담당 학급의 서류 추적 내역만 등록·수정할 수 있습니다.' });
         }
         Object.assign(update, {
-          student_id: String(params.student_id || ''),
-          student_name: String(params.student_name || ''),
+          student_id: docSid,
+          student_name: docTenant.studentName,
           grade: targetGrade,
           class_no: targetClassNo,
           school_code: targetSchoolCode,
           school_name: targetSchoolName,
+          ...(teacherAuth ? { teacher_id: teacherAuth.teacherId } : {}),
           rule_code: ruleCode,
           doc_type: String(params.doc_type || ''),
           doc_name: String(params.doc_name || params.doc_type || ''),
@@ -2913,11 +2966,23 @@ module.exports = async function handler(req, res) {
         ? params.reply_data_json
         : JSON.stringify(params.reply_data_json || params.reply_data || {});
       const signedAt = String(params.signed_at || nowStr);
+      const replyTenant = await _resolveStudentTenantScope(db, studentId, {
+        schoolCode: noticeData.school_code || params.school_code || session.schoolCode || '',
+        schoolName: noticeData.school_name || params.school_name || '',
+        grade: noticeData.target_grade ?? noticeData.grade ?? params.grade,
+        classNo: noticeData.target_class ?? noticeData.class_no ?? params.class_no,
+        studentName,
+      });
       const replyDoc = {
         remote_id: rid,
         notice_id: noticeId,
         student_id: studentId,
-        student_name: studentName,
+        student_name: replyTenant.studentName || studentName,
+        school_code: replyTenant.schoolCode,
+        school_name: replyTenant.schoolName,
+        grade: replyTenant.grade,
+        class_no: replyTenant.classNo,
+        ...(noticeData.teacher_id ? { teacher_id: String(noticeData.teacher_id).trim() } : {}),
         parent_id: String(params.parent_id || ''),
         parent_name: String(params.parent_name || ''),
         signature_mode: signatureMode,
@@ -3043,14 +3108,21 @@ module.exports = async function handler(req, res) {
       }
       const rid = String(params.remote_id || `chat_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
       const nowStr = _nowStr();
+      const chatTenant = await _resolveStudentTenantScope(db, inferredSid, {
+        schoolCode: params.school_code || (teacherAuth ? teacherAuth.schoolCode : (session.ok ? session.schoolCode : '')),
+        schoolName: params.school_name || (teacherAuth ? teacherAuth.schoolName : ''),
+        grade: params.grade ?? (teacherAuth ? teacherAuth.gradeNum : null),
+        classNo: params.class_no ?? (teacherAuth ? teacherAuth.classNum : null),
+        teacherAuth,
+      });
       const chatDoc = {
         remote_id: rid,
         room_id: roomId,
         student_id: inferredSid,
-        grade: _toIntOrNull(params.grade ?? (teacherAuth ? teacherAuth.gradeNum : null)),
-        class_no: _toIntOrNull(params.class_no ?? (teacherAuth ? teacherAuth.classNum : null)),
-        school_code: String(params.school_code || (teacherAuth ? teacherAuth.schoolCode : '') || ''),
-        school_name: String(params.school_name || (teacherAuth ? teacherAuth.schoolName : '') || ''),
+        grade: chatTenant.grade,
+        class_no: chatTenant.classNo,
+        school_code: chatTenant.schoolCode,
+        school_name: chatTenant.schoolName,
         sender_role: senderRole || 'student',
         sender_name: senderNameCheck.value,
         message: msgCheck.value,
@@ -3222,27 +3294,73 @@ module.exports = async function handler(req, res) {
         { maxLen: 100, required: false, label: '발신자(sender)' }
       );
       if (!senderCheck.ok) return res.status(400).json({ ok: false, error: senderCheck.error });
-      const rid = String(params.remote_id || `noti_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
-      await db.collection('Notifications').doc(rid).set(
-        {
-          remote_id: rid,
+      const rawTargetRole = String(params.target_role || 'all').trim().toLowerCase();
+      const targetRole = ['all', 'student', 'parent', 'teacher'].includes(rawTargetRole) ? rawTargetRole : 'all';
+      const rawSingleSid = String(params.target_student_id ?? params.student_id ?? '').trim();
+      const normalizedSingleSid = rawSingleSid.toUpperCase() === 'ALL' ? '' : rawSingleSid;
+      const targetStudentIds = Array.isArray(params.target_student_ids)
+        ? params.target_student_ids.map((s) => String(s || '').trim()).filter((s) => s && s.toUpperCase() !== 'ALL')
+        : [];
+      const resolvedGrade = _toIntOrNull(params.grade) ?? adminAuth.gradeNum;
+      const resolvedClassNo = _toIntOrNull(params.class_no) ?? adminAuth.classNum;
+      const resolvedSchoolCode = String(adminAuth.schoolCode || params.school_code || '').trim();
+      const resolvedSchoolName = String(adminAuth.schoolName || params.school_name || '').trim();
+      const nowStr = _nowStr();
+      const baseNoti = {
+        title: titleCheck.value,
+        message: msgCheck.value,
+        channel: String(params.channel || 'mobile_pwa'),
+        target_role: targetRole,
+        sender: senderCheck.value,
+        teacher_id: adminAuth.teacherId,
+        school_code: resolvedSchoolCode,
+        school_name: resolvedSchoolName,
+        grade: resolvedGrade,
+        class_no: resolvedClassNo,
+        is_read: false,
+        read_by: [],
+        created_at: nowStr,
+        updated_at: nowStr
+      };
+      const baseRid = String(params.remote_id || `noti_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
+      if (targetStudentIds.length > 0) {
+        const batch = db.batch();
+        const createdIds = [];
+        targetStudentIds.forEach((sid, idx) => {
+          const itemRid = `${baseRid}_${idx}`;
+          createdIds.push(itemRid);
+          batch.set(
+            db.collection('Notifications').doc(itemRid),
+            { ...baseNoti, remote_id: itemRid, student_id: sid, target_student_id: sid },
+            { merge: true }
+          );
+        });
+        await batch.commit();
+        await _dispatchClassNotificationPush(db, {
           title: titleCheck.value,
           message: msgCheck.value,
-          channel: String(params.channel || 'mobile_pwa'),
-          sender: senderCheck.value,
-          teacher_id: adminAuth.teacherId,
-          school_code: adminAuth.schoolCode,
-          school_name: adminAuth.schoolName,
-          grade: _toIntOrNull(params.grade) ?? adminAuth.gradeNum,
-          class_no: _toIntOrNull(params.class_no) ?? adminAuth.classNum,
-          student_id: String(params.student_id || ''),
-          is_read: false,
-          created_at: _nowStr(),
-          updated_at: _nowStr()
-        },
+          schoolCode: resolvedSchoolCode,
+          grade: resolvedGrade,
+          classNo: resolvedClassNo,
+          targetRole,
+          studentIds: targetStudentIds,
+        });
+        return res.status(200).json({ ok: true, remote_id: createdIds[0], remote_ids: createdIds, count: createdIds.length });
+      }
+      await db.collection('Notifications').doc(baseRid).set(
+        { ...baseNoti, remote_id: baseRid, student_id: normalizedSingleSid, target_student_id: normalizedSingleSid },
         { merge: true }
       );
-      return res.status(200).json({ ok: true, remote_id: rid });
+      await _dispatchClassNotificationPush(db, {
+        title: titleCheck.value,
+        message: msgCheck.value,
+        schoolCode: resolvedSchoolCode,
+        grade: resolvedGrade,
+        classNo: resolvedClassNo,
+        targetRole,
+        studentIds: normalizedSingleSid ? [normalizedSingleSid] : [],
+      });
+      return res.status(200).json({ ok: true, remote_id: baseRid });
     }
 
     if (action === 'enqueue_remote_task') {
@@ -4228,23 +4346,43 @@ async function _handleDesktopApiAction(db, action, params, auth) {
 
   if (action === 'send_class_notification') {
     const rid = String(params.remote_id || `noti_${Date.now()}`).trim();
+    const rawTargetRole = String(params.target_role || 'all').trim().toLowerCase();
+    const targetRole = ['all', 'student', 'parent', 'teacher'].includes(rawTargetRole) ? rawTargetRole : 'all';
+    const rawSid = String(params.target_student_id ?? params.student_id ?? '').trim();
+    const normalizedSid = rawSid.toUpperCase() === 'ALL' ? '' : rawSid;
+    const resolvedGrade = auth.gradeNum !== null ? auth.gradeNum : _toIntOrNull(params.grade);
+    const resolvedClassNo = auth.classNum !== null ? auth.classNum : _toIntOrNull(params.class_no);
+    const resolvedSchoolCode = auth.schoolCode || String(params.school_code || '').trim();
+    const resolvedSchoolName = auth.schoolName || String(params.school_name || '').trim();
     const payload = {
       remote_id: rid,
       title: String(params.title || '').trim(),
       message: String(params.message || '').trim(),
       channel: String(params.channel || 'desktop_broadcast').trim(),
-      target_role: String(params.target_role || 'all').trim().toLowerCase(),
+      target_role: targetRole,
       sender: String(params.sender || auth.teacherDoc.name || '담임교사').trim(),
-      grade: auth.gradeNum !== null ? auth.gradeNum : _toIntOrNull(params.grade),
-      class_no: auth.classNum !== null ? auth.classNum : _toIntOrNull(params.class_no),
-      school_code: auth.schoolCode || String(params.school_code || '').trim(),
-      school_name: auth.schoolName || String(params.school_name || '').trim(),
-      student_id: String(params.student_id || '').trim(),
+      teacher_id: auth.teacherId,
+      grade: resolvedGrade,
+      class_no: resolvedClassNo,
+      school_code: resolvedSchoolCode,
+      school_name: resolvedSchoolName,
+      student_id: normalizedSid,
+      target_student_id: normalizedSid,
       is_read: false,
+      read_by: [],
       created_at: params.created_at || _nowStr(),
       updated_at: _nowStr(),
     };
     await db.collection('Notifications').doc(rid).set(payload, { merge: true });
+    await _dispatchClassNotificationPush(db, {
+      title: payload.title || 'EduFlow 알림',
+      message: payload.message,
+      schoolCode: resolvedSchoolCode,
+      grade: resolvedGrade,
+      classNo: resolvedClassNo,
+      targetRole,
+      studentIds: normalizedSid ? [normalizedSid] : [],
+    });
     return { status: 200, json: { ok: true, remote_id: rid } };
   }
 
@@ -5587,21 +5725,28 @@ async function _createNoticePublishedNotification(db, notice) {
   const title = String(notice.title || '새 가정통신문').trim();
   const dueDate = String(notice.due_date || '').trim();
   const rid = `noti_notice_${noticeId}_${Date.now()}`;
+  const grade = _toIntOrNull(notice.target_grade ?? notice.grade);
+  const classNo = _toIntOrNull(notice.target_class ?? notice.class_no);
+  const schoolCode = String(notice.school_code || '').trim();
+  const schoolName = String(notice.school_name || '').trim();
+  const msg = dueDate
+    ? `${title} (마감: ${dueDate})가 게시되었습니다. 확인 후 회신해 주세요.`
+    : `${title}가 게시되었습니다. 확인해 주세요.`;
   await db.collection('Notifications').doc(rid).set(
     {
       remote_id: rid,
       title: `[가정통신문] ${title}`,
-      message: dueDate
-        ? `${title} (마감: ${dueDate})가 게시되었습니다. 확인 후 회신해 주세요.`
-        : `${title}가 게시되었습니다. 확인해 주세요.`,
+      message: msg,
       channel: 'notice_publish',
       target_role: 'all',
       sender: String(notice.author_name || '담임교사'),
-      grade: _toIntOrNull(notice.target_grade),
-      class_no: _toIntOrNull(notice.target_class),
-      school_code: String(notice.school_code || ''),
-      school_name: String(notice.school_name || ''),
+      teacher_id: String(notice.teacher_id || '').trim(),
+      grade,
+      class_no: classNo,
+      school_code: schoolCode,
+      school_name: schoolName,
       student_id: '',
+      target_student_id: '',
       notice_id: noticeId,
       is_read: false,
       read_by: [],
@@ -5610,7 +5755,71 @@ async function _createNoticePublishedNotification(db, notice) {
     },
     { merge: true }
   );
+  await _dispatchClassNotificationPush(db, {
+    title: `[가정통신문] ${title}`,
+    message: msg,
+    schoolCode,
+    grade,
+    classNo,
+    targetRole: 'all',
+    studentIds: [],
+  });
   return rid;
+}
+
+async function _dispatchClassNotificationPush(db, opts = {}) {
+  try {
+    const title = String(opts.title || 'EduFlow 알림').trim();
+    const message = String(opts.message || '').trim();
+    const schoolCode = String(opts.schoolCode || '').trim();
+    const grade = _toIntOrNull(opts.grade);
+    const classNo = _toIntOrNull(opts.classNo);
+    const targetRole = String(opts.targetRole || 'all').trim().toLowerCase() || 'all';
+    const studentIds = Array.isArray(opts.studentIds)
+      ? opts.studentIds.map((s) => String(s || '').trim()).filter((s) => s && s.toUpperCase() !== 'ALL')
+      : [];
+    const url = String(opts.url || '/').trim();
+
+    let queryRef = db.collection('Push_Subscriptions');
+    if (studentIds.length === 1) {
+      queryRef = queryRef.where('student_id', '==', studentIds[0]);
+    } else if (targetRole && targetRole !== 'all') {
+      queryRef = queryRef.where('role', '==', targetRole);
+    } else if (schoolCode) {
+      queryRef = queryRef.where('school_code', '==', schoolCode);
+    } else if (grade !== null) {
+      queryRef = queryRef.where('grade', '==', grade);
+    }
+
+    const snap = await queryRef.get();
+    const idSet = studentIds.length > 0 ? new Set(studentIds) : null;
+    const subs = [];
+    snap.forEach((doc) => {
+      const s = doc.data() || {};
+      if (!s.endpoint || !s.p256dh || !s.auth) return;
+      const sRole = String(s.role || '').trim().toLowerCase();
+      if (targetRole === 'teacher') {
+        if (sRole !== 'teacher') return;
+      } else if (targetRole === 'student' || targetRole === 'parent') {
+        if (sRole !== targetRole) return;
+      } else if (sRole === 'teacher' && !idSet) {
+        return;
+      }
+      const sSchoolCode = String(s.school_code || '').trim();
+      if (schoolCode && sSchoolCode !== schoolCode) return;
+      if (idSet) {
+        if (!idSet.has(String(s.student_id || '').trim())) return;
+      } else {
+        if (grade !== null && _toIntOrNull(s.grade) !== grade) return;
+        if (classNo !== null && _toIntOrNull(s.class_no) !== classNo) return;
+      }
+      subs.push({ _docId: doc.id, ...s });
+    });
+
+    await _dispatchWebPushToSubs(db, subs, { title, body: message, url });
+  } catch (err) {
+    console.warn('[_dispatchClassNotificationPush]', err && err.message ? err.message : err);
+  }
 }
 
 async function _dispatchWebPushToSubs(db, subs, { title, body, url = '/' }) {

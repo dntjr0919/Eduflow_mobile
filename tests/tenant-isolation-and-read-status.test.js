@@ -412,3 +412,144 @@ test('teacher->student/parent notifications, mark_chat_read role separation, and
   assert.equal(pushSrc.includes('.local'), false);
   assert.equal(adminSrc.includes('eduflow-db-b44f3-5692e5dea8c3.json'), false);
 });
+
+test('send_notification, student chat/doc/notice_reply writes persist full tenant fields', async () => {
+  const mockDb = createMockDb({
+    계정_교사: {
+      SC01_t1: { teacher_id: 't1', name: '담임T', grade: 1, class_no: 4, school_code: 'SC01', school_name: '가나고', status: 'active' },
+    },
+    계정_학생: {
+      SC01_10401: { student_id: '10401', name: '김철수', grade: 1, class_no: 4, school_code: 'SC01', school_name: '가나고', status: 'active' },
+    },
+    가정통신문_목록: {
+      notice_1: { remote_id: 'notice_1', title: '안내문', school_code: 'SC01', school_name: '가나고', target_grade: 1, target_class: 4, teacher_id: 't1', signature_mode: 'none', requires_reply: false },
+    },
+  });
+  activeMockDb = mockDb;
+
+  const teacherToken = _signSessionToken({ sub: 't1', role: 'teacher', school_code: 'SC01', grade: 1, class_no: 4 }).token;
+  const studentToken = _signSessionToken({ sub: '10401', sid: '10401', role: 'student', school_code: 'SC01' }).token;
+
+  async function callWithToken(action, token, params = {}) {
+    const req = { method: 'POST', headers: {}, body: { action, auth_token: token, ...params } };
+    const res = makeRes();
+    await handler(req, res);
+    return res;
+  }
+
+  // 1) send_notification with target_student_id='ALL' and omitted target_role
+  const nRes = await callWithToken('send_notification', teacherToken, {
+    title: '내일 급식 총파업으로 인한 대체식 실시 안내',
+    message: '대체식이 제공됩니다.',
+    target_student_id: 'ALL',
+  });
+  assert.equal(nRes.statusCode, 200);
+  const savedNoti = mockDb._store.get('Notifications').get(nRes.body.remote_id);
+  assert.equal(savedNoti.target_role, 'all');
+  assert.equal(savedNoti.student_id, '');
+  assert.equal(savedNoti.target_student_id, '');
+  assert.equal(savedNoti.school_code, 'SC01');
+  assert.equal(savedNoti.school_name, '가나고');
+  assert.equal(savedNoti.grade, 1);
+  assert.equal(savedNoti.class_no, 4);
+  assert.equal(savedNoti.teacher_id, 't1');
+  assert.deepEqual(savedNoti.read_by, []);
+
+  // 2) student send_chat_message without grade/class_no/school_code in payload
+  const cRes = await callWithToken('send_chat_message', studentToken, {
+    room_id: 'ROOM-10401',
+    sender_role: 'student',
+    message: '상담 요청합니다.',
+  });
+  assert.equal(cRes.statusCode, 200);
+  const savedChat = mockDb._store.get('1:1_상담채팅').get(cRes.body.remote_id);
+  assert.equal(savedChat.school_code, 'SC01');
+  assert.equal(savedChat.school_name, '가나고');
+  assert.equal(savedChat.grade, 1);
+  assert.equal(savedChat.class_no, 4);
+
+  // 3) student upsert_document_tracking without school_code
+  const dRes = await callWithToken('upsert_document_tracking', studentToken, {
+    doc_type: '결석계',
+    status: 'pending',
+  });
+  assert.equal(dRes.statusCode, 200);
+  const savedDoc = mockDb._store.get('서류_추적').get(dRes.body.remote_id);
+  assert.equal(savedDoc.school_code, 'SC01');
+  assert.equal(savedDoc.school_name, '가나고');
+  assert.equal(savedDoc.grade, 1);
+  assert.equal(savedDoc.class_no, 4);
+
+  // 4) student submit_notice_reply persists school_code, grade, class_no
+  const rRes = await callWithToken('submit_notice_reply', studentToken, {
+    notice_id: 'notice_1',
+    consent: '동의',
+  });
+  assert.equal(rRes.statusCode, 200);
+  const savedReply = mockDb._store.get('가정통신문_회신').get(rRes.body.remote_id);
+  assert.equal(savedReply.school_code, 'SC01');
+  assert.equal(savedReply.grade, 1);
+  assert.equal(savedReply.class_no, 4);
+  assert.equal(savedReply.teacher_id, 't1');
+});
+
+test('scripts/backfill-tenant-fields.js dry-run and apply backfill legacy docs safely', async () => {
+  const { runBackfill } = require('../scripts/backfill-tenant-fields.js');
+  const mockDb = createMockDb({
+    계정_교사: {
+      SC01_t1: { teacher_id: 't1', name: '담임T', grade: 1, class_no: 4, school_code: 'SC01', school_name: '가나고', status: 'active' },
+    },
+    계정_학생: {
+      SC01_10401: { student_id: '10401', name: '김철수', grade: 1, class_no: 4, school_code: 'SC01', school_name: '가나고', status: 'active' },
+    },
+    가정통신문_목록: {
+      n1: { remote_id: 'n1', title: '통신문', school_code: 'SC01', school_name: '가나고', target_grade: 1, target_class: 4, teacher_id: 't1' },
+    },
+    '1:1_상담채팅': {
+      legacy_chat: { remote_id: 'legacy_chat', room_id: 'ROOM-10401', message: '옛날 메시지' },
+    },
+    학급회비: {
+      legacy_budget: { remote_id: 'legacy_budget', teacher_id: 't1', title: '간식비', amount: 30000 },
+    },
+    학급_공지게시판: {
+      legacy_board: { remote_id: 'legacy_board', author_name: '담임T', title: '옛 공지' },
+    },
+    Notifications: {
+      legacy_noti: { remote_id: 'legacy_noti', teacher_id: 't1', student_id: 'ALL', title: '옛 알림' },
+    },
+  });
+
+  const drySummary = await runBackfill(mockDb, { apply: false });
+  assert.equal(drySummary.mode, 'dry-run');
+  assert.equal(drySummary.totalUpdated, 4);
+  assert.equal(mockDb._store.get('1:1_상담채팅').get('legacy_chat').school_code, undefined);
+
+  const applySummary = await runBackfill(mockDb, { apply: true });
+  assert.equal(applySummary.mode, 'apply');
+  assert.equal(applySummary.totalUpdated, 4);
+
+  const chat = mockDb._store.get('1:1_상담채팅').get('legacy_chat');
+  assert.equal(chat.school_code, 'SC01');
+  assert.equal(chat.grade, 1);
+  assert.equal(chat.class_no, 4);
+  assert.equal(chat.student_id, '10401');
+
+  const budget = mockDb._store.get('학급회비').get('legacy_budget');
+  assert.equal(budget.school_code, 'SC01');
+  assert.equal(budget.grade, 1);
+  assert.equal(budget.class_no, 4);
+
+  const board = mockDb._store.get('학급_공지게시판').get('legacy_board');
+  assert.equal(board.school_code, 'SC01');
+  assert.equal(board.grade, 1);
+  assert.equal(board.class_no, 4);
+  assert.equal(board.teacher_id, 't1');
+
+  const noti = mockDb._store.get('Notifications').get('legacy_noti');
+  assert.equal(noti.school_code, 'SC01');
+  assert.equal(noti.grade, 1);
+  assert.equal(noti.class_no, 4);
+  assert.equal(noti.target_role, 'all');
+  assert.equal(noti.student_id, '');
+  assert.deepEqual(noti.read_by, []);
+});

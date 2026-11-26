@@ -62,9 +62,10 @@ module.exports = async function handler(req, res) {
   const title = String(body.title || 'EduFlow 알림').trim();
   const message = String(body.message || '').trim();
   let targetRole = String(body.target_role || 'all').trim().toLowerCase();
-  const targetStudentIds = Array.isArray(body.target_student_ids)
-    ? body.target_student_ids.map((s) => String(s).trim()).filter(Boolean)
+  const rawTargetStudentIds = Array.isArray(body.target_student_ids)
+    ? body.target_student_ids.map((s) => String(s).trim())
     : (body.target_student_id ? [String(body.target_student_id).trim()] : []);
+  const targetStudentIds = rawTargetStudentIds.filter((s) => s && s.toUpperCase() !== 'ALL');
   let targetUserId = String(body.target_user_id || '').trim();
   const targetEndpoint = String(body.endpoint || '').trim();
   const url = String(body.url || '/').trim();
