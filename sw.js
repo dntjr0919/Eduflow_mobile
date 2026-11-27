@@ -1,5 +1,5 @@
 // 배포 시 버전을 올리면(예: v5 -> v6) activate 단계에서 이전 캐시가 자동 정리됩니다.
-const CACHE_VERSION = 'v9';
+const CACHE_VERSION = 'v10';
 const CACHE_NAME = `eduflow-mobile-${CACHE_VERSION}`;
 const STATIC_ASSETS = [
   '/',

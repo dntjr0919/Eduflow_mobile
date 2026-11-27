@@ -490,8 +490,8 @@ function _syncAllMealsDateControls() {
   const allRangeBtn = document.getElementById('allMealsAllRangeBtn');
   if (allRangeBtn) {
     allRangeBtn.className = !_allMealsModalDate
-      ? 'px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors'
-      : 'px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors';
+      ? 'ml-auto px-2.5 py-1 rounded-full bg-indigo-600 text-white text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors'
+      : 'ml-auto px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors';
   }
 }
 
@@ -534,8 +534,8 @@ function filterAllMealsModal(filter) {
     document.querySelectorAll('.all-meals-filter-btn').forEach((btn) => {
       const isActive = btn.dataset.filter === _allMealsModalFilter;
       btn.className = isActive
-        ? 'all-meals-filter-btn px-3 py-1.5 rounded-full text-xs font-bold bg-indigo-600 text-white transition-colors'
-        : 'all-meals-filter-btn px-3 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors';
+        ? 'all-meals-filter-btn px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-600 text-white shrink-0 whitespace-nowrap transition-colors'
+        : 'all-meals-filter-btn px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 shrink-0 whitespace-nowrap transition-colors';
     });
   }
   _renderAllMealsModalList(_allMealsModalFilter, _allMealsModalDate);

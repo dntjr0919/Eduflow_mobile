@@ -1727,16 +1727,16 @@
 </button>
 </div>
 <div class="px-4 pt-3 pb-2.5 border-b border-slate-100 space-y-2 bg-white shrink-0">
-<div class="flex items-center gap-1.5">
-<button class="all-meals-filter-btn px-3 py-1.5 rounded-full text-xs font-bold bg-indigo-600 text-white transition-colors" data-filter="all" onclick="filterAllMealsModal('all')" type="button">전체</button>
-<button class="all-meals-filter-btn px-3 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors" data-filter="lunch" onclick="filterAllMealsModal('lunch')" type="button">중식</button>
-<button class="all-meals-filter-btn px-3 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors" data-filter="dinner" onclick="filterAllMealsModal('dinner')" type="button">석식</button>
+<div class="flex items-center gap-1">
+<button class="all-meals-filter-btn px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-600 text-white shrink-0 whitespace-nowrap transition-colors" data-filter="all" onclick="filterAllMealsModal('all')" type="button">전체</button>
+<button class="all-meals-filter-btn px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 shrink-0 whitespace-nowrap transition-colors" data-filter="lunch" onclick="filterAllMealsModal('lunch')" type="button">중식</button>
+<button class="all-meals-filter-btn px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 shrink-0 whitespace-nowrap transition-colors" data-filter="dinner" onclick="filterAllMealsModal('dinner')" type="button">석식</button>
+<button class="ml-auto px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors" id="allMealsAllRangeBtn" onclick="resetAllMealsDateFilter()" type="button">전후 7일 전체</button>
 </div>
 <div class="flex items-center gap-1.5">
-<button aria-label="이전 날" class="px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors" onclick="stepAllMealsDate(-1)" type="button">◀ 이전 날</button>
-<input class="flex-1 min-w-0 px-2 py-1 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400" id="allMealsDateInput" onchange="selectAllMealsDate(this.value)" type="date"/>
-<button aria-label="다음 날" class="px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors" onclick="stepAllMealsDate(1)" type="button">다음 날 ▶</button>
-<button class="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors" id="allMealsAllRangeBtn" onclick="resetAllMealsDateFilter()" type="button">전후 7일 전체</button>
+<button aria-label="이전 날" class="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold shrink-0 transition-colors" onclick="stepAllMealsDate(-1)" type="button">◀</button>
+<input class="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 text-center bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400" id="allMealsDateInput" onchange="selectAllMealsDate(this.value)" type="date"/>
+<button aria-label="다음 날" class="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold shrink-0 transition-colors" onclick="stepAllMealsDate(1)" type="button">▶</button>
 </div>
 </div>
 <div class="flex-1 overflow-y-auto p-4 space-y-2.5 custom-scrollbar" id="allMealsModalList"></div>
