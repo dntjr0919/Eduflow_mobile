@@ -42,6 +42,8 @@ const adminState = {
   lessonAttDate: '',
   lessonAttSubject: '',
   lessonAttClass: '',
+  subjectRosterSearch: '',
+  editingSubjectRosterId: '',
 };
 
 function escapeHtml(val) {
@@ -2072,6 +2074,251 @@ function closeLessonProgressModal() {
   document.getElementById('lesson-progress-modal').classList.add('hidden');
 }
 
+function showAdminToast(message) {
+  if (typeof document === 'undefined' || !document.body) return;
+  let el = document.getElementById('admin-toast-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'admin-toast-banner';
+    el.className = 'fixed bottom-5 right-5 z-[100] px-4 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-semibold shadow-lg transition-opacity duration-200 pointer-events-none';
+    document.body.appendChild(el);
+  }
+  el.textContent = String(message || '');
+  el.classList.remove('hidden', 'opacity-0');
+  if (showAdminToast._timer) clearTimeout(showAdminToast._timer);
+  showAdminToast._timer = setTimeout(() => {
+    el.classList.add('opacity-0');
+    setTimeout(() => el.classList.add('hidden'), 200);
+  }, 2600);
+}
+
+function _getSubjectRosterIdentifier(r) {
+  return String((r && (r.remote_id || r.roster_key)) || '').trim();
+}
+
+function openSubjectRosterManageModal() {
+  adminState.subjectRosterSearch = '';
+  adminState.editingSubjectRosterId = '';
+  const searchEl = document.getElementById('subject-roster-search-input');
+  if (searchEl) searchEl.value = '';
+  renderSubjectRosterManageList();
+  const modal = document.getElementById('subjectRosterManageModal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeSubjectRosterManageModal() {
+  adminState.editingSubjectRosterId = '';
+  const modal = document.getElementById('subjectRosterManageModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function renderSubjectRosterManageList() {
+  const listEl = document.getElementById('subject-roster-manage-list');
+  if (!listEl) return;
+  const rawRosters = (adminState.overview && Array.isArray(adminState.overview.subject_rosters))
+    ? adminState.overview.subject_rosters
+    : [];
+  const q = String(adminState.subjectRosterSearch || '').trim().toLowerCase();
+
+  const sorted = rawRosters
+    .filter((r) => r && typeof r === 'object')
+    .filter((r) => {
+      if (!q) return true;
+      const sub = String(r.subject || '').toLowerCase();
+      const cls = String(r.class_label || '').toLowerCase();
+      return sub.includes(q) || cls.includes(q);
+    })
+    .slice()
+    .sort((a, b) =>
+      String(a.subject || '').localeCompare(String(b.subject || ''), 'ko') ||
+      _naturalClassSort(
+        canonicalizeClassLabel(a.class_label) || String(a.class_label || ''),
+        canonicalizeClassLabel(b.class_label) || String(b.class_label || '')
+      )
+    );
+
+  if (sorted.length === 0) {
+    listEl.innerHTML = `<div class="py-10 text-center text-xs text-slate-400">${q ? '검색 조건에 맞는 교과 명렬표가 없습니다.' : '등록된 교과 명렬표가 없습니다.'}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = sorted.map((r) => {
+    const rid = _getSubjectRosterIdentifier(r);
+    const subject = String(r.subject || '');
+    const classLabel = String(r.class_label || '');
+    const studentCount = Array.isArray(r.students) ? r.students.length : 0;
+    const isEditing = adminState.editingSubjectRosterId === rid && rid !== '';
+
+    if (isEditing) {
+      return `
+        <div class="p-4 rounded-xl border border-indigo-300 bg-white shadow-xs space-y-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div>
+              <label for="sr-edit-subject" class="block text-[11px] font-semibold text-slate-600 mb-1">교과명</label>
+              <input id="sr-edit-subject" type="text" value="${escapeHtml(subject)}" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500">
+            </div>
+            <div>
+              <label for="sr-edit-class-label" class="block text-[11px] font-semibold text-slate-600 mb-1">학급 라벨</label>
+              <input id="sr-edit-class-label" type="text" value="${escapeHtml(classLabel)}" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500">
+            </div>
+          </div>
+          <label class="flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
+            <input id="sr-edit-sync-related" type="checkbox" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+            <span>기존 진도·출결 기록의 교과명도 함께 변경</span>
+          </label>
+          <div class="flex items-center justify-between pt-1">
+            <span class="text-[11px] text-slate-400">등록 학생 수: ${studentCount}명</span>
+            <div class="flex items-center gap-1.5">
+              <button type="button" onclick="cancelEditSubjectRoster()" class="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg">취소</button>
+              <button type="button" onclick="saveSubjectRosterEdit('${_escapeJsAttr(rid)}')" class="px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg">저장</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="p-3.5 rounded-xl border border-slate-200 bg-white flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-xs font-bold text-slate-900">${escapeHtml(subject || '-')}</span>
+            <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700">${escapeHtml(classLabel || '-')}</span>
+            <span class="text-[11px] text-slate-500">${studentCount}명</span>
+          </div>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <button type="button" onclick="startEditSubjectRoster('${_escapeJsAttr(rid)}')" class="px-2.5 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-semibold">수정</button>
+          <button type="button" onclick="deleteSubjectRosterRow('${_escapeJsAttr(rid)}')" class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-semibold">삭제</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function startEditSubjectRoster(remoteId) {
+  adminState.editingSubjectRosterId = String(remoteId || '').trim();
+  renderSubjectRosterManageList();
+}
+
+function cancelEditSubjectRoster() {
+  adminState.editingSubjectRosterId = '';
+  renderSubjectRosterManageList();
+}
+
+async function saveSubjectRosterEdit(remoteId) {
+  const rid = String(remoteId || '').trim();
+  const rosters = (adminState.overview && Array.isArray(adminState.overview.subject_rosters))
+    ? adminState.overview.subject_rosters
+    : [];
+  const target = rosters.find((r) => _getSubjectRosterIdentifier(r) === rid);
+  if (!target) return;
+
+  const subjectEl = document.getElementById('sr-edit-subject');
+  const classEl = document.getElementById('sr-edit-class-label');
+  const syncEl = document.getElementById('sr-edit-sync-related');
+  const newSubject = String(subjectEl ? subjectEl.value : '').trim();
+  const newClassLabel = String(classEl ? classEl.value : '').trim();
+  const syncRelated = Boolean(syncEl && syncEl.checked);
+
+  if (!newSubject) {
+    alert('교과명을 입력해 주세요.');
+    return;
+  }
+
+  const oldSubject = String(target.subject || '').trim();
+  const oldClassLabel = String(target.class_label || '').trim();
+  const oldRosterKey = String(target.roster_key || '').trim();
+
+  // 변경 없음 조기 종료: 교과명과 학급 라벨이 기존과 동일하면 서버 API 호출 없이 안내 후 편집 상태 종료
+  if (newSubject === oldSubject && newClassLabel === oldClassLabel) {
+    adminState.editingSubjectRosterId = '';
+    renderSubjectRosterManageList();
+    showAdminToast('변경된 내용이 없어 저장을 건너뛰었습니다.');
+    return;
+  }
+
+  try {
+    const res = await callApi('update_subject_roster', {
+      remote_id: String(target.remote_id || ''),
+      roster_key: oldRosterKey,
+      subject: newSubject,
+      class_label: newClassLabel,
+      sync_related: syncRelated,
+    }, true);
+
+    const newRosterKey = (res && res.item && res.item.roster_key) || `${newSubject}__${newClassLabel}`;
+    target.subject = newSubject;
+    target.class_label = newClassLabel;
+    target.roster_key = newRosterKey;
+
+    if (syncRelated && adminState.overview) {
+      const matchesRelated = (rec) => {
+        const rk = String((rec && rec.roster_key) || '').trim();
+        if (oldRosterKey && rk && rk === oldRosterKey) return true;
+        return String((rec && rec.subject) || '').trim() === oldSubject && String((rec && rec.class_label) || '').trim() === oldClassLabel;
+      };
+      if (Array.isArray(adminState.overview.lesson_progress)) {
+        adminState.overview.lesson_progress.forEach((p) => {
+          if (matchesRelated(p)) {
+            p.subject = newSubject;
+            p.class_label = newClassLabel;
+            p.roster_key = newRosterKey;
+          }
+        });
+      }
+      if (Array.isArray(adminState.overview.subject_attendance)) {
+        adminState.overview.subject_attendance.forEach((a) => {
+          if (matchesRelated(a)) {
+            a.subject = newSubject;
+            a.class_label = newClassLabel;
+            a.roster_key = newRosterKey;
+          }
+        });
+      }
+    }
+
+    if (adminState.lessonMatrixSubject === oldSubject && newSubject !== oldSubject) {
+      adminState.lessonMatrixSubject = newSubject;
+    }
+
+    adminState.editingSubjectRosterId = '';
+    renderSubjectRosterManageList();
+    renderLessonsTab();
+    showAdminToast('교과 명렬표가 수정되었습니다.');
+  } catch (err) {
+    alert(`교과 명렬표 수정 실패: ${err.message}`);
+  }
+}
+
+async function deleteSubjectRosterRow(remoteId) {
+  const rid = String(remoteId || '').trim();
+  const rosters = (adminState.overview && Array.isArray(adminState.overview.subject_rosters))
+    ? adminState.overview.subject_rosters
+    : [];
+  const target = rosters.find((r) => _getSubjectRosterIdentifier(r) === rid);
+  if (!target) return;
+
+  const label = `${target.subject || '-'} (${target.class_label || '-'})`;
+  if (!confirm(`"${label}" 교과 명렬표를 삭제하시겠습니까?\n(기존 수업 진도·출결 기록은 유지됩니다.)`)) return;
+
+  try {
+    await callApi('delete_subject_roster', {
+      remote_id: String(target.remote_id || ''),
+      roster_key: String(target.roster_key || ''),
+    }, true);
+
+    adminState.overview.subject_rosters = rosters.filter((r) => _getSubjectRosterIdentifier(r) !== rid);
+    if (adminState.editingSubjectRosterId === rid) {
+      adminState.editingSubjectRosterId = '';
+    }
+    renderSubjectRosterManageList();
+    renderLessonsTab();
+    showAdminToast('교과 명렬표가 삭제되었습니다.');
+  } catch (err) {
+    alert(`교과 명렬표 삭제 실패: ${err.message}`);
+  }
+}
+
 async function deleteLessonProgressRow(remoteId) {
   if (!remoteId) return;
   if (!confirm('이 수업 진도 기록을 삭제하시겠습니까?')) return;
@@ -2515,6 +2762,10 @@ function bindEvents() {
   });
 
   // Tab 6 lessons & subject attendance filters + modal submit
+  document.getElementById('subject-roster-search-input')?.addEventListener('input', (e) => {
+    adminState.subjectRosterSearch = e.target.value;
+    renderSubjectRosterManageList();
+  });
   document.getElementById('lesson-matrix-subject-select')?.addEventListener('change', (e) => {
     adminState.lessonMatrixSubject = e.target.value;
     renderLessonsTab();
@@ -3123,6 +3374,13 @@ if (typeof module !== 'undefined' && module.exports) {
     renderSchedulesTab,
     isReadOnlyNotice,
     renderLettersTab,
+    openSubjectRosterManageModal,
+    closeSubjectRosterManageModal,
+    renderSubjectRosterManageList,
+    startEditSubjectRoster,
+    cancelEditSubjectRoster,
+    saveSubjectRosterEdit,
+    deleteSubjectRosterRow,
     adminState,
   };
 }

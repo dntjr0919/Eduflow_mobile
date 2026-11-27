@@ -923,6 +923,9 @@
             <button type="button" onclick="openLessonProgressModal()" class="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition">
               <i class="fa-solid fa-plus text-xs"></i><span>진도 직접 추가</span>
             </button>
+            <button type="button" onclick="openSubjectRosterManageModal()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
+              <i class="fa-solid fa-list-check text-indigo-600 text-xs"></i><span>교과 명렬표 관리</span>
+            </button>
             <button type="button" onclick="refreshAdminData()" class="inline-flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">
               <i class="fa-solid fa-rotate text-slate-500 text-xs refresh-spin-icon"></i><span>새로고침</span>
             </button>
@@ -1526,6 +1529,23 @@
           <button type="submit" id="sa-submit-btn" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">저장</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Subject Roster Manage Modal -->
+  <div id="subjectRosterManageModal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[88vh]">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60 shrink-0">
+        <div>
+          <h3 class="text-sm font-bold text-slate-900">교과 명렬표 관리</h3>
+          <p class="text-[11px] text-slate-500 mt-0.5">잘못 등록된 교과명·학급 라벨을 수정하거나 불필요한 명렬표를 삭제합니다.</p>
+        </div>
+        <button type="button" onclick="closeSubjectRosterManageModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="px-5 py-3 border-b border-slate-100 bg-white shrink-0">
+        <input id="subject-roster-search-input" type="text" placeholder="교과명 또는 학급 라벨 검색 (예: 과탐2, 1-3)" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500">
+      </div>
+      <div id="subject-roster-manage-list" class="p-5 space-y-2.5 overflow-y-auto flex-1 bg-slate-50/40"></div>
     </div>
   </div>
 

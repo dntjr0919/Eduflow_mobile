@@ -3691,6 +3691,8 @@ module.exports = async function handler(req, res) {
       'upsert_budget',
       'delete_budget',
       'sync_subject_rosters_batch',
+      'update_subject_roster',
+      'delete_subject_roster',
       'save_subject_attendance_batch',
       'delete_subject_attendance',
       'update_chat_message',
@@ -5201,6 +5203,167 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     const written = await _batchUpsertDocs(db, '교과_명렬표', normalized, scopeDefaults);
     _invalidateStaticCache('subject_rosters:');
     return { status: 200, json: { ok: true, written } };
+  }
+
+  if (action === 'update_subject_roster') {
+    const rid = String(params.remote_id || params.id || '').trim();
+    const reqRosterKey = String(params.roster_key || '').trim();
+    if (!rid && !reqRosterKey) {
+      return { status: 400, json: { ok: false, error: '수정할 교과 명렬표의 remote_id 또는 roster_key가 필요합니다.' } };
+    }
+    const newSubject = String(params.subject || '').trim();
+    const newClassLabel = String(params.class_label || '').trim();
+    if (!newSubject) {
+      return { status: 400, json: { ok: false, error: '교과명(subject)이 필요합니다.' } };
+    }
+    const syncRelated = params.sync_related === true || String(params.sync_related || '').trim().toLowerCase() === 'true';
+
+    let docRef = null;
+    let targetDoc = null;
+    if (rid) {
+      docRef = db.collection('교과_명렬표').doc(rid);
+      const snap = await docRef.get();
+      if (snap.exists) {
+        targetDoc = { remote_id: snap.id, ...(snap.data() || {}) };
+      }
+    }
+    if (!targetDoc && reqRosterKey) {
+      const rosterRows = await db.collection('교과_명렬표').where('teacher_id', '==', auth.teacherId).limit(200).get().then(_snapToRows);
+      const matched = rosterRows.find((r) => _belongsToTeacher(r, auth) && String(r.roster_key || '').trim() === reqRosterKey);
+      if (matched) {
+        targetDoc = matched;
+        docRef = db.collection('교과_명렬표').doc(String(matched.remote_id));
+      }
+    }
+    if (!targetDoc || !docRef) {
+      return { status: 404, json: { ok: false, error: '해당 교과 명렬표를 찾을 수 없습니다.' } };
+    }
+    if (!_belongsToTeacher(targetDoc, auth)) {
+      return { status: 403, json: { ok: false, error: '본인이 등록한 교과 명렬표만 수정할 수 있습니다.' } };
+    }
+
+    const oldSubject = String(targetDoc.subject || '').trim();
+    const oldClassLabel = String(targetDoc.class_label || '').trim();
+    const oldRosterKey = String(targetDoc.roster_key || '').trim();
+
+    if (oldSubject === newSubject && oldClassLabel === newClassLabel && !syncRelated) {
+      return { status: 200, json: { ok: true, skipped: true, remote_id: targetDoc.remote_id } };
+    }
+
+    const nowStr = _nowStr();
+    const newRosterKey = `${newSubject}__${newClassLabel}`;
+    const rosterChanged = oldSubject !== newSubject || oldClassLabel !== newClassLabel;
+    if (rosterChanged) {
+      await docRef.set({
+        subject: newSubject,
+        class_label: newClassLabel,
+        roster_key: newRosterKey,
+        updated_at: nowStr,
+      }, { merge: true });
+      _invalidateStaticCache('subject_rosters:');
+    }
+
+    let syncedProgress = 0;
+    let syncedAttendance = 0;
+    if (syncRelated) {
+      const matchesTarget = (d) => {
+        if (!_belongsToTeacher(d, auth)) return false;
+        const rk = String(d.roster_key || '').trim();
+        if (oldRosterKey && rk && rk === oldRosterKey) return true;
+        return String(d.subject || '').trim() === oldSubject && String(d.class_label || '').trim() === oldClassLabel;
+      };
+      const needsUpdate = (d) => (
+        String(d.subject || '').trim() !== newSubject ||
+        String(d.class_label || '').trim() !== newClassLabel ||
+        String(d.roster_key || '').trim() !== newRosterKey
+      );
+      const batchUpdateCollection = async (colName, rows) => {
+        const targets = rows.filter((d) => matchesTarget(d) && needsUpdate(d));
+        if (targets.length === 0) return 0;
+        const CHUNK = 400;
+        let count = 0;
+        for (let i = 0; i < targets.length; i += CHUNK) {
+          const slice = targets.slice(i, i + CHUNK);
+          const batch = db.batch();
+          slice.forEach((row) => {
+            const id = String(row.remote_id || '').trim();
+            if (!id) return;
+            batch.set(db.collection(colName).doc(id), {
+              subject: newSubject,
+              class_label: newClassLabel,
+              roster_key: newRosterKey,
+              updated_at: nowStr,
+            }, { merge: true });
+            count += 1;
+          });
+          await batch.commit();
+        }
+        return count;
+      };
+
+      const [progRows, attRows] = await Promise.all([
+        db.collection('수업_진도').where('teacher_id', '==', auth.teacherId).limit(500).get().then(_snapToRows).catch(() => []),
+        db.collection('교과_출결').where('teacher_id', '==', auth.teacherId).limit(500).get().then(_snapToRows).catch(() => []),
+      ]);
+      syncedProgress = await batchUpdateCollection('수업_진도', progRows);
+      syncedAttendance = await batchUpdateCollection('교과_출결', attRows);
+      if (syncedProgress > 0) {
+        _invalidateStaticCache('lesson_progress:');
+      }
+    }
+
+    return {
+      status: 200,
+      json: {
+        ok: true,
+        remote_id: targetDoc.remote_id,
+        item: {
+          ...targetDoc,
+          subject: newSubject,
+          class_label: newClassLabel,
+          roster_key: newRosterKey,
+          updated_at: nowStr,
+        },
+        synced_progress: syncedProgress,
+        synced_attendance: syncedAttendance,
+      },
+    };
+  }
+
+  if (action === 'delete_subject_roster') {
+    const rid = String(params.remote_id || params.id || '').trim();
+    const reqRosterKey = String(params.roster_key || '').trim();
+    if (!rid && !reqRosterKey) {
+      return { status: 400, json: { ok: false, error: '삭제할 교과 명렬표의 remote_id 또는 roster_key가 필요합니다.' } };
+    }
+
+    let docRef = null;
+    let targetDoc = null;
+    if (rid) {
+      docRef = db.collection('교과_명렬표').doc(rid);
+      const snap = await docRef.get();
+      if (snap.exists) {
+        targetDoc = { remote_id: snap.id, ...(snap.data() || {}) };
+      }
+    }
+    if (!targetDoc && reqRosterKey) {
+      const rosterRows = await db.collection('교과_명렬표').where('teacher_id', '==', auth.teacherId).limit(200).get().then(_snapToRows);
+      const matched = rosterRows.find((r) => _belongsToTeacher(r, auth) && String(r.roster_key || '').trim() === reqRosterKey);
+      if (matched) {
+        targetDoc = matched;
+        docRef = db.collection('교과_명렬표').doc(String(matched.remote_id));
+      }
+    }
+    if (!targetDoc || !docRef) {
+      return { status: 404, json: { ok: false, error: '해당 교과 명렬표를 찾을 수 없습니다.' } };
+    }
+    if (!_belongsToTeacher(targetDoc, auth)) {
+      return { status: 403, json: { ok: false, error: '본인이 등록한 교과 명렬표만 삭제할 수 있습니다.' } };
+    }
+
+    await docRef.delete();
+    _invalidateStaticCache('subject_rosters:');
+    return { status: 200, json: { ok: true, remote_id: targetDoc.remote_id, deleted: true } };
   }
 
   if (action === 'save_subject_attendance_batch') {
