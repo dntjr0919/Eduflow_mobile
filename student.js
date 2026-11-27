@@ -411,11 +411,9 @@ function _renderAllMealsModalList(filter = _allMealsModalFilter, selectedDate = 
   const sortedDates = Array.from(dateMap.keys()).sort((a, b) => a.localeCompare(b));
   if (subEl) {
     if (selectedDate) {
-      subEl.innerText = `${_formatMealDateWithDay(selectedDate)} 급식 식단`;
+      subEl.innerText = `${_formatMealDateWithDay(selectedDate)} · 전후 7일 내 식단 조회`;
     } else {
-      subEl.innerText = sortedDates.length > 0
-        ? `총 ${sortedDates.length}일치 급식 식단`
-        : '등록된 급식 식단 목록';
+      subEl.innerText = `오늘 기준 전후 7일 (총 ${sortedDates.length}일치 식단)`;
     }
   }
 
@@ -480,13 +478,36 @@ function _renderAllMealsModalList(filter = _allMealsModalFilter, selectedDate = 
 
 function _syncAllMealsDateControls() {
   if (typeof document === 'undefined') return;
+  const todayStr = typeof _getLocalTodayStr === 'function' ? _getLocalTodayStr() : '';
   const dateInput = document.getElementById('allMealsDateInput');
-  if (dateInput) dateInput.value = _allMealsModalDate || '';
+  if (dateInput) {
+    if (todayStr) {
+      dateInput.min = _shiftYmdDate(todayStr, -7);
+      dateInput.max = _shiftYmdDate(todayStr, 7);
+    }
+    dateInput.value = _allMealsModalDate || '';
+  }
   const allRangeBtn = document.getElementById('allMealsAllRangeBtn');
   if (allRangeBtn) {
     allRangeBtn.className = !_allMealsModalDate
       ? 'px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors'
       : 'px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors';
+  }
+}
+
+function _scrollToTodayMealCard() {
+  if (typeof document === 'undefined') return;
+  const listEl = document.getElementById('allMealsModalList');
+  if (!listEl) return;
+  const todayCard = listEl.querySelector('[data-meal-today="true"]');
+  if (todayCard && typeof todayCard.scrollIntoView === 'function') {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        todayCard.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
+    } else {
+      todayCard.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
   }
 }
 
@@ -504,6 +525,7 @@ function stepAllMealsDate(deltaDays) {
 
 function resetAllMealsDateFilter() {
   selectAllMealsDate('');
+  _scrollToTodayMealCard();
 }
 
 function filterAllMealsModal(filter) {
@@ -525,21 +547,12 @@ function openAllMealsModal() {
   const listEl = document.getElementById('allMealsModalList');
   if (!modal || !listEl) return;
 
-  _allMealsModalDate = '';
+  const todayStr = typeof _getLocalTodayStr === 'function' ? _getLocalTodayStr() : '';
+  _allMealsModalDate = todayStr;
   _syncAllMealsDateControls();
   filterAllMealsModal('all');
   modal.classList.remove('hidden');
-
-  const todayCard = listEl.querySelector('[data-meal-today="true"]');
-  if (todayCard && typeof todayCard.scrollIntoView === 'function') {
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => {
-        todayCard.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      });
-    } else {
-      todayCard.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }
-  }
+  _scrollToTodayMealCard();
 }
 
 function closeAllMealsModal() {
