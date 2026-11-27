@@ -3678,6 +3678,15 @@ module.exports = async function handler(req, res) {
       'delete_notice',
       'delete_notice_reply',
       'fetch_notice_replies',
+      'fetch_published_notices',
+      'fetch_notice_detail',
+      'update_notice_pdf_field_map',
+      'download_drive_file',
+      'fetch_timetable_base',
+      'fetch_desktop_sync_bundle',
+      'upsert_todos_batch',
+      'upsert_timetable_changes_batch',
+      'sync_desktop_schedules_and_tasks',
       'send_class_notification',
       'fetch_sent_notifications',
       'fetch_chat_history',
@@ -4591,6 +4600,132 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     const snap = await db.collection('가정통신문_회신').where('notice_id', '==', nid).get();
     const rows = _snapToRows(snap).filter((r) => noticeSnap.exists || _isStrictClassMember(r, auth));
     return { status: 200, json: { ok: true, replies: rows } };
+  }
+
+  if (action === 'fetch_published_notices') {
+    const rawLimit = _toIntOrNull(params.limit);
+    const limitVal = rawLimit !== null && rawLimit > 0 ? Math.min(rawLimit, 200) : 30;
+    const [ownSnap, recentRows] = await Promise.all([
+      db.collection('가정통신문_목록').where('teacher_id', '==', auth.teacherId).limit(Math.max(limitVal * 2, 100)).get().catch(() => null),
+      _queryWithOrderByFallback(db.collection('가정통신문_목록'), 'created_at', 'desc', Math.max(limitVal * 3, 150)).catch(() => []),
+    ]);
+    const merged = _mergeRowsById(ownSnap ? _snapToRows(ownSnap) : [], recentRows);
+    const notices = merged
+      .filter((d) => d.is_published !== false && _isNoticeOwnedOrClassAllowed(d, auth))
+      .map((d) => _withNormalizedNoticeAttachment(d))
+      .sort((a, b) => String(b.created_at || b.published_at || b.updated_at || '').localeCompare(String(a.created_at || a.published_at || a.updated_at || '')))
+      .slice(0, limitVal);
+    return { status: 200, json: { ok: true, notices } };
+  }
+
+  if (action === 'fetch_notice_detail') {
+    const noticeId = String(params.notice_id || params.remote_id || params.id || '').trim();
+    if (!noticeId) {
+      return { status: 400, json: { ok: false, error: '조회할 가정통신문의 notice_id가 필요합니다.' } };
+    }
+    const snap = await db.collection('가정통신문_목록').doc(noticeId).get();
+    if (!snap.exists) {
+      return { status: 404, json: { ok: false, error: '해당 가정통신문을 찾을 수 없습니다.' } };
+    }
+    const docData = { remote_id: snap.id, ...(snap.data() || {}) };
+    if (!_isNoticeOwnedOrClassAllowed(docData, auth)) {
+      return { status: 403, json: { ok: false, error: '본인이 작성했거나 담당 학급 소속의 가정통신문만 조회할 수 있습니다.' } };
+    }
+    return { status: 200, json: { ok: true, notice: _withNormalizedNoticeAttachment(docData) } };
+  }
+
+  if (action === 'update_notice_pdf_field_map') {
+    const noticeId = String(params.notice_id || params.remote_id || params.id || '').trim();
+    if (!noticeId) {
+      return { status: 400, json: { ok: false, error: '수정할 가정통신문의 notice_id가 필요합니다.' } };
+    }
+    const docRef = db.collection('가정통신문_목록').doc(noticeId);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      return { status: 404, json: { ok: false, error: '해당 가정통신문을 찾을 수 없습니다.' } };
+    }
+    const existing = { remote_id: snap.id, ...(snap.data() || {}) };
+    if (!_isNoticeOwnedOrClassAllowed(existing, auth)) {
+      return { status: 403, json: { ok: false, error: '본인이 작성했거나 담당 학급 소속의 가정통신문만 수정할 수 있습니다.' } };
+    }
+    const nowStr = _nowStr();
+    const updateData = { updated_at: nowStr };
+    if (params.pdf_field_map !== undefined) {
+      updateData.pdf_field_map = params.pdf_field_map;
+      if (params.pdf_field_map_json === undefined) {
+        updateData.pdf_field_map_json = typeof params.pdf_field_map === 'string'
+          ? params.pdf_field_map
+          : JSON.stringify(params.pdf_field_map || []);
+      }
+    }
+    if (params.pdf_field_map_json !== undefined) {
+      updateData.pdf_field_map_json = typeof params.pdf_field_map_json === 'string'
+        ? params.pdf_field_map_json
+        : JSON.stringify(params.pdf_field_map_json || []);
+    }
+    if (params.reply_schema !== undefined) {
+      updateData.reply_schema = params.reply_schema;
+      if (params.reply_schema_json === undefined) {
+        updateData.reply_schema_json = typeof params.reply_schema === 'string'
+          ? params.reply_schema
+          : JSON.stringify(params.reply_schema || []);
+      }
+    }
+    if (params.reply_schema_json !== undefined) {
+      updateData.reply_schema_json = typeof params.reply_schema_json === 'string'
+        ? params.reply_schema_json
+        : JSON.stringify(params.reply_schema_json || []);
+    }
+    await docRef.set(updateData, { merge: true });
+    return { status: 200, json: { ok: true, remote_id: noticeId, notice_id: noticeId, updated_at: nowStr } };
+  }
+
+  if (action === 'download_drive_file') {
+    const fileId = _extractDriveFileId(params.file_id || params.drive_file_id || params.url || '');
+    if (!fileId) {
+      return { status: 400, json: { ok: false, error: '유효한 Google Drive file_id가 필요합니다.' } };
+    }
+    const noticeId = String(params.notice_id || params.remote_id || '').trim();
+    let authorized = false;
+    if (noticeId) {
+      const noticeSnap = await db.collection('가정통신문_목록').doc(noticeId).get();
+      if (!noticeSnap.exists) {
+        return { status: 404, json: { ok: false, error: '해당 가정통신문을 찾을 수 없습니다.' } };
+      }
+      const noticeDoc = { remote_id: noticeSnap.id, ...(noticeSnap.data() || {}) };
+      if (_isNoticeOwnedOrClassAllowed(noticeDoc, auth) && _extractNoticeDriveFileIds(noticeDoc).includes(fileId)) {
+        authorized = true;
+      }
+    } else {
+      const [ownSnap, recentRows] = await Promise.all([
+        db.collection('가정통신문_목록').where('teacher_id', '==', auth.teacherId).limit(200).get().catch(() => null),
+        _queryWithOrderByFallback(db.collection('가정통신문_목록'), 'created_at', 'desc', 200).catch(() => []),
+      ]);
+      const allowedNotices = _mergeRowsById(ownSnap ? _snapToRows(ownSnap) : [], recentRows)
+        .filter((d) => _isNoticeOwnedOrClassAllowed(d, auth));
+      authorized = allowedNotices.some((d) => _extractNoticeDriveFileIds(d).includes(fileId));
+    }
+    if (!authorized) {
+      return { status: 403, json: { ok: false, error: '본인 또는 담당 학급 가정통신문의 첨부파일만 다운로드할 수 있습니다.' } };
+    }
+    if (typeof googleDrive.downloadDriveFileBytes !== 'function') {
+      return { status: 500, json: { ok: false, error: 'Google Drive 다운로드 헬퍼를 사용할 수 없습니다.' } };
+    }
+    const dl = await googleDrive.downloadDriveFileBytes(fileId);
+    if (!dl || !dl.ok) {
+      return { status: 502, json: { ok: false, error: (dl && dl.error) || 'Google Drive 파일을 다운로드하지 못했습니다.' } };
+    }
+    return {
+      status: 200,
+      json: {
+        ok: true,
+        file_id: fileId,
+        base64: dl.base64,
+        mime_type: dl.mime_type || dl.mimeType || 'application/octet-stream',
+        file_name: dl.fileName || '',
+        size: dl.size || 0,
+      },
+    };
   }
 
   if (action === 'send_class_notification') {
@@ -6004,6 +6139,172 @@ async function _handleDesktopApiAction(db, action, params, auth) {
     };
   }
 
+  if (action === 'fetch_timetable_base') {
+    const sc = String(auth.schoolCode || params.school_code || '').trim();
+    const cc = String(auth.comciganSchoolCode || params.comcigan_school_code || '').trim();
+    const sn = String(auth.schoolName || params.school_name || '').trim();
+    if (
+      (params.school_code && auth.schoolCode && String(params.school_code).trim() !== auth.schoolCode) ||
+      (params.comcigan_school_code && auth.comciganSchoolCode && String(params.comcigan_school_code).trim() !== auth.comciganSchoolCode) ||
+      (params.school_name && auth.schoolName && String(params.school_name).trim() !== auth.schoolName)
+    ) {
+      return { status: 403, json: { ok: false, error: '소속 학교의 기본시간표만 조회할 수 있습니다.' } };
+    }
+    if (!sc && !cc && !sn) {
+      return { status: 200, json: { ok: true, rows: [], timetable_base: [] } };
+    }
+
+    const reqG = _toIntOrNull(params.grade);
+    const reqC = _toIntOrNull(params.class_no);
+    const onlyMyTimetable = _toBool(params.only_my_timetable) || _toBool(params.teacher_only);
+    const teacherNameNorm = _normalizeTeacherName(
+      params.teacher_name || (auth.teacherDoc && auth.teacherDoc.name) || ''
+    );
+
+    const rawLists = [];
+    for (const [field, val] of [['school_code', sc], ['comcigan_school_code', cc], ['school_name', sn]]) {
+      if (!val) continue;
+      const snap = await db.collection('시간표_기본').where(field, '==', val).limit(1000).get().catch(() => null);
+      if (snap && !snap.empty) {
+        rawLists.push(_snapToRows(snap));
+        break;
+      }
+    }
+    if (rawLists.length === 0 && teacherNameNorm) {
+      const candidates = _teacherNameCandidates(teacherNameNorm);
+      if (candidates.length > 0) {
+        const [byName, byTeacher] = await Promise.all([
+          db.collection('시간표_기본').where('teacher_name', 'in', candidates).limit(300).get().then(_snapToRows).catch(() => []),
+          db.collection('시간표_기본').where('teacher', 'in', candidates).limit(300).get().then(_snapToRows).catch(() => []),
+        ]);
+        rawLists.push(byName, byTeacher);
+      }
+    }
+    const merged = _mergeRowsById(...rawLists);
+    const filtered = merged.filter((d) => {
+      if (!_matchesTenant(d, {
+        schoolCode: sc,
+        comciganSchoolCode: cc,
+        schoolName: sn,
+        gradeNum: reqG,
+        classNum: reqC,
+      })) {
+        return false;
+      }
+      if (onlyMyTimetable && teacherNameNorm && !_rowMatchesTeacher(d, teacherNameNorm)) {
+        return false;
+      }
+      return true;
+    });
+    return { status: 200, json: { ok: true, rows: filtered, timetable_base: filtered } };
+  }
+
+  if (action === 'fetch_desktop_sync_bundle') {
+    const rawLimit = _toIntOrNull(params.limit);
+    const limitVal = rawLimit !== null && rawLimit > 0 ? Math.min(rawLimit, 500) : 200;
+    const [schedSnap, taskSnap, notiRowsRaw, changeSnap] = await Promise.all([
+      db.collection('Schedules').where('teacher_id', '==', auth.teacherId).limit(limitVal).get().catch(() => null),
+      db.collection('Tasks').where('teacher_id', '==', auth.teacherId).limit(limitVal).get().catch(() => null),
+      _queryWithOrderByFallback(db.collection('Notifications'), 'created_at', 'desc', limitVal).catch(() => []),
+      auth.schoolCode
+        ? db.collection('시간표_변동').where('school_code', '==', auth.schoolCode).limit(300).get().catch(() => null)
+        : (auth.schoolName
+            ? db.collection('시간표_변동').where('school_name', '==', auth.schoolName).limit(300).get().catch(() => null)
+            : Promise.resolve(null)),
+    ]);
+    const schedules = (schedSnap ? _snapToRows(schedSnap) : [])
+      .filter((d) => _belongsToTeacher(d, auth))
+      .sort((a, b) => String(b.start_date || b.date || '').localeCompare(String(a.start_date || a.date || '')));
+    const tasks = (taskSnap ? _snapToRows(taskSnap) : [])
+      .filter((d) => _belongsToTeacher(d, auth))
+      .sort((a, b) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')));
+    const notifications = notiRowsRaw
+      .filter((d) => _matchesTeacherClassOrAuthor(d, auth) || _matchesTenant(d, tenant))
+      .sort((a, b) => String(b.created_at || b.updated_at || '').localeCompare(String(a.created_at || a.updated_at || '')));
+    const timetable_changes = (changeSnap ? _snapToRows(changeSnap) : [])
+      .filter((d) => _matchesTenant(d, {
+        schoolCode: auth.schoolCode,
+        comciganSchoolCode: auth.comciganSchoolCode,
+        schoolName: auth.schoolName,
+        gradeNum: null,
+        classNum: null,
+      }));
+    return {
+      status: 200,
+      json: { ok: true, schedules, tasks, notifications, timetable_changes },
+    };
+  }
+
+  if (action === 'upsert_todos_batch') {
+    const rawTodos = Array.isArray(params.todos)
+      ? params.todos
+      : (Array.isArray(params.tasks) ? params.tasks : []);
+    const deleteIds = Array.isArray(params.delete_ids) ? params.delete_ids : [];
+    const { written, deleted, skipped } = await _upsertTeacherScopedBatch(db, 'Tasks', rawTodos, deleteIds, auth, 'todo');
+    _invalidateStaticCache('remote_tasks:');
+    return { status: 200, json: { ok: true, written, deleted, skipped } };
+  }
+
+  if (action === 'upsert_timetable_changes_batch') {
+    const rawChanges = Array.isArray(params.change_rows)
+      ? params.change_rows
+      : (Array.isArray(params.changes) ? params.changes : (Array.isArray(params.rows) ? params.rows : []));
+    const deleteIds = Array.isArray(params.delete_ids)
+      ? params.delete_ids
+      : (Array.isArray(params.delete_change_ids) ? params.delete_change_ids : []);
+    const { written, deleted, skipped } = await _upsertSchoolScopedTimetableChanges(db, rawChanges, deleteIds, auth, scopeDefaults);
+    return { status: 200, json: { ok: true, written, deleted, skipped } };
+  }
+
+  if (action === 'sync_desktop_schedules_and_tasks') {
+    const rawSchedules = Array.isArray(params.schedules) ? params.schedules : [];
+    const deleteScheduleIds = Array.isArray(params.delete_schedule_ids) ? params.delete_schedule_ids : [];
+    const rawTasks = Array.isArray(params.tasks)
+      ? params.tasks
+      : (Array.isArray(params.todos) ? params.todos : []);
+    const deleteTaskIds = Array.isArray(params.delete_task_ids)
+      ? params.delete_task_ids
+      : (Array.isArray(params.delete_todo_ids) ? params.delete_todo_ids : []);
+    const rawChanges = Array.isArray(params.timetable_changes)
+      ? params.timetable_changes
+      : (Array.isArray(params.change_rows) ? params.change_rows : []);
+    const deleteChangeIds = Array.isArray(params.delete_change_ids) ? params.delete_change_ids : [];
+
+    const [schedRes, taskRes, changeRes] = await Promise.all([
+      _upsertTeacherScopedBatch(db, 'Schedules', rawSchedules, deleteScheduleIds, auth, 'sched'),
+      _upsertTeacherScopedBatch(db, 'Tasks', rawTasks, deleteTaskIds, auth, 'todo'),
+      _upsertSchoolScopedTimetableChanges(db, rawChanges, deleteChangeIds, auth, scopeDefaults),
+    ]);
+    if (schedRes.written > 0 || schedRes.deleted > 0) _invalidateStaticCache('schedules:');
+    if (taskRes.written > 0 || taskRes.deleted > 0) _invalidateStaticCache('remote_tasks:');
+
+    const [schedSnap, taskSnap, notiRowsRaw] = await Promise.all([
+      db.collection('Schedules').where('teacher_id', '==', auth.teacherId).limit(200).get().catch(() => null),
+      db.collection('Tasks').where('teacher_id', '==', auth.teacherId).limit(200).get().catch(() => null),
+      _queryWithOrderByFallback(db.collection('Notifications'), 'created_at', 'desc', 100).catch(() => []),
+    ]);
+    const schedules = (schedSnap ? _snapToRows(schedSnap) : []).filter((d) => _belongsToTeacher(d, auth));
+    const tasks = (taskSnap ? _snapToRows(taskSnap) : []).filter((d) => _belongsToTeacher(d, auth));
+    const notifications = notiRowsRaw.filter((d) => _matchesTeacherClassOrAuthor(d, auth) || _matchesTenant(d, tenant));
+
+    return {
+      status: 200,
+      json: {
+        ok: true,
+        schedules_written: schedRes.written,
+        schedules_deleted: schedRes.deleted,
+        tasks_written: taskRes.written,
+        tasks_deleted: taskRes.deleted,
+        changes_written: changeRes.written,
+        changes_deleted: changeRes.deleted,
+        skipped: schedRes.skipped + taskRes.skipped + changeRes.skipped,
+        schedules,
+        tasks,
+        notifications,
+      },
+    };
+  }
+
   return { status: 400, json: { ok: false, error: `지원하지 않는 데스크톱 action입니다: ${action}` } };
 }
 
@@ -6476,6 +6777,183 @@ function _matchesTeacherClassOrAuthor(doc, auth) {
     return classMatches || authorMatches;
   }
   return authorMatches;
+}
+
+function _isNoticeOwnedOrClassAllowed(doc, auth) {
+  if (!doc || typeof doc !== 'object' || !auth) return false;
+  if (!_matchesTenant(doc, {
+    schoolCode: auth.schoolCode,
+    comciganSchoolCode: auth.comciganSchoolCode,
+    schoolName: auth.schoolName,
+    gradeNum: null,
+    classNum: null,
+  })) {
+    return false;
+  }
+  const authTid = String(auth.teacherId || '').trim();
+  const docTid = String(doc.teacher_id || doc.author_id || '').trim();
+  if (docTid) {
+    return Boolean(authTid && docTid === authTid);
+  }
+  const rawG = doc.target_grade !== undefined && doc.target_grade !== '' ? doc.target_grade : doc.grade;
+  const rawC = doc.target_class !== undefined && doc.target_class !== '' ? doc.target_class : doc.class_no;
+  const docG = _toIntOrNull(rawG);
+  const docC = _toIntOrNull(rawC);
+  if (docG !== null && docC !== null) {
+    return auth.gradeNum !== null && auth.classNum !== null && docG === auth.gradeNum && docC === auth.classNum;
+  }
+  const authNameNorm = _normalizeTeacherName(auth.teacherDoc && auth.teacherDoc.name);
+  const docAuthorNorm = _normalizeTeacherName(doc.author_name || doc.sender || '');
+  return Boolean(authNameNorm && docAuthorNorm && authNameNorm === docAuthorNorm);
+}
+
+function _extractNoticeDriveFileIds(doc) {
+  if (!doc || typeof doc !== 'object') return [];
+  const candidates = [
+    doc.attachment_url,
+    doc.file_url,
+    doc.drive_url,
+    doc.driveUrl,
+    doc.pdf_url,
+    doc.pdf_drive_url,
+    doc.drive_file_id,
+    doc.file_id,
+    _resolveNoticeAttachmentUrl(doc),
+  ];
+  const ids = new Set();
+  for (const raw of candidates) {
+    const fid = _extractDriveFileId(raw);
+    if (fid) ids.add(fid);
+  }
+  return Array.from(ids);
+}
+
+async function _upsertTeacherScopedBatch(db, collectionName, rawRows, deleteIds, auth, idPrefix) {
+  const rows = Array.isArray(rawRows) ? rawRows : [];
+  const delList = Array.isArray(deleteIds) ? deleteIds.map((x) => String(x || '').trim()).filter(Boolean) : [];
+  let written = 0;
+  let deleted = 0;
+  let skipped = 0;
+  const nowStr = _nowStr();
+
+  const validDocs = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const raw = rows[i];
+    if (!raw || typeof raw !== 'object') {
+      skipped += 1;
+      continue;
+    }
+    const rid = String(raw.remote_id || raw.id || `${idPrefix}_${auth.teacherId}_${Date.now()}_${i}`).trim().replace(/[\\/:*?"<>|]/g, '_');
+    const docRef = db.collection(collectionName).doc(rid);
+    if (raw.remote_id || raw.id) {
+      const snap = await docRef.get();
+      if (snap.exists && !_belongsToTeacher({ remote_id: snap.id, ...(snap.data() || {}) }, auth)) {
+        skipped += 1;
+        continue;
+      }
+    }
+    const docData = {
+      ...raw,
+      remote_id: rid,
+      teacher_id: auth.teacherId,
+      school_code: auth.schoolCode || String(raw.school_code || '').trim(),
+      school_name: auth.schoolName || String(raw.school_name || '').trim(),
+      updated_at: String(raw.updated_at || nowStr),
+    };
+    if (!docData.created_at) docData.created_at = nowStr;
+    validDocs.push({ rid, docData });
+  }
+
+  for (let i = 0; i < validDocs.length; i += 400) {
+    const batch = db.batch();
+    validDocs.slice(i, i + 400).forEach(({ rid, docData }) => {
+      batch.set(db.collection(collectionName).doc(rid), docData, { merge: true });
+      written += 1;
+    });
+    await batch.commit();
+  }
+
+  const allowedDeleteIds = [];
+  for (const rid of delList) {
+    const snap = await db.collection(collectionName).doc(rid).get();
+    if (!snap.exists) continue;
+    if (!_belongsToTeacher({ remote_id: snap.id, ...(snap.data() || {}) }, auth)) {
+      skipped += 1;
+      continue;
+    }
+    allowedDeleteIds.push(rid);
+  }
+  for (let i = 0; i < allowedDeleteIds.length; i += 400) {
+    const batch = db.batch();
+    allowedDeleteIds.slice(i, i + 400).forEach((rid) => {
+      batch.delete(db.collection(collectionName).doc(rid));
+      deleted += 1;
+    });
+    await batch.commit();
+  }
+
+  return { written, deleted, skipped };
+}
+
+async function _upsertSchoolScopedTimetableChanges(db, rawRows, deleteIds, auth, scopeDefaults) {
+  const rows = Array.isArray(rawRows) ? rawRows : [];
+  const delList = Array.isArray(deleteIds) ? deleteIds.map((x) => String(x || '').trim()).filter(Boolean) : [];
+  let written = 0;
+  let deleted = 0;
+  let skipped = 0;
+  const schoolTenant = {
+    schoolCode: auth.schoolCode,
+    comciganSchoolCode: auth.comciganSchoolCode,
+    schoolName: auth.schoolName,
+    gradeNum: null,
+    classNum: null,
+  };
+
+  const validRows = [];
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') {
+      skipped += 1;
+      continue;
+    }
+    const rid = raw.remote_id ? String(raw.remote_id).trim().replace(/\//g, '_') : '';
+    if (rid) {
+      const snap = await db.collection('시간표_변동').doc(rid).get();
+      if (snap.exists && !_matchesTenant({ remote_id: snap.id, ...(snap.data() || {}) }, schoolTenant)) {
+        skipped += 1;
+        continue;
+      }
+    }
+    validRows.push({
+      ...raw,
+      ...(rid ? { remote_id: rid } : {}),
+      school_code: auth.schoolCode || String(raw.school_code || '').trim(),
+      school_name: auth.schoolName || String(raw.school_name || '').trim(),
+      teacher_id: String(raw.teacher_id || auth.teacherId || '').trim(),
+    });
+  }
+  if (validRows.length > 0) {
+    written = await _batchUpsertDocs(db, '시간표_변동', validRows, scopeDefaults);
+  }
+
+  const allowedDeleteIds = [];
+  for (const rid of delList) {
+    const snap = await db.collection('시간표_변동').doc(rid).get();
+    if (!snap.exists) continue;
+    if (!_matchesTenant({ remote_id: snap.id, ...(snap.data() || {}) }, schoolTenant)) {
+      skipped += 1;
+      continue;
+    }
+    allowedDeleteIds.push(rid);
+  }
+  for (let i = 0; i < allowedDeleteIds.length; i += 400) {
+    const batch = db.batch();
+    allowedDeleteIds.slice(i, i + 400).forEach((rid) => {
+      batch.delete(db.collection('시간표_변동').doc(rid));
+      deleted += 1;
+    });
+    await batch.commit();
+  }
+  return { written, deleted, skipped };
 }
 
 function _parseReplySchema(notice) {

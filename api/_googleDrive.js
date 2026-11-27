@@ -320,6 +320,86 @@ async function uploadBase64ToDrive({
 }
 
 const MAX_IMAGE_DOWNLOAD_BYTES = Math.floor(3.5 * 1024 * 1024);
+const MAX_DRIVE_FILE_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+
+function _inferMimeTypeFromFileName(fileName, rawMime = '') {
+  const mime = String(rawMime || '').trim().toLowerCase();
+  const name = String(fileName || '').trim().toLowerCase();
+  if (mime && mime !== 'application/octet-stream') return mime;
+  if (name.endsWith('.pdf')) return 'application/pdf';
+  if (name.endsWith('.png')) return 'image/png';
+  if (name.endsWith('.webp')) return 'image/webp';
+  if (name.endsWith('.gif')) return 'image/gif';
+  if (name.endsWith('.bmp')) return 'image/bmp';
+  if (/\.(jpe?g)$/i.test(name)) return 'image/jpeg';
+  if (name.endsWith('.hwp')) return 'application/x-hwp';
+  if (name.endsWith('.hwpx')) return 'application/hwp+zip';
+  if (name.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (name.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  return mime || 'application/octet-stream';
+}
+
+function _toBuffer(rawData) {
+  if (Buffer.isBuffer(rawData)) return rawData;
+  if (rawData instanceof ArrayBuffer) return Buffer.from(rawData);
+  if (ArrayBuffer.isView(rawData)) return Buffer.from(rawData.buffer, rawData.byteOffset, rawData.byteLength);
+  return Buffer.from(rawData || '');
+}
+
+async function downloadDriveFileBytes(fileIdOrUrl, opts = {}) {
+  const fid = extractDriveFileId(fileIdOrUrl);
+  if (!fid) {
+    return { ok: false, error: '유효한 Google Drive file_id가 필요합니다.' };
+  }
+  const maxBytes = Number.isFinite(Number(opts.maxBytes)) && Number(opts.maxBytes) > 0
+    ? Number(opts.maxBytes)
+    : MAX_DRIVE_FILE_DOWNLOAD_BYTES;
+
+  try {
+    const drive = opts._driveClient || _getDriveClient();
+    const metaRes = await drive.files.get({
+      fileId: fid,
+      fields: 'id, name, mimeType, size',
+      supportsAllDrives: true
+    });
+    const meta = (metaRes && metaRes.data) || {};
+    const fileName = String(meta.name || '').trim();
+    const mimeType = _inferMimeTypeFromFileName(fileName, meta.mimeType);
+
+    const metaSize = Number(meta.size || 0);
+    if (Number.isFinite(metaSize) && metaSize > maxBytes) {
+      return { ok: false, error: `파일 크기가 제한(${Math.round(maxBytes / (1024 * 1024))}MB)을 초과했습니다.` };
+    }
+
+    const mediaRes = await drive.files.get(
+      { fileId: fid, alt: 'media', supportsAllDrives: true },
+      { responseType: 'arraybuffer' }
+    );
+    const buf = _toBuffer(mediaRes && mediaRes.data);
+    if (!buf.length) {
+      return { ok: false, error: '다운로드한 파일 데이터가 비어 있습니다.' };
+    }
+    if (buf.length > maxBytes) {
+      return { ok: false, error: `파일 크기가 제한(${Math.round(maxBytes / (1024 * 1024))}MB)을 초과했습니다.` };
+    }
+
+    return {
+      ok: true,
+      fileId: fid,
+      file_id: fid,
+      fileName,
+      mimeType,
+      mime_type: mimeType,
+      size: buf.length,
+      base64: buf.toString('base64')
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err && err.message ? err.message : 'Google Drive 파일 읽기 오류'
+    };
+  }
+}
 
 function extractDriveFileId(input) {
   const s = String(input || '').trim();
@@ -408,5 +488,6 @@ async function downloadDriveFileAsDataUrl(fileIdOrUrl) {
 module.exports = {
   uploadBase64ToDrive,
   downloadDriveFileAsDataUrl,
+  downloadDriveFileBytes,
   extractDriveFileId
 };
