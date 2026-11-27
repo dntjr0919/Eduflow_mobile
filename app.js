@@ -298,6 +298,47 @@ function _clearDailyStaticCache() {
   } catch (_) {}
 }
 
+const MEALS_CACHE_KEY = 'eduflow_meals_cache_v1';
+const MEALS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12시간
+
+function _getMealsCacheScopeKey() {
+  const cu = mockData.currentUser || {};
+  return String(cu.neisSchoolCode || cu.schoolCode || cu.schoolName || 'default').trim();
+}
+
+function _loadMealsCache() {
+  try {
+    const raw = localStorage.getItem(MEALS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.date !== _getTodayDateKey()) return null;
+    if (parsed.savedAt && (Date.now() - Number(parsed.savedAt)) > MEALS_CACHE_TTL_MS) return null;
+    if (String(parsed.schoolKey || '') !== _getMealsCacheScopeKey()) return null;
+    if (!Array.isArray(parsed.meals)) return null;
+    return parsed.meals;
+  } catch (_) {
+    return null;
+  }
+}
+
+function _saveMealsCache(meals) {
+  try {
+    if (!Array.isArray(meals)) return;
+    localStorage.setItem(MEALS_CACHE_KEY, JSON.stringify({
+      date: _getTodayDateKey(),
+      savedAt: Date.now(),
+      schoolKey: _getMealsCacheScopeKey(),
+      meals
+    }));
+  } catch (_) {}
+}
+
+function _clearMealsCache() {
+  try {
+    localStorage.removeItem(MEALS_CACHE_KEY);
+  } catch (_) {}
+}
+
 function _saveDailyStaticCache(grade, classNo, bundle) {
   try {
     if (!bundle) return;
@@ -1202,8 +1243,10 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null, forceRefre
       const cu = mockData.currentUser;
       if (forceRefresh) {
         _clearDailyStaticCache();
+        _clearMealsCache();
       }
       const dailyCache = forceRefresh ? null : _loadDailyStaticCache(cu.grade, cu.classNo);
+      const mealsCache = forceRefresh ? null : _loadMealsCache();
       const bundleParams = {
         role: state.activeRole,
         user_id: cu.userId || '',
@@ -1218,13 +1261,14 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null, forceRefre
         bundleParams.force = '1';
         bundleParams.force_refresh = '1';
         bundleParams.skip_static = '0';
-      } else if (dailyCache) {
-        bundleParams.skip_static = '1';
+        bundleParams.skip_meals = '0';
+      } else {
+        if (dailyCache) bundleParams.skip_static = '1';
+        if (mealsCache) bundleParams.skip_meals = '1';
       }
       const bundle = await gasApi.get('get_mobile_bundle', bundleParams);
       if (dailyCache) {
         bundle.timetable_base = dailyCache.timetable_base;
-        bundle.meals = Array.isArray(dailyCache.meals) ? dailyCache.meals : [];
         bundle.doc_rules = dailyCache.doc_rules;
         if (!Array.isArray(bundle.schedules) && Array.isArray(dailyCache.schedules)) {
           bundle.schedules = dailyCache.schedules;
@@ -1246,6 +1290,11 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null, forceRefre
         }
       } else {
         _saveDailyStaticCache(cu.grade, cu.classNo, bundle);
+      }
+      if (mealsCache) {
+        bundle.meals = mealsCache;
+      } else if (Array.isArray(bundle.meals)) {
+        _saveMealsCache(bundle.meals);
       }
       hydrateMockDataFromBundle(bundle);
       _saveBundleCache(bundle);

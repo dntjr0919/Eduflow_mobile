@@ -305,6 +305,7 @@ function _computeDocDueDate(ruleCode, baseDate, docRulesRows) {
 
 const STATIC_CACHE_TTL_MS = 10 * 60 * 1000;
 const LOW_FREQ_CACHE_TTL_MS = 5 * 60 * 1000;
+const MEALS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 급식 식단표 12시간 캐시
 const MAX_STATIC_CACHE_ENTRIES = 500;
 if (!globalThis.__eduflowStaticCache) {
   globalThis.__eduflowStaticCache = new Map();
@@ -1396,6 +1397,7 @@ async function _handleGetMobileBundle(db, params) {
   const schoolName = String(params.school_name || '').trim();
   const forceRefresh = String(params.force || '') === '1' || String(params.force_refresh || '') === '1';
   const skipStatic = !forceRefresh && String(params.skip_static || '') === '1';
+  const skipMeals = !forceRefresh && (skipStatic || String(params.skip_meals || '') === '1');
 
   const tenant = { schoolCode, schoolName, gradeNum, classNum };
   const rawTeacherParam = String(params.teacher_name || '').trim();
@@ -1403,13 +1405,16 @@ async function _handleGetMobileBundle(db, params) {
   const gradeIn = _gradeCandidates(gradeNum);
   const sidIn = _studentIdCandidates(studentId);
   const isStudentScoped = Boolean(studentId && role !== 'teacher');
-  const todayStr = _nowStr().slice(0, 10);
+  const nowKstRef = new Date();
+  const todayStr = _kstDateStr(nowKstRef, 0);
+  const mealFromStr = _kstDateStr(nowKstRef, -7);
+  const mealToStr = _kstDateStr(nowKstRef, 7);
 
   const teacherCacheKey = role === 'teacher' && userId
     ? `teacher_doc:${userId}`
     : (gradeNum !== null ? `teachers_grade:${gradeNum}` : 'teachers_default');
   const ttBaseCacheKey = gradeNum !== null ? `tt_base_grade:${gradeNum}` : null;
-  const mealsCacheKey = `meals:all:${todayStr}`;
+  const mealsCacheKey = `meals:${schoolCode || 'all'}:${todayStr}`;
   const budgetCacheKey = gradeNum !== null ? `budget_grade:${gradeNum}` : 'budget_all';
   const schedulesCacheKey = `schedules:${schoolCode || 'all'}`;
   const studentsCacheKey = (gradeNum !== null && classNum !== null)
@@ -1521,10 +1526,12 @@ async function _handleGetMobileBundle(db, params) {
       : (gradeIn.length > 0
           ? db.collection('시간표_변동').where('grade', 'in', gradeIn).limit(100).get().then(_snapToRows)
           : db.collection('시간표_변동').where('date', '>=', todayStr).limit(100).get().then(_snapToRows)),
-    !skipStatic
+    !skipMeals
       ? _getCachedOrFetch(mealsCacheKey, forceRefresh, () =>
-          db.collection('급식_식단표').where('meal_date', '>=', todayStr).limit(300).get().then(_snapToRows)
-        )
+          (schoolCode
+            ? db.collection('급식_식단표').where('school_code', '==', schoolCode).limit(500).get().then(_snapToRows)
+            : db.collection('급식_식단표').where('meal_date', '>=', mealFromStr).limit(300).get().then(_snapToRows))
+        , MEALS_CACHE_TTL_MS)
       : Promise.resolve(undefined),
     !skipStatic
       ? _getCachedOrFetch(schoolCode ? `doc_rules:${schoolCode}` : 'doc_rules', forceRefresh, () =>
@@ -1824,7 +1831,13 @@ async function _handleGetMobileBundle(db, params) {
     bundle.budget = budgetRows.filter((d) => _matchesTenant(d, classTenant));
   }
   if (timetableBaseRows !== undefined) bundle.timetable_base = timetableBaseRows.filter(_matchesTimetableRow);
-  if (mealsRaw !== undefined) bundle.meals = mealsRaw.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
+  if (mealsRaw !== undefined) {
+    bundle.meals = mealsRaw.filter((d) => {
+      if (!_matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null })) return false;
+      const md = String((d && (d.meal_date || d.date)) || '').trim().slice(0, 10);
+      return md >= mealFromStr && md <= mealToStr;
+    });
+  }
   if (docRulesRows !== undefined) {
     bundle.doc_rules = docRulesRows.filter((d) => _matchesTenant(d, { schoolCode, schoolName, gradeNum: null, classNum: null }));
   }
@@ -1965,7 +1978,7 @@ async function _syncNeisMeals(db, body) {
     count += 1;
   }
   if (count > 0) await batch.commit();
-  _invalidateStaticCache('meals:');
+  _invalidateStaticCache(`meals:${schoolCode}`);
   return { ok: true, count, office_code: officeCode, school_code: schoolCode };
 }
 

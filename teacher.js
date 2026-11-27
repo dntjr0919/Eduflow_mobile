@@ -473,7 +473,11 @@ async function syncNeisMealsNow(btnEl) {
         office_code: mockData.currentUser.neisOfficeCode || '',
         school_code: mockData.currentUser.neisSchoolCode || ''
       });
-      try { localStorage.removeItem('eduflow_daily_static_cache_v1'); } catch (_) {}
+      if (typeof _clearMealsCache === 'function') _clearMealsCache();
+      try {
+        localStorage.removeItem('eduflow_daily_static_cache_v1');
+        localStorage.removeItem('eduflow_meals_cache_v1');
+      } catch (_) {}
       await refreshFromGas(false);
       renderTeacherHome();
       showToast(`나이스 급식 동기화 완료 (${res.count || 0}건 반영)`, '✅');

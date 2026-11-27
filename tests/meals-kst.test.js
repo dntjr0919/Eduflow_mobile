@@ -185,7 +185,7 @@ test('api/firestore.js _nowStr and _kstDateStr always use KST (Asia/Seoul) regar
   assert.equal(_kstDateStr(kstBeforeNine, 0), '2026-11-24');
 });
 
-test('_handleGetMobileBundle queries 급식_식단표 with single-field meal_date >= todayStr (KST) and filters tenant', async (t) => {
+test('_handleGetMobileBundle queries 급식_식단표 with single-field school_code and filters -7~+7 days (KST)', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-23T23:30:00.000Z').getTime() });
   if (globalThis.__eduflowStaticCache) globalThis.__eduflowStaticCache.clear();
 
@@ -200,11 +200,32 @@ test('_handleGetMobileBundle queries 급식_식단표 with single-field meal_dat
       school_code: '7010001',
     };
   }
+  meals['minus_7'] = {
+    remote_id: 'minus_7',
+    meal_date: '2026-11-17',
+    meal_type: '중식',
+    menu_text: '7일전급식',
+    school_code: '7010001',
+  };
   meals['today_s1'] = {
     remote_id: 'today_s1',
     meal_date: '2026-11-24',
     meal_type: '중식',
     menu_text: '오늘급식',
+    school_code: '7010001',
+  };
+  meals['plus_7'] = {
+    remote_id: 'plus_7',
+    meal_date: '2026-12-01',
+    meal_type: '석식',
+    menu_text: '7일후급식',
+    school_code: '7010001',
+  };
+  meals['plus_8'] = {
+    remote_id: 'plus_8',
+    meal_date: '2026-12-02',
+    meal_type: '중식',
+    menu_text: '8일후급식',
     school_code: '7010001',
   };
   meals['today_other_school'] = {
@@ -226,13 +247,27 @@ test('_handleGetMobileBundle queries 급식_식단표 with single-field meal_dat
   });
 
   assert.equal(res.status, 200);
-  assert.equal(res.json.meals.length, 1);
-  assert.equal(res.json.meals[0].remote_id, 'today_s1');
+  const ids = res.json.meals.map((m) => m.remote_id).sort();
+  assert.deepEqual(ids, ['minus_7', 'plus_7', 'today_s1']);
 
   const mealQuery = db._recordedQueries.find((q) => q.colName === '급식_식단표');
   assert.ok(mealQuery);
-  assert.deepEqual(mealQuery.filters, [{ field: 'meal_date', op: '>=', val: '2026-11-24' }]);
-  assert.equal(mealQuery.maxLimit, 300);
+  assert.deepEqual(mealQuery.filters, [{ field: 'school_code', op: '==', val: '7010001' }]);
+  assert.equal(mealQuery.maxLimit, 500);
+
+  // skip_meals=1 skips querying 급식_식단표 completely
+  db._recordedQueries.length = 0;
+  const skipRes = await _handleGetMobileBundle(db, {
+    role: 'student',
+    student_id: '10101',
+    grade: 1,
+    class_no: 1,
+    school_code: '7010001',
+    skip_meals: '1',
+  });
+  assert.equal(skipRes.status, 200);
+  assert.equal(skipRes.json.meals, undefined);
+  assert.equal(db._recordedQueries.some((q) => q.colName === '급식_식단표'), false);
 });
 
 test('_syncNeisMeals requests NEIS API with KST date range and invalidates meals static cache', async (t) => {

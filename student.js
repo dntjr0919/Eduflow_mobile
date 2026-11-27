@@ -364,6 +364,14 @@ function renderMeals() {
 }
 
 let _allMealsModalFilter = 'all';
+let _allMealsModalDate = '';
+
+function _shiftYmdDate(dateStr, deltaDays) {
+  const m = String(dateStr || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return '';
+  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + Number(deltaDays)));
+  return dt.toISOString().slice(0, 10);
+}
 
 function _formatMealDateWithDay(dateStr) {
   const s = String(dateStr || '').trim().slice(0, 10);
@@ -374,7 +382,7 @@ function _formatMealDateWithDay(dateStr) {
   return `${s} (${days[dt.getDay()]})`;
 }
 
-function _renderAllMealsModalList(filter = _allMealsModalFilter) {
+function _renderAllMealsModalList(filter = _allMealsModalFilter, selectedDate = _allMealsModalDate) {
   const listEl = document.getElementById('allMealsModalList');
   const subEl = document.getElementById('allMealsModalSubtitle');
   if (!listEl) return;
@@ -383,8 +391,12 @@ function _renderAllMealsModalList(filter = _allMealsModalFilter) {
   const filtered = rawMeals.filter((m) => {
     if (!m || typeof m !== 'object') return false;
     const typeStr = String(m.meal_type || '');
-    if (filter === 'lunch') return typeStr.includes('중식');
-    if (filter === 'dinner') return typeStr.includes('석식');
+    if (filter === 'lunch' && !typeStr.includes('중식')) return false;
+    if (filter === 'dinner' && !typeStr.includes('석식')) return false;
+    if (selectedDate) {
+      const dateKey = String(m.meal_date || m.date || '').trim().slice(0, 10);
+      if (dateKey !== selectedDate) return false;
+    }
     return true;
   });
 
@@ -398,14 +410,22 @@ function _renderAllMealsModalList(filter = _allMealsModalFilter) {
 
   const sortedDates = Array.from(dateMap.keys()).sort((a, b) => a.localeCompare(b));
   if (subEl) {
-    subEl.innerText = sortedDates.length > 0
-      ? `총 ${sortedDates.length}일치 급식 식단`
-      : '등록된 급식 식단 목록';
+    if (selectedDate) {
+      subEl.innerText = `${_formatMealDateWithDay(selectedDate)} 급식 식단`;
+    } else {
+      subEl.innerText = sortedDates.length > 0
+        ? `총 ${sortedDates.length}일치 급식 식단`
+        : '등록된 급식 식단 목록';
+    }
   }
 
   if (sortedDates.length === 0) {
-    const filterLabel = filter === 'lunch' ? '중식 ' : (filter === 'dinner' ? '석식 ' : '');
-    listEl.innerHTML = `<div class="py-10 text-center text-xs text-slate-400">등록된 ${filterLabel}식단 데이터가 없습니다.</div>`;
+    if (selectedDate) {
+      listEl.innerHTML = `<div class="py-10 text-center text-xs text-slate-400">선택한 날짜(${_escStudentHtml(selectedDate)})에 등록된 급식 식단표가 없습니다.</div>`;
+    } else {
+      const filterLabel = filter === 'lunch' ? '중식 ' : (filter === 'dinner' ? '석식 ' : '');
+      listEl.innerHTML = `<div class="py-10 text-center text-xs text-slate-400">등록된 ${filterLabel}식단 데이터가 없습니다.</div>`;
+    }
     return;
   }
 
@@ -458,6 +478,34 @@ function _renderAllMealsModalList(filter = _allMealsModalFilter) {
   }).join('');
 }
 
+function _syncAllMealsDateControls() {
+  if (typeof document === 'undefined') return;
+  const dateInput = document.getElementById('allMealsDateInput');
+  if (dateInput) dateInput.value = _allMealsModalDate || '';
+  const allRangeBtn = document.getElementById('allMealsAllRangeBtn');
+  if (allRangeBtn) {
+    allRangeBtn.className = !_allMealsModalDate
+      ? 'px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors'
+      : 'px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold shrink-0 whitespace-nowrap transition-colors';
+  }
+}
+
+function selectAllMealsDate(dateStr) {
+  _allMealsModalDate = String(dateStr || '').trim().slice(0, 10);
+  _syncAllMealsDateControls();
+  _renderAllMealsModalList(_allMealsModalFilter, _allMealsModalDate);
+}
+
+function stepAllMealsDate(deltaDays) {
+  const baseDate = _allMealsModalDate || (typeof _getLocalTodayStr === 'function' ? _getLocalTodayStr() : '');
+  const nextDate = _shiftYmdDate(baseDate, deltaDays);
+  if (nextDate) selectAllMealsDate(nextDate);
+}
+
+function resetAllMealsDateFilter() {
+  selectAllMealsDate('');
+}
+
 function filterAllMealsModal(filter) {
   _allMealsModalFilter = filter || 'all';
   if (typeof document !== 'undefined') {
@@ -468,7 +516,7 @@ function filterAllMealsModal(filter) {
         : 'all-meals-filter-btn px-3 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors';
     });
   }
-  _renderAllMealsModalList(_allMealsModalFilter);
+  _renderAllMealsModalList(_allMealsModalFilter, _allMealsModalDate);
 }
 
 function openAllMealsModal() {
@@ -477,6 +525,8 @@ function openAllMealsModal() {
   const listEl = document.getElementById('allMealsModalList');
   if (!modal || !listEl) return;
 
+  _allMealsModalDate = '';
+  _syncAllMealsDateControls();
   filterAllMealsModal('all');
   modal.classList.remove('hidden');
 
@@ -2104,6 +2154,9 @@ if (typeof module !== 'undefined' && module.exports) {
     openAllMealsModal,
     closeAllMealsModal,
     filterAllMealsModal,
+    selectAllMealsDate,
+    stepAllMealsDate,
+    resetAllMealsDateFilter,
     renderAttendanceHistory,
     renderBudget,
     openReceiptModal,
