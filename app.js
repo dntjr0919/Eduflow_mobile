@@ -458,6 +458,7 @@ let mockData = {
     lunch: null,
     dinner: null
   },
+  allMeals: [],
   circulars: [],
   boardNotices: [],
   budget: {
@@ -1223,7 +1224,7 @@ async function refreshFromGas(showFeedback = true, triggerBtn = null, forceRefre
       const bundle = await gasApi.get('get_mobile_bundle', bundleParams);
       if (dailyCache) {
         bundle.timetable_base = dailyCache.timetable_base;
-        bundle.meals = dailyCache.meals;
+        bundle.meals = Array.isArray(dailyCache.meals) ? dailyCache.meals : [];
         bundle.doc_rules = dailyCache.doc_rules;
         if (!Array.isArray(bundle.schedules) && Array.isArray(dailyCache.schedules)) {
           bundle.schedules = dailyCache.schedules;
@@ -1872,6 +1873,17 @@ function hydrateMockDataFromBundle(bundle) {
       lunch: lunch ? mapMeal(lunch) : null,
       dinner: dinner ? mapMeal(dinner) : null
     };
+    mockData.allMeals = bundle.meals
+      .filter(m => m && typeof m === 'object')
+      .slice()
+      .sort((a, b) => {
+        const da = String(a.meal_date || a.date || '').trim().slice(0, 10);
+        const db = String(b.meal_date || b.date || '').trim().slice(0, 10);
+        if (da !== db) return da.localeCompare(db);
+        const ta = String(a.meal_type || '').includes('석식') ? 1 : 0;
+        const tb = String(b.meal_type || '').includes('석식') ? 1 : 0;
+        return ta - tb;
+      });
   }
 
   // 8. 가정통신문 목록 & 회신

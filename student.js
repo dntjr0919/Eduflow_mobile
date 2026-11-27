@@ -324,40 +324,178 @@ function renderTimetable() {
 
 function switchMealTab(tab) {
   state.activeMealTab = tab;
-  document.getElementById('mealTab-lunch').className = tab === 'lunch'
-    ? "px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all whitespace-nowrap shrink-0"
-    : "px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all whitespace-nowrap shrink-0";
-  document.getElementById('mealTab-dinner').className = tab === 'dinner'
-    ? "px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all whitespace-nowrap shrink-0"
-    : "px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all whitespace-nowrap shrink-0";
+  const activeCls = "px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all whitespace-nowrap shrink-0";
+  const inactiveCls = "px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all whitespace-nowrap shrink-0";
+  ['mealTab', 'teacherMealTab'].forEach((prefix) => {
+    const lunchBtn = document.getElementById(`${prefix}-lunch`);
+    const dinnerBtn = document.getElementById(`${prefix}-dinner`);
+    if (lunchBtn) lunchBtn.className = tab === 'lunch' ? activeCls : inactiveCls;
+    if (dinnerBtn) dinnerBtn.className = tab === 'dinner' ? activeCls : inactiveCls;
+  });
   renderMeals();
 }
 
 function renderMeals() {
-  const container = document.getElementById('mealContentBox');
-  const meal = mockData.meals[state.activeMealTab];
-  if (!meal) {
-    container.innerHTML = `<div class="py-5 text-center text-xs text-slate-400">등록된 ${state.activeMealTab === 'lunch' ? '중식' : '석식'} 식단표가 없습니다.</div>`;
+  const meal = mockData.meals && mockData.meals[state.activeMealTab];
+  const html = !meal
+    ? `<div class="py-5 text-center text-xs text-slate-400">등록된 ${state.activeMealTab === 'lunch' ? '중식' : '석식'} 식단표가 없습니다.</div>`
+    : `
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-[11px] font-bold text-slate-700">🍽️ ${state.activeMealTab === 'lunch' ? '중식 식단' : '석식 식단'}</span>
+        <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">${_escStudentHtml(meal.calories || '-')}</span>
+      </div>
+      <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 py-1">
+        ${(meal.menu || []).map(item => `
+          <div class="flex items-center justify-between text-xs py-0.5 border-b border-slate-100/80">
+            <span class="font-medium text-slate-800">${_escStudentHtml(item.name)}</span>
+            ${item.allergy ? `<span class="text-[9px] text-slate-400 font-mono">(${_escStudentHtml(item.allergy)})</span>` : ''}
+          </div>
+        `).join('')}
+      </div>
+      <div class="mt-2.5 pt-2 border-t border-slate-200/70 text-[9px] text-slate-400 leading-tight">
+        ℹ️ <span class="font-semibold">알레르기 번호 안내:</span> ${_escStudentHtml(meal.allergyNotice || '나이스(NEIS) 식단 연동됨')}
+      </div>
+    `;
+  ['mealContentBox', 'teacherMealContentBox'].forEach((id) => {
+    const container = document.getElementById(id);
+    if (container) container.innerHTML = html;
+  });
+  if (typeof renderAcademicSchedules === 'function') renderAcademicSchedules();
+}
+
+let _allMealsModalFilter = 'all';
+
+function _formatMealDateWithDay(dateStr) {
+  const s = String(dateStr || '').trim().slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return s || '-';
+  const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const days = ['일', '월', '화', '수', '목', '금', '토'];
+  return `${s} (${days[dt.getDay()]})`;
+}
+
+function _renderAllMealsModalList(filter = _allMealsModalFilter) {
+  const listEl = document.getElementById('allMealsModalList');
+  const subEl = document.getElementById('allMealsModalSubtitle');
+  if (!listEl) return;
+
+  const rawMeals = Array.isArray(mockData.allMeals) ? mockData.allMeals : [];
+  const filtered = rawMeals.filter((m) => {
+    if (!m || typeof m !== 'object') return false;
+    const typeStr = String(m.meal_type || '');
+    if (filter === 'lunch') return typeStr.includes('중식');
+    if (filter === 'dinner') return typeStr.includes('석식');
+    return true;
+  });
+
+  const dateMap = new Map();
+  filtered.forEach((m) => {
+    const dateKey = String(m.meal_date || m.date || '').trim().slice(0, 10);
+    if (!dateKey) return;
+    if (!dateMap.has(dateKey)) dateMap.set(dateKey, []);
+    dateMap.get(dateKey).push(m);
+  });
+
+  const sortedDates = Array.from(dateMap.keys()).sort((a, b) => a.localeCompare(b));
+  if (subEl) {
+    subEl.innerText = sortedDates.length > 0
+      ? `총 ${sortedDates.length}일치 급식 식단`
+      : '등록된 급식 식단 목록';
+  }
+
+  if (sortedDates.length === 0) {
+    const filterLabel = filter === 'lunch' ? '중식 ' : (filter === 'dinner' ? '석식 ' : '');
+    listEl.innerHTML = `<div class="py-10 text-center text-xs text-slate-400">등록된 ${filterLabel}식단 데이터가 없습니다.</div>`;
     return;
   }
-  container.innerHTML = `
-    <div class="flex items-center justify-between mb-2">
-      <span class="text-[11px] font-bold text-slate-700">🍽️ ${state.activeMealTab === 'lunch' ? '중식 식단' : '석식 식단'}</span>
-      <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">${_escStudentHtml(meal.calories)}</span>
-    </div>
-    <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 py-1">
-      ${(meal.menu || []).map(item => `
-        <div class="flex items-center justify-between text-xs py-0.5 border-b border-slate-100/80">
-          <span class="font-medium text-slate-800">${_escStudentHtml(item.name)}</span>
-          ${item.allergy ? `<span class="text-[9px] text-slate-400 font-mono">(${_escStudentHtml(item.allergy)})</span>` : ''}
+
+  const todayStr = typeof _getLocalTodayStr === 'function' ? _getLocalTodayStr() : '';
+
+  listEl.innerHTML = sortedDates.map((dateKey) => {
+    const isToday = dateKey === todayStr;
+    const items = dateMap.get(dateKey);
+    const lunch = items.find((m) => String(m.meal_type || '').includes('중식'));
+    const dinner = items.find((m) => String(m.meal_type || '').includes('석식'));
+    const sections = [];
+    if (lunch && (filter === 'all' || filter === 'lunch')) {
+      sections.push({ label: '중식', meal: lunch });
+    }
+    if (dinner && (filter === 'all' || filter === 'dinner')) {
+      sections.push({ label: '석식', meal: dinner });
+    }
+    if (sections.length === 0 && items.length > 0) {
+      items.forEach((m) => sections.push({ label: String(m.meal_type || '급식'), meal: m }));
+    }
+
+    const cardCls = isToday
+      ? 'p-3.5 rounded-2xl border border-indigo-300 bg-indigo-50/30 space-y-2.5'
+      : 'p-3.5 rounded-2xl border border-slate-200/80 bg-white space-y-2.5';
+
+    return `
+      <div class="${cardCls}" ${isToday ? 'data-meal-today="true"' : ''}>
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-xs font-bold text-slate-900">${_escStudentHtml(_formatMealDateWithDay(dateKey))}</span>
+          ${isToday ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-600 text-white shrink-0">오늘</span>' : ''}
         </div>
-      `).join('')}
-    </div>
-    <div class="mt-2.5 pt-2 border-t border-slate-200/70 text-[9px] text-slate-400 leading-tight">
-      ℹ️ <span class="font-semibold">알레르기 번호 안내:</span> ${_escStudentHtml(meal.allergyNotice)}
-    </div>
-  `;
-  if (typeof renderAcademicSchedules === 'function') renderAcademicSchedules();
+        <div class="space-y-2">
+          ${sections.map(({ label, meal }) => {
+            const menuLines = String(meal.menu_text || '').split('\n').map(s => s.trim()).filter(Boolean);
+            return `
+              <div class="bg-white/80 rounded-xl p-2.5 border border-slate-100">
+                <div class="flex items-center justify-between mb-1.5">
+                  <span class="text-[11px] font-bold text-slate-700">🍽️ ${_escStudentHtml(label)}</span>
+                  <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">${_escStudentHtml(meal.calories || '-')}</span>
+                </div>
+                ${menuLines.length > 0
+                  ? `<div class="grid grid-cols-2 gap-x-2.5 gap-y-1 text-[11px] text-slate-700">${menuLines.map(line => `<div class="truncate py-0.5 border-b border-slate-100/80">${_escStudentHtml(line)}</div>`).join('')}</div>`
+                  : `<div class="text-[11px] text-slate-400">메뉴 정보가 없습니다.</div>`}
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function filterAllMealsModal(filter) {
+  _allMealsModalFilter = filter || 'all';
+  if (typeof document !== 'undefined') {
+    document.querySelectorAll('.all-meals-filter-btn').forEach((btn) => {
+      const isActive = btn.dataset.filter === _allMealsModalFilter;
+      btn.className = isActive
+        ? 'all-meals-filter-btn px-3 py-1.5 rounded-full text-xs font-bold bg-indigo-600 text-white transition-colors'
+        : 'all-meals-filter-btn px-3 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors';
+    });
+  }
+  _renderAllMealsModalList(_allMealsModalFilter);
+}
+
+function openAllMealsModal() {
+  if (typeof document === 'undefined') return;
+  const modal = document.getElementById('allMealsModal');
+  const listEl = document.getElementById('allMealsModalList');
+  if (!modal || !listEl) return;
+
+  filterAllMealsModal('all');
+  modal.classList.remove('hidden');
+
+  const todayCard = listEl.querySelector('[data-meal-today="true"]');
+  if (todayCard && typeof todayCard.scrollIntoView === 'function') {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        todayCard.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
+    } else {
+      todayCard.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }
+}
+
+function closeAllMealsModal() {
+  if (typeof document === 'undefined') return;
+  const modal = document.getElementById('allMealsModal');
+  if (modal) modal.classList.add('hidden');
 }
 
 // --- TAB 2: Attendance & Documents ---
@@ -1961,7 +2099,11 @@ if (typeof module !== 'undefined' && module.exports) {
     switchBottomTab,
     renderUrgentDocuments,
     renderTimetable,
+    switchMealTab,
     renderMeals,
+    openAllMealsModal,
+    closeAllMealsModal,
+    filterAllMealsModal,
     renderAttendanceHistory,
     renderBudget,
     openReceiptModal,

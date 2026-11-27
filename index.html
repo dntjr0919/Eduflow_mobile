@@ -158,19 +158,22 @@
 </div>
 
 <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm w-full max-w-full min-w-0">
-<div class="flex items-center justify-between gap-2 mb-3">
-<div class="flex items-center gap-2 min-w-0 flex-1">
+<div class="flex items-center justify-between gap-1.5 mb-3">
+<div class="flex items-center gap-1.5 min-w-0 flex-1">
 <div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
 </div>
 <div class="min-w-0">
-<h3 class="text-xs font-bold text-slate-800">오늘의 급식 식단표</h3>
-<p class="text-[10px] text-slate-400">영양 칼로리 및 알레르기 유발 정보</p>
+<h3 class="text-xs font-bold text-slate-800 truncate">오늘의 급식</h3>
+<p class="text-[10px] text-slate-400 truncate">영양 칼로리 및 알레르기 유발 정보</p>
 </div>
 </div>
+<div class="flex items-center gap-1.5 shrink-0">
 <div class="flex bg-slate-100 p-0.5 rounded-lg text-xs font-semibold shrink-0">
-<button class="px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all whitespace-nowrap shrink-0" id="mealTab-lunch" onclick="switchMealTab('lunch')">중식</button>
-<button class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all whitespace-nowrap shrink-0" id="mealTab-dinner" onclick="switchMealTab('dinner')">석식</button>
+<button class="px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all whitespace-nowrap shrink-0" id="mealTab-lunch" onclick="switchMealTab('lunch')" type="button">중식</button>
+<button class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all whitespace-nowrap shrink-0" id="mealTab-dinner" onclick="switchMealTab('dinner')" type="button">석식</button>
+</div>
+<button class="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 whitespace-nowrap transition-colors" onclick="openAllMealsModal()" type="button">전체</button>
 </div>
 </div>
 <div class="bg-slate-50/80 rounded-xl p-3 border border-slate-100" id="mealContentBox"></div>
@@ -504,19 +507,26 @@
 <div class="space-y-1.5" id="teacherHomeroomScheduleList"></div>
 </div>
 
-<div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm" id="teacherMealCard">
-<div class="flex items-center justify-between mb-3">
-<div class="flex items-center gap-2">
-<div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
+<div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm w-full max-w-full min-w-0" id="teacherMealCard">
+<div class="flex items-center justify-between gap-1.5 mb-3">
+<div class="flex items-center gap-1.5 min-w-0 flex-1">
+<div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
 </div>
-<div>
-<h3 class="text-xs font-bold text-slate-800">오늘의 급식 식단표</h3>
-<p class="text-[10px] text-slate-400">영양 칼로리 및 알레르기 유발 정보</p>
+<div class="min-w-0">
+<h3 class="text-xs font-bold text-slate-800 truncate">오늘의 급식</h3>
+<p class="text-[10px] text-slate-400 truncate">영양 칼로리 및 알레르기 유발 정보</p>
 </div>
 </div>
+<div class="flex items-center gap-1.5 shrink-0">
+<div class="flex bg-slate-100 p-0.5 rounded-lg text-xs font-semibold shrink-0">
+<button class="px-2.5 py-1 rounded-md bg-white text-indigo-600 shadow-xs transition-all whitespace-nowrap shrink-0" id="teacherMealTab-lunch" onclick="switchMealTab('lunch')" type="button">중식</button>
+<button class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-800 transition-all whitespace-nowrap shrink-0" id="teacherMealTab-dinner" onclick="switchMealTab('dinner')" type="button">석식</button>
 </div>
-<div class="space-y-2.5" id="teacherMealList"></div>
+<button class="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 whitespace-nowrap transition-colors" onclick="openAllMealsModal()" type="button">전체</button>
+</div>
+</div>
+<div class="bg-slate-50/80 rounded-xl p-3 border border-slate-100" id="teacherMealContentBox"></div>
 </div>
 
 <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm" id="teacherScheduleCard">
@@ -1697,6 +1707,33 @@
 <div class="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar" id="allSchedulesModalList"></div>
 <div class="px-4 py-3 border-t border-slate-100 bg-slate-50/50 shrink-0">
 <button class="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors" onclick="closeAllSchedulesModal()" type="button">닫기</button>
+</div>
+</div>
+</div>
+
+<!-- Modal: All Meals -->
+<div class="hidden absolute inset-0 z-[95] bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-3 sm:p-5" id="allMealsModal" onclick="if (event.target === this) closeAllMealsModal()">
+<div class="bg-white rounded-3xl shadow-2xl max-w-md w-full max-h-[82vh] flex flex-col overflow-hidden">
+<div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70 shrink-0">
+<div class="flex items-center gap-2">
+<span class="text-base">🍽️</span>
+<div>
+<h3 class="text-sm font-bold text-slate-900">전체 급식 식단표</h3>
+<p class="text-[10px] text-slate-500" id="allMealsModalSubtitle">등록된 급식 식단 목록</p>
+</div>
+</div>
+<button aria-label="닫기" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200/70 transition-colors" onclick="closeAllMealsModal()" type="button">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</button>
+</div>
+<div class="px-4 pt-3 pb-2 border-b border-slate-100 flex items-center gap-1.5 bg-white shrink-0">
+<button class="all-meals-filter-btn px-3 py-1.5 rounded-full text-xs font-bold bg-indigo-600 text-white transition-colors" data-filter="all" onclick="filterAllMealsModal('all')" type="button">전체</button>
+<button class="all-meals-filter-btn px-3 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors" data-filter="lunch" onclick="filterAllMealsModal('lunch')" type="button">중식</button>
+<button class="all-meals-filter-btn px-3 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors" data-filter="dinner" onclick="filterAllMealsModal('dinner')" type="button">석식</button>
+</div>
+<div class="flex-1 overflow-y-auto p-4 space-y-2.5 custom-scrollbar" id="allMealsModalList"></div>
+<div class="px-4 py-3 border-t border-slate-100 bg-slate-50/50 shrink-0">
+<button class="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors" onclick="closeAllMealsModal()" type="button">닫기</button>
 </div>
 </div>
 </div>
